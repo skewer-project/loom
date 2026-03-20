@@ -1,14 +1,16 @@
-#include <GLFW/glfw3.h>
+#include "platform/Window.hpp"
 #include <iostream>
 
 int main() {
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-        return -1;
+    loom::Window window(1280, 720, "Loom");
+
+    std::cout << "Initializing Loom..." << std::endl;
+
+    while (!window.shouldClose()) {
+        window.pollEvents();
     }
 
-    std::cout << "GLFW initialized successfully!" << std::endl;
+    std::cout << "Shutting down Loom..." << std::endl;
 
-    glfwTerminate();
     return 0;
 }

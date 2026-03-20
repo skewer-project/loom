@@ -10,6 +10,9 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# Find Vulkan SDK on system
+find_package(Vulkan REQUIRED)
+
 # FetchContent for GLFW
 include(FetchContent)
 FetchContent_Declare(
@@ -34,4 +37,15 @@ add_executable(Loom
 target_include_directories(Loom PUBLIC include)
 
 # Link libraries
-target_link_libraries(Loom PRIVATE glfw)
+target_link_libraries(Loom PRIVATE glfw Vulkan::Vulkan)
+
+# Apple-specific config for MoltenVK
+if(APPLE)
+    target_compile_definitions(Loom PRIVATE VK_USE_PLATFORM_MACOS_MVK)
+
+    # Required for modern macOS to find the Vulkan loader/layers
+    set_target_properties(Loom PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.loom.engine"
+    )
+endif()
