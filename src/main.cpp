@@ -2,19 +2,15 @@
 #include <iostream>
 
 int main() {
-    try {
-        loom::Window window(800, 600, "Loom Engine");
+    loom::Window window(1280, 720, "Loom");
 
-        std::cout << "Window initialized successfully!" << std::endl;
+    std::cout << "Initializing Loom..." << std::endl;
 
-        while (!window.shouldClose()) {
-            window.pollEvents();
-        }
-
-    } catch (const std::exception& e) {
-        std::cerr << "Window Error: " << e.what() << std::endl;
-        return 1;
+    while (!window.shouldClose()) {
+        window.pollEvents();
     }
+
+    std::cout << "Shutting down Loom..." << std::endl;
 
     return 0;
 }
