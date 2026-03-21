@@ -1,6 +1,8 @@
 #include "gpu/VulkanContext.hpp"
+
 #include <cstring>
 #include <stdexcept>
+#include <map>
 
 namespace loom {
 
@@ -104,43 +106,71 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
 
-    // Prefer discrete GPU, fall back to integrated
-    for (auto type : { VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU}) {
-        for (const auto& device : devices) {
-            if (isDeviceSuitable(device)) {
-                m_physicalDevice = device;
-                return;
-            }
+    DeviceScore bestScore;
+    VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
+
+    // Find the device with the highest score
+    for (const auto& device : devices) {
+        DeviceScore currentScore = rateDeviceSuitability(device);
+
+        if (currentScore.score > bestScore.score) {
+            bestScore = currentScore;
+            bestDevice = device;
         }
     }
 
-    throw std::runtime_error("failed to find a suitable GPU!");
+    if (bestScore.score == 0 || bestDevice == VK_NULL_HANDLE) {
+        throw std::runtime_error("failed to find a suitable GPU!");
+    }
+
+    // Save the device and the queue indices to our class members
+    m_physicalDevice = bestDevice;
+    m_graphicsQueueFamily = bestScore.graphicsFamily;
+    m_computeQueueFamily = bestScore.computeFamily;
+
+    std::cout << "Selected Physical Device successfully. Score: " << bestScore.score << std::endl;
+
+    // Debug logging
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
+    std::cout << "Selected GPU: " << props.deviceName
+              << " (score: " << bestScore.score << ")" << std::endl;
 }
 
-bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device, VkPhysicalDeviceType requiredType) {
+DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
+    DeviceScore result;
+
     VkPhysicalDeviceProperties deviceProperties;
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
-    if (deviceProperties.deviceType != requiredType) return false;
-
-    return supportsComputeQueue(device);
-}
-
-bool VulkanContext::supportsComputeQueue(VkPhysicalDevice device) {
     uint32_t queueFamilyCount = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
-        bool supportsGraphics = false;
-        bool supportsCompute = false;
+    // Find the required queue families
+    for (uint32_t i = 0; i < queueFamilyCount; i++) {
+        if (result.graphicsFamily == UINT32_MAX &&
+            queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { result.graphicsFamily = i; }
+        if (result.computeFamily == UINT32_MAX &&
+            queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)  { result.computeFamily  = i; }
+        if (result.isComplete()) { break; }
+    }
 
-        for (const auto& queueFamily : queueFamilies) {
-            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) { supportsGraphics = true; }
-            if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) { supportsCompute = true; }
-        }
+    // If it doesn't have the required queues, it's completely unsuitable (score = 0)
+    if (!result.isComplete()) { return result; }
 
-        return supportsCompute && supportsGraphics;
+    // Calculate the score
+    result.score = 1; // Base score for meeting minimum requirements
+
+    if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+        result.score += 1000;
+    }
+
+    // can continue adding to the score here (max texture size, VRAM size)
+    result.score += deviceProperties.limits.maxImageDimension2D;
+
+    return result;
 }
 
 void VulkanContext::setupDebugMessenger() {

@@ -6,6 +6,17 @@
 
 namespace loom {
 
+struct DeviceScore {
+    int score = 0;
+    uint32_t graphicsFamily = UINT32_MAX;
+    uint32_t computeFamily  = UINT32_MAX;
+
+    // Helper to easily check if we found all necessary queues
+    bool isComplete() const {
+        return graphicsFamily != UINT32_MAX && computeFamily != UINT32_MAX;
+    }
+};
+
 class VulkanContext {
 public:
     VulkanContext();
@@ -22,6 +33,8 @@ private:
     VkInstance m_instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
+    uint32_t m_graphicsQueueFamily = UINT32_MAX;
+    uint32_t m_computeQueueFamily  = UINT32_MAX;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
@@ -33,7 +46,7 @@ private:
         "VK_LAYER_KHRONOS_validation"
     };
 
-    bool isDeviceSuitable(VkPhysicalDevice device);
+    DeviceScore rateDeviceSuitability(VkPhysicalDevice device);
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
 };
