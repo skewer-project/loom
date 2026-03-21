@@ -16,8 +16,8 @@ struct DeviceScore {
 
     // Helper to easily check if we found all necessary queues
     bool isComplete() const {
-        return graphicsFamily != UINT32_MAX && 
-               computeFamily != UINT32_MAX && 
+        return graphicsFamily != UINT32_MAX &&
+               computeFamily != UINT32_MAX &&
                presentFamily != UINT32_MAX;
     }
 };
@@ -65,7 +65,7 @@ private:
     const std::vector<const char*> m_deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME
     #ifdef __APPLE__
-        "VK_KHR_portability_subset"
+        , "VK_KHR_portability_subset"
     #endif
     };
 
