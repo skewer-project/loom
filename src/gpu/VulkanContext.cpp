@@ -43,6 +43,10 @@ VulkanContext::~VulkanContext() {
         vkDestroyDevice(m_device, nullptr);
     }
 
+    if (m_surface != VK_NULL_HANDLE) {
+        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+    }
+
     if (m_enableValidationLayers && m_debugMessenger != VK_NULL_HANDLE) {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
@@ -100,6 +104,12 @@ void VulkanContext::createInstance(const char* appName) {
     }
 }
 
+void VulkanContext::createSurface(GLFWwindow* window) {
+    if (glfwCreateWindowSurface(m_instance, window, nullptr, &m_surface) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create window surface!");
+    }
+}
+
 void VulkanContext::pickPhysicalDevice() {
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
@@ -132,6 +142,7 @@ void VulkanContext::pickPhysicalDevice() {
     m_physicalDevice = bestDevice;
     m_graphicsQueueFamily = bestScore.graphicsFamily;
     m_computeQueueFamily = bestScore.computeFamily;
+    m_presentQueueFamily = bestScore.presentFamily;
 
     std::cout << "Selected Physical Device successfully. Score: " << bestScore.score << std::endl;
 
@@ -143,7 +154,7 @@ void VulkanContext::pickPhysicalDevice() {
 }
 
 void VulkanContext::createLogicalDevice() {
-    std::set<uint32_t> uniqueQueueFamilies = {m_graphicsQueueFamily, m_computeQueueFamily};
+    std::set<uint32_t> uniqueQueueFamilies = {m_graphicsQueueFamily, m_computeQueueFamily, m_presentQueueFamily};
     std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
     const float queuePriority = 1.0f;
 
@@ -180,6 +191,7 @@ void VulkanContext::createLogicalDevice() {
 
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_device, m_computeQueueFamily, 0, &m_computeQueue);
+    vkGetDeviceQueue(m_device, m_presentQueueFamily, 0, &m_presentQueue);
 }
 
 bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
@@ -215,6 +227,13 @@ DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
             queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { result.graphicsFamily = i; }
         if (result.computeFamily == UINT32_MAX &&
             queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)  { result.computeFamily  = i; }
+
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_surface, &presentSupport);
+        if (result.presentFamily == UINT32_MAX && presentSupport) {
+            result.presentFamily = i;
+        }
+
         if (result.isComplete()) { break; }
     }
 
@@ -274,7 +293,11 @@ bool VulkanContext::checkValidationLayerSupport() {
 }
 
 std::vector<const char*> VulkanContext::getRequiredExtensions() {
-    std::vector<const char*> extensions;
+    uint32_t glfwExtensionCount = 0;
+    const char** glfwExtensions;
+    glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+
+    std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
 
     if (m_enableValidationLayers) {
         extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
