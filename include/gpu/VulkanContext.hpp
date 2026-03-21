@@ -54,12 +54,14 @@ private:
     };
 
     const std::vector<const char*> m_deviceExtensions = {
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME
     #ifdef __APPLE__
         "VK_KHR_portability_subset"
     #endif
     };
 
     DeviceScore rateDeviceSuitability(VkPhysicalDevice device);
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
 };

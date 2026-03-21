@@ -182,8 +182,24 @@ void VulkanContext::createLogicalDevice() {
     vkGetDeviceQueue(m_device, m_computeQueueFamily, 0, &m_computeQueue);
 }
 
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+    std::vector<VkExtensionProperties> available(extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, available.data());
+
+    // Check every required extension is in the available list
+    std::set<std::string> required(m_deviceExtensions.begin(), m_deviceExtensions.end());
+    for (const auto& ext : available) {
+        required.erase(ext.extensionName);
+    }
+    return required.empty();
+}
+
 DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
     DeviceScore result;
+
+    if (!checkDeviceExtensionSupport(device)) { return result; } // fail fast check
 
     VkPhysicalDeviceProperties deviceProperties;
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
