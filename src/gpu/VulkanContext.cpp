@@ -146,8 +146,6 @@ void VulkanContext::pickPhysicalDevice() {
     m_computeQueueFamily = bestScore.computeFamily;
     m_presentQueueFamily = bestScore.presentFamily;
 
-    std::cout << "Selected Physical Device successfully. Score: " << bestScore.score << std::endl;
-
     // Debug logging
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
