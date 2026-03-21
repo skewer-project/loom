@@ -104,63 +104,43 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
 
-    // Prefer discrete GPU
-    for (const auto& device : devices) {
-        if (isDeviceSuitable(device)) {
-            m_physicalDevice = device;
-            break;
-        }
-    }
-
-    // Fallback to integrated GPU if no discrete GPU was found
-    if (m_physicalDevice == VK_NULL_HANDLE) {
+    // Prefer discrete GPU, fall back to integrated
+    for (auto type : { VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU}) {
         for (const auto& device : devices) {
-            VkPhysicalDeviceProperties deviceProperties;
-            vkGetPhysicalDeviceProperties(device, &deviceProperties);
-
-            uint32_t queueFamilyCount = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-            std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-            vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-            bool supportsCompute = false;
-            for (const auto& queueFamily : queueFamilies) {
-                if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) {
-                    supportsCompute = true;
-                    break;
-                }
-            }
-
-            if (supportsCompute && deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+            if (isDeviceSuitable(device)) {
                 m_physicalDevice = device;
-                break;
+                return;
             }
         }
     }
 
-    if (m_physicalDevice == VK_NULL_HANDLE) {
-        throw std::runtime_error("failed to find a suitable GPU!");
-    }
+    throw std::runtime_error("failed to find a suitable GPU!");
 }
 
-bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device) {
+bool VulkanContext::isDeviceSuitable(VkPhysicalDevice device, VkPhysicalDeviceType requiredType) {
     VkPhysicalDeviceProperties deviceProperties;
     vkGetPhysicalDeviceProperties(device, &deviceProperties);
 
+    if (deviceProperties.deviceType != requiredType) return false;
+
+    return supportsComputeQueue(device);
+}
+
+bool VulkanContext::supportsComputeQueue(VkPhysicalDevice device) {
     uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
 
-    bool supportsCompute = false;
-    for (const auto& queueFamily : queueFamilies) {
-        if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) {
-            supportsCompute = true;
-            break;
+        bool supportsGraphics = false;
+        bool supportsCompute = false;
+
+        for (const auto& queueFamily : queueFamilies) {
+            if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) { supportsGraphics = true; }
+            if (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT) { supportsCompute = true; }
         }
-    }
 
-    return supportsCompute && deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        return supportsCompute && supportsGraphics;
 }
 
 void VulkanContext::setupDebugMessenger() {
