@@ -3,6 +3,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <map>
+#include <set>
 
 namespace loom {
 
@@ -38,6 +39,10 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 VulkanContext::VulkanContext() {}
 
 VulkanContext::~VulkanContext() {
+    if (m_device != VK_NULL_HANDLE) {
+        vkDestroyDevice(m_device, nullptr);
+    }
+
     if (m_enableValidationLayers && m_debugMessenger != VK_NULL_HANDLE) {
         DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
     }
@@ -135,6 +140,46 @@ void VulkanContext::pickPhysicalDevice() {
     vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
     std::cout << "Selected GPU: " << props.deviceName
               << " (score: " << bestScore.score << ")" << std::endl;
+}
+
+void VulkanContext::createLogicalDevice() {
+    std::set<uint32_t> uniqueQueueFamilies = {m_graphicsQueueFamily, m_computeQueueFamily};
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+    const float queuePriority = 1.0f;
+
+    for (uint32_t queueFamily : uniqueQueueFamilies) {
+        VkDeviceQueueCreateInfo queueCreateInfo{};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = queueFamily;
+        queueCreateInfo.queueCount = 1;
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+    }
+
+    VkPhysicalDeviceFeatures deviceFeatures{};
+
+    VkDeviceCreateInfo createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    createInfo.pQueueCreateInfos = queueCreateInfos.data();
+    createInfo.pEnabledFeatures = &deviceFeatures;
+
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(m_deviceExtensions.size());
+    createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
+
+    if (m_enableValidationLayers) {
+        createInfo.enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size());
+        createInfo.ppEnabledLayerNames = m_validationLayers.data();
+    } else {
+        createInfo.enabledLayerCount = 0;
+    }
+
+    if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create logical device!");
+    }
+
+    vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
+    vkGetDeviceQueue(m_device, m_computeQueueFamily, 0, &m_computeQueue);
 }
 
 DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
