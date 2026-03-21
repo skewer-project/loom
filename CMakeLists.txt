@@ -31,6 +31,7 @@ FetchContent_MakeAvailable(glfw)
 add_executable(Loom
     src/main.cpp
     src/platform/Window.cpp
+    src/gpu/VulkanContext.cpp
 )
 
 # Include directories
@@ -42,10 +43,4 @@ target_link_libraries(Loom PRIVATE glfw Vulkan::Vulkan)
 # Apple-specific config for MoltenVK
 if(APPLE)
     target_compile_definitions(Loom PRIVATE VK_USE_PLATFORM_MACOS_MVK)
-
-    # Required for modern macOS to find the Vulkan loader/layers
-    set_target_properties(Loom PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.loom.engine"
-    )
 endif()
