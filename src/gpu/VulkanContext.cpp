@@ -5,6 +5,8 @@
 #include <map>
 #include <set>
 
+#include "platform/Window.hpp"
+
 namespace loom {
 
 namespace {
@@ -56,6 +58,14 @@ VulkanContext::~VulkanContext() {
     if (m_instance != VK_NULL_HANDLE) {
         vkDestroyInstance(m_instance, nullptr);
     }
+}
+
+void VulkanContext::init(const loom::Window& window, const char* appName) {
+    createInstance(appName);
+    setupDebugMessenger();
+    createSurface(window.getNativeWindow());
+    pickPhysicalDevice();
+    createLogicalDevice();
 }
 
 void VulkanContext::createInstance(const char* appName) {

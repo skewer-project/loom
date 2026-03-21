@@ -5,6 +5,8 @@
 #include <vector>
 #include <iostream>
 
+#include "platform/Window.hpp"
+
 namespace loom {
 
 struct DeviceScore {
@@ -26,6 +28,7 @@ public:
     VulkanContext();
     ~VulkanContext();
 
+    void init(const loom::Window& window, const char* appName);
     void createInstance(const char* appName);
     void setupDebugMessenger();
     void createSurface(GLFWwindow* window);
