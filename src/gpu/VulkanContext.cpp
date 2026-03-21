@@ -91,8 +91,6 @@ void VulkanContext::createInstance(const char* appName) {
     if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) {
         throw std::runtime_error("failed to create Vulkan instance!");
     }
-
-    pickPhysicalDevice();
 }
 
 void VulkanContext::pickPhysicalDevice() {
