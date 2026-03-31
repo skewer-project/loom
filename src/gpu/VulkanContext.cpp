@@ -44,6 +44,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 VulkanContext::VulkanContext() {}
 
 VulkanContext::~VulkanContext() {
+    cleanupSwapchain();
+
     if (m_device != VK_NULL_HANDLE) {
         vkDestroyDevice(m_device, nullptr);
     }
