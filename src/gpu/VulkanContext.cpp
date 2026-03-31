@@ -410,7 +410,7 @@ void VulkanContext::createDescriptorPool() {
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
     // This flag is mandatory to allow external UI systems or node graphs to free individual descriptor sets internally without resetting the entire pool.
-    framebufferInfo.maxSets = 1000;
+    poolInfo.maxSets = 1000;
     // Must be >= the total number of descriptor sets
     // that will ever be allocated from this pool simultaneously.
     poolInfo.poolSizeCount = 1;
