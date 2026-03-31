@@ -24,6 +24,12 @@ struct DeviceScore {
     }
 };
 
+struct SwapchainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
+
 class VulkanContext {
 public:
     VulkanContext();
@@ -35,6 +41,9 @@ public:
     void createSurface(GLFWwindow* window);
     void pickPhysicalDevice();
     void createLogicalDevice();
+    void createSwapchain(GLFWwindow* window);
+    void cleanupSwapchain();
+    void recreateSwapchain(GLFWwindow* window);
 
     VkInstance getVkInstance() const { return m_instance; }
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
@@ -54,6 +63,11 @@ private:
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
     uint32_t m_computeQueueFamily  = UINT32_MAX;
     uint32_t m_presentQueueFamily  = UINT32_MAX;
+
+    VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
+    std::vector<VkImage> m_swapchainImages;
+    VkFormat m_swapchainImageFormat;
+    VkExtent2D m_swapchainExtent;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
