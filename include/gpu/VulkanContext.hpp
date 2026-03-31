@@ -42,6 +42,7 @@ public:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createSwapchain(GLFWwindow* window);
+    void createImageViews();
     void cleanupSwapchain();
     void recreateSwapchain(GLFWwindow* window);
 
@@ -68,6 +69,7 @@ private:
     std::vector<VkImage> m_swapchainImages;
     VkFormat m_swapchainImageFormat;
     VkExtent2D m_swapchainExtent;
+    std::vector<VkImageView> m_swapchainImageViews;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
