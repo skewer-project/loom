@@ -7,12 +7,9 @@
 #include <iostream>
 
 #include "platform/Window.hpp"
+#include "core/Constants.hpp"
 
 namespace loom {
-
-static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
-// The number of frames the CPU can prepare ahead of
-// the GPU. 2 is the standard balance between latency and throughput.
 
 struct DeviceScore {
     int score = 0;
