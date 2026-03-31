@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <map>
 #include <set>
+#include <algorithm>
 
 #include "platform/Window.hpp"
 
