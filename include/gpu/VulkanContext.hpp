@@ -83,6 +83,27 @@ private:
     std::vector<VkImageView> m_swapchainImageViews;
     std::vector<VkFramebuffer> m_swapchainFramebuffers;
 
+    VkCommandPool m_commandPool = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> m_commandBuffers;
+    // One command buffer per frame in flight. Allocated
+    // from m_commandPool — destroyed implicitly when the pool is destroyed.
+
+    std::vector<VkSemaphore> m_imageAvailableSemaphores;
+    // Signaled when the swapchain image is ready to be
+    // rendered into. GPU-to-GPU signal.
+
+    std::vector<VkSemaphore> m_renderFinishedSemaphores;
+    // Signaled when rendering is complete and the image
+    // is ready to be presented. GPU-to-GPU signal.
+
+    std::vector<VkFence> m_inFlightFences;
+    // Blocks the CPU from recording the next frame until
+    // the GPU has finished the previous use of this frame's resources.
+    // CPU-to-GPU signal.
+
+    uint32_t m_currentFrame = 0;
+    // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
+
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
 #else
