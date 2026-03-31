@@ -466,6 +466,7 @@ void VulkanContext::cleanupSwapchain() {
 
     if (m_swapchain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+        m_swapchain = VK_NULL_HANDLE;
     }
 }
 
