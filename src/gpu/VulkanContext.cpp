@@ -45,10 +45,20 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 VulkanContext::VulkanContext() {}
 
 VulkanContext::~VulkanContext() {
+    if (m_device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(m_device);
+    }
+
     cleanupSwapchain();
 
     if (m_renderPass != VK_NULL_HANDLE) {
         vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+    }
+
+    cleanupSyncObjects();
+
+    if (m_commandPool != VK_NULL_HANDLE) {
+        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     }
 
     if (m_device != VK_NULL_HANDLE) {
