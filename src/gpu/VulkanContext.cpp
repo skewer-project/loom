@@ -368,6 +368,11 @@ void VulkanContext::createFramebuffers() {
 }
 
 void VulkanContext::cleanupSwapchain() {
+    for (auto framebuffer : m_swapchainFramebuffers) {
+        vkDestroyFramebuffer(m_device, framebuffer, nullptr);
+    }
+    m_swapchainFramebuffers.clear();
+
     for (auto imageView : m_swapchainImageViews) {
         vkDestroyImageView(m_device, imageView, nullptr);
     }
