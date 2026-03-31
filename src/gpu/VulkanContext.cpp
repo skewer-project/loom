@@ -47,6 +47,10 @@ VulkanContext::VulkanContext() {}
 VulkanContext::~VulkanContext() {
     cleanupSwapchain();
 
+    if (m_renderPass != VK_NULL_HANDLE) {
+        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
+    }
+
     if (m_device != VK_NULL_HANDLE) {
         vkDestroyDevice(m_device, nullptr);
     }
@@ -71,6 +75,7 @@ void VulkanContext::init(const loom::Window& window, const char* appName) {
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapchain(window.getNativeWindow());
+    createRenderPass();
     createImageViews();
 }
 
