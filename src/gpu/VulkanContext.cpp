@@ -88,6 +88,9 @@ void VulkanContext::init(const loom::Window& window, const char* appName) {
     createRenderPass();
     createImageViews();
     createFramebuffers();
+    createCommandPool();
+    allocateCommandBuffers();
+    createSyncObjects();
 }
 
 void VulkanContext::createInstance(const char* appName) {
