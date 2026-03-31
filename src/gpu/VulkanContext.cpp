@@ -380,6 +380,79 @@ void VulkanContext::createFramebuffers() {
     }
 }
 
+void VulkanContext::createCommandPool() {
+    VkCommandPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    // Allows individual command buffers to be re-recorded
+    // each frame without resetting the entire pool.
+    poolInfo.queueFamilyIndex = m_graphicsQueueFamily;
+    // Command buffers from this pool can only be submitted
+    // to queues from this family.
+
+    if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create command pool!");
+    }
+}
+
+void VulkanContext::allocateCommandBuffers() {
+    m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    // Primary buffers are submitted directly to a queue.
+    // Secondary buffers are called from primary buffers — not needed here.
+    allocInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
+
+    if (vkAllocateCommandBuffers(m_device, &allocInfo, m_commandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate command buffers!");
+    }
+}
+
+void VulkanContext::createSyncObjects() {
+    m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkSemaphoreCreateInfo semaphoreInfo{};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    // Semaphores have no configuration — they are purely
+    // a GPU-side signal with no CPU-visible state.
+
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+    // Created in the signaled state so the very first
+    // frame does not block waiting on a fence that was never submitted.
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create synchronization objects for frame " + std::to_string(i) + "!");
+        }
+    }
+}
+
+void VulkanContext::cleanupSyncObjects() {
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        if (i < m_imageAvailableSemaphores.size() && m_imageAvailableSemaphores[i] != VK_NULL_HANDLE) {
+            vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
+        }
+        if (i < m_renderFinishedSemaphores.size() && m_renderFinishedSemaphores[i] != VK_NULL_HANDLE) {
+            vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
+        }
+        if (i < m_inFlightFences.size() && m_inFlightFences[i] != VK_NULL_HANDLE) {
+            vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
+        }
+    }
+    m_imageAvailableSemaphores.clear();
+    m_renderFinishedSemaphores.clear();
+    m_inFlightFences.clear();
+}
+
 void VulkanContext::cleanupSwapchain() {
     for (auto framebuffer : m_swapchainFramebuffers) {
         vkDestroyFramebuffer(m_device, framebuffer, nullptr);
