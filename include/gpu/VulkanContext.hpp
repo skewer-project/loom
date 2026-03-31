@@ -42,6 +42,7 @@ public:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createSwapchain(GLFWwindow* window);
+    void createRenderPass();
     void createImageViews();
     void cleanupSwapchain();
     void recreateSwapchain(GLFWwindow* window);
@@ -56,6 +57,7 @@ private:
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
+    VkRenderPass m_renderPass = VK_NULL_HANDLE;
 
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_computeQueue = VK_NULL_HANDLE;
