@@ -5,6 +5,7 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <limits>
 
 #include "platform/Window.hpp"
 
