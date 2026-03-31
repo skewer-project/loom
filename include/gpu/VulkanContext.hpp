@@ -77,6 +77,7 @@ private:
     uint32_t m_presentQueueFamily  = UINT32_MAX;
 
     VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
+    VkSwapchainKHR m_oldSwapchain = VK_NULL_HANDLE;
     std::vector<VkImage> m_swapchainImages;
     VkFormat m_swapchainImageFormat;
     VkExtent2D m_swapchainExtent;

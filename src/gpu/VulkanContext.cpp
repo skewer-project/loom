@@ -266,7 +266,7 @@ void VulkanContext::createSwapchain(GLFWwindow* window) {
     createInfo.presentMode = presentMode;
     createInfo.clipped = VK_TRUE;
 
-    createInfo.oldSwapchain = VK_NULL_HANDLE;
+    createInfo.oldSwapchain = m_oldSwapchain;
 
     if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) != VK_SUCCESS) {
         throw std::runtime_error("failed to create swapchain!");
@@ -473,12 +473,16 @@ void VulkanContext::recreateSwapchain(GLFWwindow* window) {
 
     vkDeviceWaitIdle(m_device);
 
+    m_oldSwapchain = m_swapchain;
     cleanupSwapchain();
 
     createSwapchain(window);
     createImageViews();
     createFramebuffers();
     // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
+
+    vkDestroySwapchainKHR(m_device, m_oldSwapchain, nullptr); // safe to destroy now
+    m_oldSwapchain = VK_NULL_HANDLE;
 }
 
 SwapchainSupportDetails VulkanContext::querySwapchainSupport(VkPhysicalDevice device) {
