@@ -397,6 +397,7 @@ void VulkanContext::recreateSwapchain(GLFWwindow* window) {
 
     createSwapchain(window);
     createImageViews();
+    createFramebuffers();
     // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
 }
 
