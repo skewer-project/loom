@@ -60,6 +60,10 @@ VulkanContext::~VulkanContext() {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     }
 
+    if (m_descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    }
+
     if (m_device != VK_NULL_HANDLE) {
         vkDestroyDevice(m_device, nullptr);
     }
@@ -90,6 +94,7 @@ void VulkanContext::init(const loom::Window& window, const char* appName) {
     createCommandPool();
     allocateCommandBuffers();
     createSyncObjects();
+    createDescriptorPool();
 }
 
 void VulkanContext::createInstance(const char* appName) {
