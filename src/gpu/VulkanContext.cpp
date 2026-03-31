@@ -77,6 +77,7 @@ void VulkanContext::init(const loom::Window& window, const char* appName) {
     createSwapchain(window.getNativeWindow());
     createRenderPass();
     createImageViews();
+    createFramebuffers();
 }
 
 void VulkanContext::createInstance(const char* appName) {
@@ -334,6 +335,34 @@ void VulkanContext::createImageViews() {
 
         if (vkCreateImageView(m_device, &createInfo, nullptr, &m_swapchainImageViews[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create image views for swapchain image " + std::to_string(i) + "!");
+        }
+    }
+}
+
+void VulkanContext::createFramebuffers() {
+    m_swapchainFramebuffers.resize(m_swapchainImageViews.size());
+
+    for (size_t i = 0; i < m_swapchainImageViews.size(); i++) {
+        VkImageView attachments[] = {
+            m_swapchainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferInfo{};
+        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferInfo.renderPass = m_renderPass;
+        // The framebuffer must be compatible with this specific
+        // render pass. It will only be used with this render pass.
+        framebufferInfo.attachmentCount = 1;
+        framebufferInfo.pAttachments = attachments;
+        // This binds the specific swapchain image view to the
+        // color attachment slot defined in the render pass.
+        framebufferInfo.width = m_swapchainExtent.width;
+        framebufferInfo.height = m_swapchainExtent.height;
+        framebufferInfo.layers = 1;
+        // >1 is used for stereoscopic rendering — not needed here.
+
+        if (vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapchainFramebuffers[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create framebuffer for swapchain image " + std::to_string(i) + "!");
         }
     }
 }
