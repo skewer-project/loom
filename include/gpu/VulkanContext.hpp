@@ -87,6 +87,11 @@ private:
     };
 
     DeviceScore rateDeviceSuitability(VkPhysicalDevice device);
+    SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice device);
+    VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats);
+    VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes);
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, GLFWwindow* window);
+
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();
