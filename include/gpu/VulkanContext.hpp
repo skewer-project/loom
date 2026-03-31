@@ -44,6 +44,7 @@ public:
     void createSwapchain(GLFWwindow* window);
     void createRenderPass();
     void createImageViews();
+    void createFramebuffers();
     void cleanupSwapchain();
     void recreateSwapchain(GLFWwindow* window);
 
@@ -72,6 +73,7 @@ private:
     VkFormat m_swapchainImageFormat;
     VkExtent2D m_swapchainExtent;
     std::vector<VkImageView> m_swapchainImageViews;
+    std::vector<VkFramebuffer> m_swapchainFramebuffers;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
