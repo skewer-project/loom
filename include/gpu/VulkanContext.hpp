@@ -49,8 +49,12 @@ public:
     void createRenderPass();
     void createImageViews();
     void createFramebuffers();
+    void createCommandPool();
+    void allocateCommandBuffers();
+    void createSyncObjects();
     void cleanupSwapchain();
     void recreateSwapchain(GLFWwindow* window);
+    void cleanupSyncObjects();
 
     VkInstance getVkInstance() const { return m_instance; }
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
