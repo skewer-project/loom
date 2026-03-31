@@ -437,15 +437,9 @@ void VulkanContext::createSyncObjects() {
 
 void VulkanContext::cleanupSyncObjects() {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        if (i < m_imageAvailableSemaphores.size() && m_imageAvailableSemaphores[i] != VK_NULL_HANDLE) {
-            vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
-        }
-        if (i < m_renderFinishedSemaphores.size() && m_renderFinishedSemaphores[i] != VK_NULL_HANDLE) {
-            vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
-        }
-        if (i < m_inFlightFences.size() && m_inFlightFences[i] != VK_NULL_HANDLE) {
-            vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
-        }
+        vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
+        vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
+        vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
     m_imageAvailableSemaphores.clear();
     m_renderFinishedSemaphores.clear();
