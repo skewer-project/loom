@@ -69,6 +69,7 @@ void VulkanContext::init(const loom::Window& window, const char* appName) {
     createSurface(window.getNativeWindow());
     pickPhysicalDevice();
     createLogicalDevice();
+    createSwapchain(window.getNativeWindow());
 }
 
 void VulkanContext::createInstance(const char* appName) {
