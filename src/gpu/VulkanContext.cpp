@@ -399,6 +399,28 @@ void VulkanContext::createCommandPool() {
     }
 }
 
+void VulkanContext::createDescriptorPool() {
+    VkDescriptorPoolSize poolSizes[] = {
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 }
+        // 1000 allows one descriptor per node preview
+        // image in the compositor. Expand if needed.
+    };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    // This flag is mandatory to allow external UI systems or node graphs to free individual descriptor sets internally without resetting the entire pool.
+    framebufferInfo.maxSets = 1000;
+    // Must be >= the total number of descriptor sets
+    // that will ever be allocated from this pool simultaneously.
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = poolSizes;
+
+    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor pool!");
+    }
+}
+
 void VulkanContext::allocateCommandBuffers() {
     m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
 
