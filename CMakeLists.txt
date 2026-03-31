@@ -74,3 +74,10 @@ target_link_libraries(Loom PRIVATE
 if(APPLE)
     target_compile_definitions(Loom PRIVATE VK_USE_PLATFORM_MACOS_MVK)
 endif()
+
+# Optional ImGui compile optimization
+if(MSVC)
+    target_compile_options(imgui PRIVATE /O2)
+else()
+    target_compile_options(imgui PRIVATE -O3)
+endif()
