@@ -288,10 +288,14 @@ void VulkanContext::createImageViews() {
 }
 
 void VulkanContext::cleanupSwapchain() {
+    for (auto imageView : m_swapchainImageViews) {
+        vkDestroyImageView(m_device, imageView, nullptr);
+    }
+    m_swapchainImageViews.clear();
+
     if (m_swapchain != VK_NULL_HANDLE) {
         vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
     }
-    // TODO: destroy framebuffers and image views here when they are added.
 }
 
 void VulkanContext::recreateSwapchain(GLFWwindow* window) {
