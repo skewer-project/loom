@@ -49,6 +49,7 @@ public:
     void createCommandPool();
     void allocateCommandBuffers();
     void createSyncObjects();
+    void createDescriptorPool();
     void cleanupSwapchain();
     void recreateSwapchain(GLFWwindow* window);
     void cleanupSyncObjects();
@@ -56,6 +57,7 @@ public:
     VkInstance getVkInstance() const { return m_instance; }
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     VkDevice getDevice() const { return m_device; }
+    VkDescriptorPool getDescriptorPool() const { return m_descriptorPool; } // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
 
 private:
     VkInstance m_instance = VK_NULL_HANDLE;
@@ -64,6 +66,7 @@ private:
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkRenderPass m_renderPass = VK_NULL_HANDLE;
+    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_computeQueue = VK_NULL_HANDLE;
