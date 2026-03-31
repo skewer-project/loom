@@ -394,6 +394,12 @@ DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
     // If it doesn't have the required queues, it's completely unsuitable (score = 0)
     if (!result.isComplete()) { return result; }
 
+    // Check for swapchain support
+    SwapchainSupportDetails swapchainSupport = querySwapchainSupport(device);
+    if (swapchainSupport.formats.empty() || swapchainSupport.presentModes.empty()) {
+        return result;
+    }
+
     // Calculate the score
     result.score = 1; // Base score for meeting minimum requirements
 
