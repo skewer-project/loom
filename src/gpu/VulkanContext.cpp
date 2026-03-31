@@ -29,10 +29,8 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
         func(instance, debugMessenger, pAllocator);
     }
 }
-} // anonymous namespace
 
-// Static debug callback
-static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     VkDebugUtilsMessageTypeFlagsEXT messageType,
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
@@ -41,6 +39,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
     std::cerr << "Vulkan Validation Layer: " << pCallbackData->pMessage << std::endl;
     return VK_FALSE;
 }
+} // anonymous namespace
 
 VulkanContext::VulkanContext() {}
 
