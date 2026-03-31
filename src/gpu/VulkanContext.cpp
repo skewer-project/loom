@@ -208,6 +208,81 @@ void VulkanContext::createLogicalDevice() {
     vkGetDeviceQueue(m_device, m_presentQueueFamily, 0, &m_presentQueue);
 }
 
+void VulkanContext::createSwapchain(GLFWwindow* window) {
+    SwapchainSupportDetails swapchainSupport = querySwapchainSupport(m_physicalDevice);
+
+    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapchainSupport.formats);
+    VkPresentModeKHR presentMode = chooseSwapPresentMode(swapchainSupport.presentModes);
+    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities, window);
+
+    uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
+    if (swapchainSupport.capabilities.maxImageCount > 0 && imageCount > swapchainSupport.capabilities.maxImageCount) {
+        imageCount = swapchainSupport.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR createInfo{};
+    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    createInfo.surface = m_surface;
+
+    createInfo.minImageCount = imageCount;
+    createInfo.imageFormat = surfaceFormat.format;
+    createInfo.imageColorSpace = surfaceFormat.colorSpace;
+    createInfo.imageExtent = extent;
+    createInfo.imageArrayLayers = 1;
+    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    uint32_t queueFamilyIndices[] = {m_graphicsQueueFamily, m_presentQueueFamily};
+
+    if (m_graphicsQueueFamily != m_presentQueueFamily) {
+        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        createInfo.queueFamilyIndexCount = 2;
+        createInfo.pQueueFamilyIndices = queueFamilyIndices;
+    } else {
+        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+
+    createInfo.preTransform = swapchainSupport.capabilities.currentTransform;
+    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    createInfo.presentMode = presentMode;
+    createInfo.clipped = VK_TRUE;
+
+    createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create swapchain!");
+    }
+
+    vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, nullptr);
+    m_swapchainImages.resize(imageCount);
+    vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, m_swapchainImages.data());
+
+    m_swapchainImageFormat = surfaceFormat.format;
+    m_swapchainExtent = extent;
+}
+
+void VulkanContext::cleanupSwapchain() {
+    if (m_swapchain != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+    }
+    // TODO: destroy framebuffers and image views here when they are added.
+}
+
+void VulkanContext::recreateSwapchain(GLFWwindow* window) {
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(window, &width, &height);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(m_device);
+
+    cleanupSwapchain();
+
+    createSwapchain(window);
+    // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
+}
+
 bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
     uint32_t extensionCount;
     vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
