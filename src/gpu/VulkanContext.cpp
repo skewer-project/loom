@@ -465,11 +465,11 @@ void VulkanContext::cleanupSwapchain() {
     }
 }
 
-void VulkanContext::recreateSwapchain(GLFWwindow* window) {
+void VulkanContext::recreateSwapchain() {
     int width = 0, height = 0;
-    glfwGetFramebufferSize(window, &width, &height);
+    glfwGetFramebufferSize(m_window, &width, &height);
     while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(window, &width, &height);
+        glfwGetFramebufferSize(m_window, &width, &height);
         glfwWaitEvents();
     }
 
@@ -478,7 +478,7 @@ void VulkanContext::recreateSwapchain(GLFWwindow* window) {
     m_oldSwapchain = m_swapchain;
     cleanupSwapchain();
 
-    createSwapchain(window);
+    createSwapchain();
     createImageViews();
     // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
 
