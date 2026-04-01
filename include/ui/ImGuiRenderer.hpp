@@ -17,6 +17,8 @@ struct ImGuiRendererCreateInfo {
     VkFormat         colorFormat;
     uint32_t         imageCount;
     uint32_t         minImageCount;
+    // TODO: Add custom font path and size fields here when
+    // the Loom UI design requires a specific typeface.
 };
 
 class ImGuiRenderer {
