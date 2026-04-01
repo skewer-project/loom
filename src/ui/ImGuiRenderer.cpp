@@ -42,13 +42,13 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     init_info.QueueFamily = info.graphicsQueueFamily;
     init_info.Queue = info.graphicsQueue;
     init_info.DescriptorPool = info.descriptorPool;
-    init_info.RenderPass = info.renderPass;
+    init_info.PipelineInfoMain.RenderPass = info.renderPass;
     init_info.MinImageCount = info.minImageCount;
     init_info.ImageCount = info.imageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.Allocator = nullptr;
-    init_info.CheckVulkanResult = nullptr; // Optional: could add a callback here
+    init_info.CheckVkResultFn = nullptr; // Optional: could add a callback here
 
     if (!ImGui_ImplVulkan_Init(&init_info)) {
         throw std::runtime_error("failed to initialize ImGui Vulkan backend!");
