@@ -44,15 +44,15 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     init_info.DescriptorPool = info.descriptorPool;
     init_info.MinImageCount = info.minImageCount;
     init_info.ImageCount = info.imageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.PipelineInfoMain.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
 
     // Dynamic rendering requires telling ImGui
     // what color format the swapchain uses so it can build
     // its internal pipeline without a render pass object.
     init_info.UseDynamicRendering = true;
-    init_info.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &info.colorFormat;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &info.colorFormat;
 
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.Allocator = nullptr;
