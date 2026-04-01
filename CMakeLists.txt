@@ -51,7 +51,11 @@ add_executable(Loom
 )
 
 # Include directories
-target_include_directories(Loom PRIVATE include)
+target_include_directories(Loom PRIVATE 
+    include
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
 
 target_link_libraries(imgui PUBLIC
     glfw
