@@ -420,40 +420,50 @@ void VulkanContext::allocateCommandBuffers() {
 
 void VulkanContext::createSyncObjects() {
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
 
+    // Size this one to our safe maximum
+    m_renderFinishedSemaphores.resize(MAX_SWAPCHAIN_IMAGES);
+
+    // Semaphores have no configuration — they are purely a GPU-side signal with no CPU-visible state
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    // Semaphores have no configuration — they are purely
-    // a GPU-side signal with no CPU-visible state.
 
+    // Created in the signaled state so the very first
+    // frame does not block waiting on a fence that was never submitted.
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    // Created in the signaled state so the very first
-    // frame does not block waiting on a fence that was never submitted.
 
-    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
-
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
-            vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create synchronization objects for frame " + std::to_string(i) + "!");
+    // Create frame-linked objects
+        for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+                vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create frame synchronization objects!");
+            }
         }
-    }
+
+        // Create image-linked objects
+        for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+            if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to create image synchronization objects!");
+            }
+        }
 }
 
 void VulkanContext::cleanupSyncObjects() {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
-        vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
-    }
+            vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
+            vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
+        }
+        for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+            vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
+        }
     m_imageAvailableSemaphores.clear();
     m_renderFinishedSemaphores.clear();
     m_inFlightFences.clear();
+    m_imagesInFlight.clear();
 }
 
 void VulkanContext::cleanupSwapchain() {
@@ -830,7 +840,7 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     // Step L — Submit:
     VkSemaphore waitSemaphores[] = {m_imageAvailableSemaphores[m_currentFrame]};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[m_currentFrame]};
+    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[imageIndex]};
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
