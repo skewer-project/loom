@@ -13,8 +13,8 @@ struct ImGuiRendererCreateInfo {
     VkDevice         device;
     uint32_t         graphicsQueueFamily;
     VkQueue          graphicsQueue;
-    VkRenderPass     renderPass;
     VkDescriptorPool descriptorPool;
+    VkFormat         colorFormat;
     uint32_t         imageCount;
     uint32_t         minImageCount;
 };

@@ -43,9 +43,7 @@ public:
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createSwapchain(GLFWwindow* window);
-    void createRenderPass();
     void createImageViews();
-    void createFramebuffers();
     void createCommandPool();
     void allocateCommandBuffers();
     void createSyncObjects();
@@ -58,6 +56,7 @@ public:
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     VkDevice getDevice() const { return m_device; }
     VkDescriptorPool getDescriptorPool() const { return m_descriptorPool; } // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
+    VkFormat getSwapchainImageFormat() const { return m_swapchainImageFormat; }
 
 private:
     VkInstance m_instance = VK_NULL_HANDLE;
@@ -65,7 +64,6 @@ private:
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkRenderPass m_renderPass = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
@@ -82,7 +80,6 @@ private:
     VkFormat m_swapchainImageFormat;
     VkExtent2D m_swapchainExtent;
     std::vector<VkImageView> m_swapchainImageViews;
-    std::vector<VkFramebuffer> m_swapchainFramebuffers;
 
     VkCommandPool m_commandPool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;
@@ -116,7 +113,8 @@ private:
     };
 
     const std::vector<const char*> m_deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME
     #ifdef __APPLE__
         , "VK_KHR_portability_subset"
     #endif
