@@ -104,7 +104,7 @@ void VulkanContext::createInstance(const char* appName) {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Loom Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -216,7 +216,7 @@ void VulkanContext::createLogicalDevice() {
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pNext = &dynamicRenderingFeature; 
+    createInfo.pNext = &dynamicRenderingFeature;
     // pNext chain: createInfo -> dynamicRenderingFeature
     //              -> sync2Features -> nullptr
     // Both dynamic rendering and synchronization2 must be
