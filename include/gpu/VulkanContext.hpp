@@ -110,6 +110,9 @@ private:
     // the GPU has finished the previous use of this frame's resources.
     // CPU-to-GPU signal.
 
+    // Keeps track of which in-flight fence is using which swapchain image
+    std::vector<VkFence> m_imagesInFlight;
+
     uint32_t m_currentFrame = 0;
     // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
 

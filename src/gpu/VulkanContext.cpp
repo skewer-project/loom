@@ -434,6 +434,8 @@ void VulkanContext::createSyncObjects() {
     // Created in the signaled state so the very first
     // frame does not block waiting on a fence that was never submitted.
 
+    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
+
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) != VK_SUCCESS ||
             vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) != VK_SUCCESS ||
@@ -744,6 +746,13 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swapchain image!");
     }
+
+    // Check if a previous frame is using this image (i.e. there is its fence to wait on)
+    if (m_imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    // Mark the image as now being in use by this frame
+    m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
 
     // Step C — Reset fence AFTER successful acquire:
     // Reset only after confirming we will submit
