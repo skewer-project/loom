@@ -50,6 +50,8 @@ VulkanContext::~VulkanContext() {
     }
 
     cleanupSwapchain();
+    vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+    m_swapchain = VK_NULL_HANDLE;
 
     cleanupSyncObjects();
 
@@ -471,11 +473,6 @@ void VulkanContext::cleanupSwapchain() {
         vkDestroyImageView(m_device, imageView, nullptr);
     }
     m_swapchainImageViews.clear();
-
-    if (m_swapchain != VK_NULL_HANDLE) {
-        vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-        m_swapchain = VK_NULL_HANDLE;
-    }
 }
 
 void VulkanContext::recreateSwapchain() {
