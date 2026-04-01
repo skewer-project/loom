@@ -246,12 +246,12 @@ void VulkanContext::createLogicalDevice() {
     vkGetDeviceQueue(m_device, m_presentQueueFamily, 0, &m_presentQueue);
 }
 
-void VulkanContext::createSwapchain(GLFWwindow* window) {
+void VulkanContext::createSwapchain() {
     SwapchainSupportDetails swapchainSupport = querySwapchainSupport(m_physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapchainSupport.formats);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapchainSupport.presentModes);
-    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities, window);
+    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities);
 
     uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
     if (swapchainSupport.capabilities.maxImageCount > 0 && imageCount > swapchainSupport.capabilities.maxImageCount) {
