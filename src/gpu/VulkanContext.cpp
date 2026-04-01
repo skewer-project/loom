@@ -207,9 +207,22 @@ void VulkanContext::createLogicalDevice() {
     dynamicRenderingFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
     dynamicRenderingFeature.dynamicRendering = VK_TRUE;
 
+    VkPhysicalDeviceSynchronization2Features sync2Features{};
+    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    sync2Features.synchronization2 = VK_TRUE;
+
+    dynamicRenderingFeature.pNext = &sync2Features;
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pNext = &dynamicRenderingFeature; // pNext chain enables dynamic rendering — replaces VkRenderPass and VkFramebuffer entirely.
+    createInfo.pNext = &dynamicRenderingFeature; 
+    // pNext chain: createInfo -> dynamicRenderingFeature
+    //              -> sync2Features -> nullptr
+    // Both dynamic rendering and synchronization2 must be
+    // explicitly enabled. vkCmdPipelineBarrier2 and
+    // VkImageMemoryBarrier2 require synchronization2.
+    // Using them without enabling this feature produces
+    // validation errors and undefined driver behavior.
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
