@@ -15,6 +15,7 @@ find_package(Vulkan REQUIRED)
 
 # FetchContent for GLFW
 include(FetchContent)
+
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -27,20 +28,54 @@ set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw)
 
-# Executable definition
+add_library(imgui STATIC
+    external/imgui/imgui.cpp
+    external/imgui/imgui_draw.cpp
+    external/imgui/imgui_tables.cpp
+    external/imgui/imgui_widgets.cpp
+    external/imgui/imgui_demo.cpp # TODO: Remove imgui_demo.cpp once ShowDemoWindow is confirmed working.
+    external/imgui/backends/imgui_impl_glfw.cpp
+    external/imgui/backends/imgui_impl_vulkan.cpp
+)
+
+target_include_directories(imgui PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
+)
+
 add_executable(Loom
     src/main.cpp
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
+    src/ui/ImGuiRenderer.cpp
 )
 
 # Include directories
-target_include_directories(Loom PUBLIC include)
+target_include_directories(Loom PRIVATE 
+    include
+    ${imgui_SOURCE_DIR}
+    ${imgui_SOURCE_DIR}/backends
+)
 
-# Link libraries
-target_link_libraries(Loom PRIVATE glfw Vulkan::Vulkan)
+target_link_libraries(imgui PUBLIC
+    glfw
+    Vulkan::Vulkan
+)
+
+target_link_libraries(Loom PRIVATE
+    imgui
+    glfw
+    Vulkan::Vulkan
+)
 
 # Apple-specific config for MoltenVK
 if(APPLE)
     target_compile_definitions(Loom PRIVATE VK_USE_PLATFORM_MACOS_MVK)
+endif()
+
+# Optional ImGui compile optimization
+if(MSVC)
+    target_compile_options(imgui PRIVATE /O2)
+else()
+    target_compile_options(imgui PRIVATE -O3)
 endif()
