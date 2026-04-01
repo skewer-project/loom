@@ -8,6 +8,7 @@
 
 #include "platform/Window.hpp"
 #include "core/Constants.hpp"
+#include "ui/ImGuiRenderer.hpp"
 
 namespace loom {
 
@@ -42,15 +43,18 @@ public:
     void createSurface(GLFWwindow* window);
     void pickPhysicalDevice();
     void createLogicalDevice();
-    void createSwapchain(GLFWwindow* window);
+    void createSwapchain();
     void createImageViews();
     void createCommandPool();
     void allocateCommandBuffers();
     void createSyncObjects();
     void createDescriptorPool();
     void cleanupSwapchain();
-    void recreateSwapchain(GLFWwindow* window);
+    void recreateSwapchain();
     void cleanupSyncObjects();
+
+    void waitIdle() const; // Called from main() before any destructor runs to ensure the GPU has finished all in-flight work.
+    void drawFrame(ImGuiRenderer& imgui);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -60,8 +64,12 @@ public:
     VkDevice getDevice() const { return m_device; }
     VkDescriptorPool getDescriptorPool() const { return m_descriptorPool; } // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
     VkFormat getSwapchainImageFormat() const { return m_swapchainImageFormat; }
+    uint32_t getGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
+    VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
+    uint32_t getSwapchainImageCount() const { return static_cast<uint32_t>(m_swapchainImages.size()); }
 
 private:
+    GLFWwindow* m_window = nullptr; // Non-owning pointer. The Window object in main() owns the GLFW window and outlives VulkanContext.
     VkInstance m_instance = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
     VkSurfaceKHR m_surface = VK_NULL_HANDLE;
