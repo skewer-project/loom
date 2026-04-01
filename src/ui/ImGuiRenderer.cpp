@@ -1,0 +1,91 @@
+#include "ui/ImGuiRenderer.hpp"
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_vulkan.h"
+#include <stdexcept>
+
+namespace loom {
+
+ImGuiRenderer::~ImGuiRenderer() {
+    shutdown();
+}
+
+void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
+    // Step A — Create ImGui context:
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // Enable keyboard navigation. Add
+    // ImGuiConfigFlags_DockingEnable here later for the
+    // compositor's dockable panel layout.
+
+    // Step B — Set ImGui style:
+    ImGui::StyleColorsDark();
+    // TODO: Replace with a custom loom theme
+    // once the node editor UI design is established.
+
+    // Step C — Initialize GLFW backend:
+    ImGui_ImplGlfw_InitForVulkan(info.window, true);
+    // 'true' installs GLFW callbacks automatically.
+    // Set to false and install manually if input conflicts arise
+    // with the node editor later.
+
+    // Step D — Initialize Vulkan backend:
+    // Field names and struct layout verified against imgui v1.92.6.
+    // If upgrading ImGui, re-verify this struct against the new
+    // imgui_impl_vulkan.h before building.
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = info.instance;
+    init_info.PhysicalDevice = info.physicalDevice;
+    init_info.Device = info.device;
+    init_info.QueueFamily = info.graphicsQueueFamily;
+    init_info.Queue = info.graphicsQueue;
+    init_info.DescriptorPool = info.descriptorPool;
+    init_info.RenderPass = info.renderPass;
+    init_info.MinImageCount = info.minImageCount;
+    init_info.ImageCount = info.imageCount;
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.PipelineCache = VK_NULL_HANDLE;
+    init_info.Allocator = nullptr;
+    init_info.CheckVulkanResult = nullptr; // Optional: could add a callback here
+
+    if (!ImGui_ImplVulkan_Init(&init_info)) {
+        throw std::runtime_error("failed to initialize ImGui Vulkan backend!");
+    }
+
+    m_initialized = true;
+}
+
+void ImGuiRenderer::beginFrame() {
+    // Order matters — Vulkan frame first,
+    // then GLFW, then ImGui. Reversing this causes input
+    // latency or assertion failures inside ImGui.
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+}
+
+void ImGuiRenderer::endFrame(VkCommandBuffer cmd) {
+    // endFrame must be called inside an active
+    // render pass. The command buffer must be in the recording
+    // state with vkCmdBeginRenderPass already called.
+    // Calling this outside a render pass is a validation error.
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+}
+
+void ImGuiRenderer::shutdown() {
+    // Guard with m_initialized to prevent double-shutdown:
+    if (!m_initialized) return;
+
+    // Shutdown order is the strict reverse of
+    // initialization order. Vulkan backend first, then GLFW,
+    // then the ImGui context itself.
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    m_initialized = false;
+}
+
+} // namespace loom
