@@ -19,8 +19,13 @@ public:
 
     GLFWwindow* getNativeWindow() const { return m_window; }
 
+    bool wasResized() const { return m_framebufferResized; }
+    void resetResizedFlag() { m_framebufferResized = false; }
+
 private:
     GLFWwindow* m_window;
+    bool m_framebufferResized = false;
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 };
 
 } // namespace loom

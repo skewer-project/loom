@@ -737,9 +737,18 @@ void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image, Vk
 }
 
 void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
+    // Retrieve Window wrapper class from the GLFW window
+    auto loomWindow = reinterpret_cast<loom::Window*>(glfwGetWindowUserPointer(m_window));
+
+    // Check if the window was resized
+    if (loomWindow->wasResized()) {
+        recreateSwapchain();
+        loomWindow->resetResizedFlag();
+        return; // Skip this frame and try again next loop
+    }
+
     // Step A — Wait for previous frame's fence:
-    // Block the CPU until the GPU has finished
-    // rendering the previous use of this frame slot's resources.
+    // Block the CPU until the GPU has finished rendering the previous use of this frame slot's resources.
     // UINT64_MAX disables the timeout — wait indefinitely.
     vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
 
@@ -748,8 +757,7 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        // Swapchain is no longer compatible with
-        // the surface — typically caused by a window resize.
+        // Swapchain is no longer compatible with the surface — typically caused by a window resize.
         // Recreate and skip this frame.
         recreateSwapchain();
         return;
@@ -763,6 +771,12 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     }
     // Mark the image as now being in use by this frame
     m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapchain();
+        loomWindow->resetResizedFlag(); // Clear it here too, just in case
+        return;
+    }
 
     // Step C — Reset fence AFTER successful acquire:
     // Reset only after confirming we will submit
