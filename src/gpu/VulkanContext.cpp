@@ -674,4 +674,197 @@ std::vector<const char*> VulkanContext::getRequiredExtensions() {
     return extensions;
 }
 
+void VulkanContext::waitIdle() const {
+    vkDeviceWaitIdle(m_device);
+}
+
+// Dynamic rendering requires manual image layout transitions.
+// Swapchain images start in UNDEFINED or PRESENT_SRC_KHR layout
+// and must be transitioned to COLOR_ATTACHMENT_OPTIMAL before
+// rendering, then back to PRESENT_SRC_KHR before presentation.
+// Render passes handled this automatically via initialLayout /
+// finalLayout — we now own this responsibility explicitly.
+void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout) {
+    VkImageMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        barrier.srcAccessMask = 0;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.srcAccessMask = 0;
+    }
+
+    if (newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    } else if (newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+        barrier.dstAccessMask = 0;
+    }
+
+    VkDependencyInfo depInfo{};
+    depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    depInfo.imageMemoryBarrierCount = 1;
+    depInfo.pImageMemoryBarriers = &barrier;
+
+    vkCmdPipelineBarrier2(cmd, &depInfo);
+}
+
+void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
+    // Step A — Wait for previous frame's fence:
+    // Block the CPU until the GPU has finished
+    // rendering the previous use of this frame slot's resources.
+    // UINT64_MAX disables the timeout — wait indefinitely.
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+
+    // Step B — Acquire next swapchain image:
+    uint32_t imageIndex;
+    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX, m_imageAvailableSemaphores[m_currentFrame], VK_NULL_HANDLE, &imageIndex);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        // Swapchain is no longer compatible with
+        // the surface — typically caused by a window resize.
+        // Recreate and skip this frame.
+        recreateSwapchain();
+        return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("failed to acquire swapchain image!");
+    }
+
+    // Step C — Reset fence AFTER successful acquire:
+    // Reset only after confirming we will submit
+    // work. Resetting before the acquire result check risks
+    // leaving the fence unsignaled if we returned early,
+    // causing the next frame to wait forever.
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // Step D — Build ImGui frame (CPU only, no GPU work yet):
+    imgui.beginFrame();
+    ImGui::ShowDemoWindow();
+    // MILESTONE: Remove ShowDemoWindow() once
+    // the demo window is confirmed working on screen.
+
+    // Step E — Reset and begin command buffer:
+    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0;
+    if (vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin command buffer!");
+    }
+
+    // Step F — Transition image to COLOR_ATTACHMENT_OPTIMAL:
+    // The swapchain image starts in an undefined
+    // state each frame. Transition it to the layout required
+    // for color writes before vkCmdBeginRendering.
+    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    // Step G — Begin dynamic rendering:
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = m_swapchainImageViews[imageIndex];
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}};
+    // Dark grey clear color.
+    // Replace with black or a compositor-appropriate default
+    // once the node editor UI is established.
+
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset = {0, 0};
+    renderingInfo.renderArea.extent = m_swapchainExtent;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(m_commandBuffers[m_currentFrame], &renderingInfo);
+
+    // Step H — Record ImGui draw calls:
+    // endFrame calls ImGui::Render() then
+    // ImGui_ImplVulkan_RenderDrawData() internally.
+    // Translates all ImGui geometry into Vulkan draw calls
+    // recorded into the active command buffer.
+    // Must be called inside an active vkCmdBeginRendering block.
+    imgui.endFrame(m_commandBuffers[m_currentFrame]);
+
+    // Step I — End dynamic rendering:
+    vkCmdEndRendering(m_commandBuffers[m_currentFrame]);
+
+    // Step J — Transition image to PRESENT_SRC_KHR:
+    // Transition the image to the layout required
+    // for presentation. The swapchain will reject images that
+    // are not in PRESENT_SRC_KHR when vkQueuePresentKHR is called.
+    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    // Step K — End command buffer:
+    if (vkEndCommandBuffer(m_commandBuffers[m_currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to record command buffer!");
+    }
+
+    // Step L — Submit:
+    VkSemaphore waitSemaphores[] = {m_imageAvailableSemaphores[m_currentFrame]};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[m_currentFrame]};
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_commandBuffers[m_currentFrame];
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+    }
+    // The fence signals when the GPU finishes
+    // this submission. The CPU will wait on it at the start
+    // of the next use of this frame slot in Step A.
+
+    // Step M — Present:
+    VkSwapchainKHR swapchains[] = {m_swapchain};
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapchains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    VkResult presentResult = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+        // Recreate here catches both the
+        // suboptimal case deferred from Step B and any
+        // out-of-date result returned by present itself.
+        recreateSwapchain();
+    } else if (presentResult != VK_SUCCESS) {
+        throw std::runtime_error("failed to present swapchain image!");
+    }
+
+    // Step N — Advance frame index. THIS LINE IS MANDATORY:
+    // Cycle to the next frame slot.
+    // Omitting this line means every frame uses slot 0,
+    // breaking the entire frames-in-flight system silently.
+    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
 } // namespace loom
