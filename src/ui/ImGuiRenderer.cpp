@@ -17,6 +17,7 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = "config/layout.ini";
     // Enable keyboard navigation. Add
     // ImGuiConfigFlags_DockingEnable here later for the
     // compositor's dockable panel layout.
