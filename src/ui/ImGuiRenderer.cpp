@@ -33,6 +33,7 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     // with the node editor later.
 
     // Step D — Initialize Vulkan backend:
+    m_colorFormat = info.colorFormat;
     // Field names and struct layout verified against imgui v1.92.6.
     // If upgrading ImGui, re-verify this struct against the new
     // imgui_impl_vulkan.h before building.
@@ -53,7 +54,7 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     init_info.UseDynamicRendering = true;
     init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
-    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &info.colorFormat;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &m_colorFormat;
 
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.Allocator = nullptr;
@@ -72,7 +73,7 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     // as it has been removed from the backend in this version (June 2025).
     // The backend allocates its own transfer resources,
     // performs the GPU upload, and cleans up automatically.
-    
+
     // If you add custom fonts via io.Fonts->AddFontFromFileTTF(),
     // do so BEFORE the first frame. Font data must be fully configured
     // before the atlas is baked and uploaded to the GPU.

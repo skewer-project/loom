@@ -36,9 +36,9 @@ public:
     void shutdown();
 
 private:
+    // Guards against double-shutdown if the destructor and an explicit shutdown() call overlap
     bool m_initialized = false;
-    // Guards against double-shutdown if the
-    // destructor and an explicit shutdown() call overlap.
+    VkFormat m_colorFormat = VK_FORMAT_UNDEFINED;
 };
 
 } // namespace loom
