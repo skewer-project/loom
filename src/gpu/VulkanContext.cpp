@@ -78,12 +78,13 @@ VulkanContext::~VulkanContext() {
 }
 
 void VulkanContext::init(const loom::Window& window, const char* appName) {
+    m_window = window.getNativeWindow();
     createInstance(appName);
     setupDebugMessenger();
-    createSurface(window.getNativeWindow());
+    createSurface(m_window);
     pickPhysicalDevice();
     createLogicalDevice();
-    createSwapchain(window.getNativeWindow());
+    createSwapchain();
     createImageViews();
     createCommandPool();
     allocateCommandBuffers();
