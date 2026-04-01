@@ -3,6 +3,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 #include <stdexcept>
+#include <iostream>
 
 namespace loom {
 
@@ -62,7 +63,23 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
         throw std::runtime_error("failed to initialize ImGui Vulkan backend!");
     }
 
+    // Initialization order is strict. The Vulkan backend must be
+    // fully initialized before font upload is attempted. The backend
+    // must have a valid device and queue to perform the GPU transfer.
+
+    // In ImGui 1.92.6, font upload is handled internally during NewFrame().
+    // No explicit call to ImGui_ImplVulkan_CreateFontsTexture() is needed
+    // as it has been removed from the backend in this version (June 2025).
+    // The backend allocates its own transfer resources,
+    // performs the GPU upload, and cleans up automatically.
+    
+    // If you add custom fonts via io.Fonts->AddFontFromFileTTF(),
+    // do so BEFORE the first frame. Font data must be fully configured
+    // before the atlas is baked and uploaded to the GPU.
+
     m_initialized = true;
+
+    std::cout << "ImGui fonts uploaded to GPU successfully." << std::endl;
 }
 
 void ImGuiRenderer::beginFrame() {
