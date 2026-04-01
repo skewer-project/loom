@@ -52,6 +52,9 @@ public:
     void recreateSwapchain(GLFWwindow* window);
     void cleanupSyncObjects();
 
+    VkCommandBuffer beginSingleTimeCommands();
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+
     VkInstance getVkInstance() const { return m_instance; }
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     VkDevice getDevice() const { return m_device; }
