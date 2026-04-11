@@ -1,4 +1,5 @@
 #include "platform/Window.hpp"
+
 #include <iostream>
 #include <stdexcept>
 
@@ -11,7 +12,7 @@ Window::Window(int width, int height, const std::string& title) {
 
     // Set GLFW_CLIENT_API to GLFW_NO_API to prevent creating an OpenGL context
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE); // Simple start
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);  // Simple start
 
     m_window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (!m_window) {
@@ -25,12 +26,8 @@ Window::~Window() {
     glfwTerminate();
 }
 
-bool Window::shouldClose() const {
-    return glfwWindowShouldClose(m_window);
-}
+bool Window::shouldClose() const { return glfwWindowShouldClose(m_window); }
 
-void Window::pollEvents() const {
-    glfwPollEvents();
-}
+void Window::pollEvents() const { glfwPollEvents(); }
 
-} // namespace loom
+}  // namespace loom
