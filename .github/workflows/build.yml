@@ -59,14 +59,14 @@ jobs:
         sudo apt-get install -y libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxi-dev libxext-dev libxfixes-dev
 
     - name: Setup Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@v1.2.0
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
       with:
         vulkan-query-version: latest
         vulkan-components: Vulkan-Headers, Vulkan-Loader, Vulkan-ValidationLayers
         vulkan-use-cache: true
 
     - name: Setup Compiler Cache
-      uses: hendrikmuhs/ccache-action@v1.2
+      uses: hendrikmuhs/ccache-action@v1.2.17
       with:
         # This tells the action to use Mozilla's sccache, which supports Windows/MSVC
         variant: sccache
