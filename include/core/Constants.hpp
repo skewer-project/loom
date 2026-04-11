@@ -1,0 +1,9 @@
+#pragma once
+
+namespace loom {
+
+// The number of frames the CPU can prepare ahead of the GPU
+// 2 is the standard balance between latency and throughput
+static constexpr int MAX_FRAMES_IN_FLIGHT = 2;
+
+}
