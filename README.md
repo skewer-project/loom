@@ -29,6 +29,18 @@ This project uses CMake to manage the build process. All compiled binaries and o
    cmake --build .
    ```
 
+## Development
+
+### Code Formatting
+This project uses `clang-format` and the `pre-commit` framework to maintain a consistent code style.
+
+1.  **Install `pre-commit`**:
+    - **macOS**: `brew install pre-commit`
+    - **Windows/Linux**: `pip install pre-commit`
+2.  **Activate the hooks**: Run `pre-commit install` in the project root.
+
+Once activated, `git commit` will automatically format your C++ code. If any files are reformatted, the commit will be stopped so you can review and re-stage the changes.
+
 ## Structure
 
 - `src/`: Source files.

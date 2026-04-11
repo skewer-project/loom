@@ -1,12 +1,13 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+
 #include <string>
 
 namespace loom {
 
 class Window {
-public:
+  public:
     Window(int width, int height, const std::string& title);
     ~Window();
 
@@ -19,8 +20,8 @@ public:
 
     GLFWwindow* getNativeWindow() const { return m_window; }
 
-private:
+  private:
     GLFWwindow* m_window;
 };
 
-} // namespace loom
+}  // namespace loom

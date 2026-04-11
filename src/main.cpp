@@ -1,7 +1,8 @@
-#include "platform/Window.hpp"
+#include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
+
 #include "gpu/VulkanContext.hpp"
-#include <cstdlib> // For EXIT_SUCCESS and EXIT_FAILURE
+#include "platform/Window.hpp"
 
 int main() {
     try {
@@ -23,7 +24,6 @@ int main() {
         std::cerr << "Fatal Error: " << e.what() << std::endl;
         return EXIT_FAILURE;
     }
-
 
     return EXIT_SUCCESS;
 }
