@@ -48,8 +48,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxi-dev libxext-dev libxfixes-dev
-
+          sudo apt-get install -y libx11-dev libxcursor-dev libxinerama-dev libxrandr-dev libxi-dev libxext-dev libxfixes-dev libgl1-mesa-dev
       - name: Setup Vulkan SDK
         uses: humbletim/setup-vulkan-sdk@v1.2.1
         with:
