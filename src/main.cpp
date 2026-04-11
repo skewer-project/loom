@@ -1,8 +1,9 @@
-#include "platform/Window.hpp"
-#include "gpu/VulkanContext.hpp"
-#include "ui/ImGuiRenderer.hpp"
+#include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
-#include <cstdlib> // For EXIT_SUCCESS and EXIT_FAILURE
+
+#include "gpu/VulkanContext.hpp"
+#include "platform/Window.hpp"
+#include "ui/ImGuiRenderer.hpp"
 
 int main() {
     try {
@@ -16,17 +17,16 @@ int main() {
         // not window.getNativeWindow(). This is intentional.
 
         loom::ImGuiRendererCreateInfo imguiInfo{};
-        imguiInfo.window           = window.getNativeWindow();
-        imguiInfo.instance         = vulkan.getVkInstance();
-        imguiInfo.physicalDevice   = vulkan.getPhysicalDevice();
-        imguiInfo.device           = vulkan.getDevice();
+        imguiInfo.window = window.getNativeWindow();
+        imguiInfo.instance = vulkan.getVkInstance();
+        imguiInfo.physicalDevice = vulkan.getPhysicalDevice();
+        imguiInfo.device = vulkan.getDevice();
         imguiInfo.graphicsQueueFamily = vulkan.getGraphicsQueueFamily();
-        imguiInfo.graphicsQueue    = vulkan.getGraphicsQueue();
-        imguiInfo.descriptorPool   = vulkan.getDescriptorPool();
-        imguiInfo.colorFormat      = vulkan.getSwapchainImageFormat();
-        imguiInfo.imageCount       =
-            static_cast<uint32_t>(vulkan.getSwapchainImageCount());
-        imguiInfo.minImageCount    = 2;
+        imguiInfo.graphicsQueue = vulkan.getGraphicsQueue();
+        imguiInfo.descriptorPool = vulkan.getDescriptorPool();
+        imguiInfo.colorFormat = vulkan.getSwapchainImageFormat();
+        imguiInfo.imageCount = static_cast<uint32_t>(vulkan.getSwapchainImageCount());
+        imguiInfo.minImageCount = 2;
 
         loom::ImGuiRenderer imgui;
         imgui.init(imguiInfo);

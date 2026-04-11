@@ -1,12 +1,13 @@
 #pragma once
 
 #include <GLFW/glfw3.h>
+
 #include <string>
 
 namespace loom {
 
 class Window {
-public:
+  public:
     Window(int width, int height, const std::string& title);
     ~Window();
 
@@ -22,10 +23,10 @@ public:
     bool wasResized() const { return m_framebufferResized; }
     void resetResizedFlag() { m_framebufferResized = false; }
 
-private:
+  private:
     GLFWwindow* m_window;
     bool m_framebufferResized = false;
     static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 };
 
-} // namespace loom
+}  // namespace loom

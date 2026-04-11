@@ -1,4 +1,5 @@
 #include "platform/Window.hpp"
+
 #include <iostream>
 #include <stdexcept>
 
@@ -28,13 +29,9 @@ Window::~Window() {
     glfwTerminate();
 }
 
-bool Window::shouldClose() const {
-    return glfwWindowShouldClose(m_window);
-}
+bool Window::shouldClose() const { return glfwWindowShouldClose(m_window); }
 
-void Window::pollEvents() const {
-    glfwPollEvents();
-}
+void Window::pollEvents() const { glfwPollEvents(); }
 
 void Window::framebufferResizeCallback(GLFWwindow* window, int width, int height) {
     // Retrieve the pointer we saved in the constructor
@@ -43,4 +40,4 @@ void Window::framebufferResizeCallback(GLFWwindow* window, int width, int height
     loomWindow->m_framebufferResized = true;
 }
 
-} // namespace loom
+}  // namespace loom
