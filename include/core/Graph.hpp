@@ -137,13 +137,20 @@ class Graph {
     std::vector<NodeHandle> topoOrder;
     bool isTopoDirty = true;
 
+    // Allocation pressure fix: reusable scratch buffer
+    mutable std::vector<uint8_t> m_visitedScratch;
+
     // Step 1: Cycle Detection (DFS)
     bool isReachable(NodeHandle startNode, NodeHandle targetNode) const {
         if (!startNode.isValid() || !targetNode.isValid()) return false;
         if (startNode == targetNode) return true;
 
         uint32_t cap = nodes.capacity();
-        std::vector<bool> visited(cap, false);
+        if (m_visitedScratch.size() < cap) {
+            m_visitedScratch.resize(cap);
+        }
+        std::fill(m_visitedScratch.begin(), m_visitedScratch.begin() + cap, 0);
+
         std::vector<NodeHandle> stack;
         stack.push_back(startNode);
 
@@ -155,8 +162,8 @@ class Graph {
             if (current == targetNode) return true;
 
             if (current.index >= cap) continue;
-            if (visited[current.index]) continue;
-            visited[current.index] = true;
+            if (m_visitedScratch[current.index]) continue;
+            m_visitedScratch[current.index] = 1;
 
             const Node* node = nodes.get(current);
             if (!node) continue;
@@ -257,7 +264,6 @@ class Graph {
     void setupNodePins(Node* node) {
         switch (node->type) {
             case NodeType::Constant:
-                createPin(node, PinDirection::Input, PinType::Float);
                 createPin(node, PinDirection::Output, PinType::Float);
                 break;
             case NodeType::Merge:
@@ -267,7 +273,6 @@ class Graph {
                 break;
             case NodeType::Viewer:
                 createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Output, PinType::Float);
                 break;
             case NodeType::Passthrough:
                 createPin(node, PinDirection::Input, PinType::Float);

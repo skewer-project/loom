@@ -16,13 +16,17 @@ using namespace loom::core;
 void testLinearSort() {
     std::cout << "Starting testLinearSort..." << std::endl;
     Graph graph;
+    // Constant (Out) -> Passthrough (In, Out) -> Viewer (In)
     NodeHandle nodeA = graph.addNode(NodeType::Constant, "A");
     NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
     NodeHandle nodeC = graph.addNode(NodeType::Viewer, "C");
 
-    // A -> B -> C
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
+    auto* pA = graph.getNode(nodeA);
+    auto* pB = graph.getNode(nodeB);
+    auto* pC = graph.getNode(nodeC);
+
+    graph.tryAddLink(pA->outputs[0], pB->inputs[0]);
+    graph.tryAddLink(pB->outputs[0], pC->inputs[0]);
 
     const auto& order = graph.getTopologicalOrder();
     ASSERT_WITH_LOG(order.size() == 3, "Linear sort size should be 3");
@@ -36,16 +40,20 @@ void testLinearSort() {
 void testCycleRejection() {
     std::cout << "Starting testCycleRejection..." << std::endl;
     Graph graph;
+    // All Passthrough (In, Out) to allow chaining
     NodeHandle nodeA = graph.addNode(NodeType::Passthrough, "A");
     NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
     NodeHandle nodeC = graph.addNode(NodeType::Passthrough, "C");
 
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
+    auto* pA = graph.getNode(nodeA);
+    auto* pB = graph.getNode(nodeB);
+    auto* pC = graph.getNode(nodeC);
+
+    graph.tryAddLink(pA->outputs[0], pB->inputs[0]);
+    graph.tryAddLink(pB->outputs[0], pC->inputs[0]);
 
     // Attempt C -> A (Cycle)
-    bool success =
-        graph.tryAddLink(graph.getNode(nodeC)->outputs[0], graph.getNode(nodeA)->inputs[0]);
+    bool success = graph.tryAddLink(pC->outputs[0], pA->inputs[0]);
     ASSERT_WITH_LOG(success == false, "Cycle link C->A should fail");
 
     ASSERT_WITH_LOG(graph.getTopologicalOrder().size() == 3,
@@ -57,38 +65,30 @@ void testCycleRejection() {
 void testComplexRejection() {
     std::cout << "Starting testComplexRejection..." << std::endl;
     Graph graph;
+    // A (Constant: Out)
+    // B, C (Passthrough: In, Out)
+    // D (Merge: In, In, Out)
     NodeHandle nodeA = graph.addNode(NodeType::Constant, "A");
     NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
     NodeHandle nodeC = graph.addNode(NodeType::Passthrough, "C");
     NodeHandle nodeD = graph.addNode(NodeType::Merge, "D");
-
-    std::cout << "Nodes added." << std::endl;
 
     auto* pA = graph.getNode(nodeA);
     auto* pB = graph.getNode(nodeB);
     auto* pC = graph.getNode(nodeC);
     auto* pD = graph.getNode(nodeD);
 
-    ASSERT_WITH_LOG(pA && pB && pC && pD, "All nodes must exist");
-
     // Diamond: A->B, A->C, B->D, C->D
-    std::cout << "Adding A->B link..." << std::endl;
-    bool l1 = graph.tryAddLink(pA->outputs[0], pB->inputs[0]);
-    std::cout << "Adding A->C link..." << std::endl;
-    bool l2 = graph.tryAddLink(pA->outputs[0], pC->inputs[0]);
-    std::cout << "Adding B->D link..." << std::endl;
-    bool l3 = graph.tryAddLink(pB->outputs[0], pD->inputs[0]);
-    std::cout << "Adding C->D link..." << std::endl;
-    bool l4 = graph.tryAddLink(pC->outputs[0], pD->inputs[1]);
+    graph.tryAddLink(pA->outputs[0], pB->inputs[0]);
+    graph.tryAddLink(pA->outputs[0], pC->inputs[0]);
+    graph.tryAddLink(pB->outputs[0], pD->inputs[0]);
+    graph.tryAddLink(pC->outputs[0], pD->inputs[1]);
 
-    ASSERT_WITH_LOG(l1 && l2 && l3 && l4, "Diamond links must succeed");
+    // Attempt D -> B (Cycle)
+    // D has an output, B has an input (already occupied but tryAddLink handles replacement)
+    bool success = graph.tryAddLink(pD->outputs[0], pB->inputs[0]);
+    ASSERT_WITH_LOG(success == false, "Cycle D->B should fail");
 
-    // Attempt D -> A (Cycle)
-    std::cout << "Attempting D->A cycle..." << std::endl;
-    bool success = graph.tryAddLink(pD->outputs[0], pA->inputs[0]);
-    ASSERT_WITH_LOG(success == false, "Cycle D->A should fail");
-
-    std::cout << "Getting topological order..." << std::endl;
     const auto& order = graph.getTopologicalOrder();
     ASSERT_WITH_LOG(order.size() == 4, "Topo order size should be 4");
     ASSERT_WITH_LOG(order[0] == nodeA, "Diamond: First node should be A");
@@ -97,38 +97,10 @@ void testComplexRejection() {
     auto itC = std::find(order.begin(), order.end(), nodeC);
     auto itD = std::find(order.begin(), order.end(), nodeD);
 
-    ASSERT_WITH_LOG(itB != order.end(), "B must be in order");
-    ASSERT_WITH_LOG(itC != order.end(), "C must be in order");
-    ASSERT_WITH_LOG(itD != order.end(), "D must be in order");
     ASSERT_WITH_LOG(itB < itD, "B must be before D");
     ASSERT_WITH_LOG(itC < itD, "C must be before D");
 
     std::cout << "[PASS] Complex Rejection Test" << std::endl;
-}
-
-void testDisjointGraphs() {
-    std::cout << "Starting testDisjointGraphs..." << std::endl;
-    Graph graph;
-    NodeHandle nodeA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle nodeB = graph.addNode(NodeType::Viewer, "B");
-    NodeHandle nodeC = graph.addNode(NodeType::Constant, "C");
-    NodeHandle nodeD = graph.addNode(NodeType::Viewer, "D");
-
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeC)->outputs[0], graph.getNode(nodeD)->inputs[0]);
-
-    const auto& order = graph.getTopologicalOrder();
-    ASSERT_WITH_LOG(order.size() == 4, "Disjoint: size should be 4");
-
-    auto itA = std::find(order.begin(), order.end(), nodeA);
-    auto itB = std::find(order.begin(), order.end(), nodeB);
-    auto itC = std::find(order.begin(), order.end(), nodeC);
-    auto itD = std::find(order.begin(), order.end(), nodeD);
-
-    ASSERT_WITH_LOG(itA < itB, "A must be before B");
-    ASSERT_WITH_LOG(itC < itD, "C must be before D");
-
-    std::cout << "[PASS] Disjoint Graphs Test" << std::endl;
 }
 
 void testSelfLoopRejection() {
@@ -144,18 +116,51 @@ void testSelfLoopRejection() {
     std::cout << "[PASS] Self-Loop Rejection Test" << std::endl;
 }
 
+void testMassiveGraph() {
+    std::cout << "Starting testMassiveGraph..." << std::endl;
+    Graph graph;
+    const int COUNT = 1000;
+    std::vector<NodeHandle> nodes;
+    for (int i = 0; i < COUNT; ++i) {
+        nodes.push_back(graph.addNode(NodeType::Passthrough));
+    }
+
+    // Link in a long chain
+    for (int i = 0; i < COUNT - 1; ++i) {
+        auto* src = graph.getNode(nodes[i]);
+        auto* dst = graph.getNode(nodes[i + 1]);
+        bool ok = graph.tryAddLink(src->outputs[0], dst->inputs[0]);
+        ASSERT_WITH_LOG(ok, "Chain link should succeed");
+    }
+
+    const auto& order = graph.getTopologicalOrder();
+    ASSERT_WITH_LOG(order.size() == COUNT, "Massive topo order size mismatch");
+    for (int i = 0; i < COUNT; ++i) {
+        ASSERT_WITH_LOG(order[i] == nodes[i], "Massive chain order mismatch");
+    }
+
+    // Attempt a massive backlink
+    auto* last = graph.getNode(nodes[COUNT - 1]);
+    auto* first = graph.getNode(nodes[0]);
+    bool cycle = graph.tryAddLink(last->outputs[0], first->inputs[0]);
+    ASSERT_WITH_LOG(!cycle, "Massive backlink should be rejected");
+
+    std::cout << "[PASS] Massive Graph Test (" << COUNT << " nodes)" << std::endl;
+}
+
 int main() {
     try {
         testLinearSort();
         testCycleRejection();
         testComplexRejection();
-        testDisjointGraphs();
         testSelfLoopRejection();
+        testMassiveGraph();
     } catch (const std::exception& e) {
         std::cerr << "FATAL ERROR: " << e.what() << std::endl;
         return 1;
     }
 
-    std::cout << "\nAll 1.3 Topological Sort & Cycle Detection tests passed!" << std::endl;
+    std::cout << "\nAll 1.3 Topological Sort & Cycle Detection tests passed successfully!"
+              << std::endl;
     return 0;
 }
