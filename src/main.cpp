@@ -9,14 +9,14 @@ int main() {
     try {
         std::cout << "Initializing Loom..." << std::endl;
 
-        loom::Window window(1280, 720, "Loom");
+        loom::platform::Window window(1280, 720, "Loom");
 
-        loom::VulkanContext vulkan;
+        loom::gpu::VulkanContext vulkan;
         vulkan.init(window, "Loom");
-        // init() takes const loom::Window& — pass window directly,
+        // init() takes const loom::platform::Window& — pass window directly,
         // not window.getNativeWindow(). This is intentional.
 
-        loom::ImGuiRendererCreateInfo imguiInfo{};
+        loom::ui::ImGuiRendererCreateInfo imguiInfo{};
         imguiInfo.window = window.getNativeWindow();
         imguiInfo.instance = vulkan.getVkInstance();
         imguiInfo.physicalDevice = vulkan.getPhysicalDevice();
@@ -28,7 +28,7 @@ int main() {
         imguiInfo.imageCount = static_cast<uint32_t>(vulkan.getSwapchainImageCount());
         imguiInfo.minImageCount = 2;
 
-        loom::ImGuiRenderer imgui;
+        loom::ui::ImGuiRenderer imgui;
         imgui.init(imguiInfo);
 
         std::cout << "Loom initialized successfully." << std::endl;

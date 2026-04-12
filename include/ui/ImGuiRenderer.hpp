@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-namespace loom {
+namespace loom::ui {
 
 struct ImGuiRendererCreateInfo {
     GLFWwindow* window;
@@ -42,4 +42,4 @@ class ImGuiRenderer {
     VkFormat m_colorFormat = VK_FORMAT_UNDEFINED;
 };
 
-}  // namespace loom
+}  // namespace loom::ui

@@ -10,7 +10,7 @@
 #include "imgui.h"
 #include "platform/Window.hpp"
 
-namespace loom {
+namespace loom::gpu {
 
 namespace {
 // Helper to load the debug messenger extension function
@@ -84,7 +84,7 @@ VulkanContext::~VulkanContext() {
     }
 }
 
-void VulkanContext::init(const loom::Window& window, const char* appName) {
+void VulkanContext::init(const loom::platform::Window& window, const char* appName) {
     m_window = window.getNativeWindow();
     createInstance(appName);
     setupDebugMessenger();
@@ -768,9 +768,9 @@ void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
     vkCmdPipelineBarrier2(cmd, &depInfo);
 }
 
-void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
+void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     // Retrieve Window wrapper class from the GLFW window
-    auto loomWindow = reinterpret_cast<loom::Window*>(glfwGetWindowUserPointer(m_window));
+    auto loomWindow = reinterpret_cast<loom::platform::Window*>(glfwGetWindowUserPointer(m_window));
 
     // Check if the window was resized
     if (loomWindow->wasResized()) {
@@ -939,4 +939,4 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-}  // namespace loom
+}  // namespace loom::gpu
