@@ -7,6 +7,7 @@
 #include <set>
 #include <stdexcept>
 
+#include "imgui.h"
 #include "platform/Window.hpp"
 
 namespace loom {
@@ -53,15 +54,17 @@ VulkanContext::~VulkanContext() {
     }
 
     cleanupSwapchain();
-
-    if (m_renderPass != VK_NULL_HANDLE) {
-        vkDestroyRenderPass(m_device, m_renderPass, nullptr);
-    }
+    vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+    m_swapchain = VK_NULL_HANDLE;
 
     cleanupSyncObjects();
 
     if (m_commandPool != VK_NULL_HANDLE) {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+    }
+
+    if (m_descriptorPool != VK_NULL_HANDLE) {
+        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     }
 
     if (m_device != VK_NULL_HANDLE) {
@@ -82,18 +85,18 @@ VulkanContext::~VulkanContext() {
 }
 
 void VulkanContext::init(const loom::Window& window, const char* appName) {
+    m_window = window.getNativeWindow();
     createInstance(appName);
     setupDebugMessenger();
-    createSurface(window.getNativeWindow());
+    createSurface(m_window);
     pickPhysicalDevice();
     createLogicalDevice();
-    createSwapchain(window.getNativeWindow());
-    createRenderPass();
+    createSwapchain();
     createImageViews();
-    createFramebuffers();
     createCommandPool();
     allocateCommandBuffers();
     createSyncObjects();
+    createDescriptorPool();
 }
 
 void VulkanContext::createInstance(const char* appName) {
@@ -107,7 +110,7 @@ void VulkanContext::createInstance(const char* appName) {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Loom Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -212,8 +215,26 @@ void VulkanContext::createLogicalDevice() {
 
     VkPhysicalDeviceFeatures deviceFeatures{};
 
+    VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeature{};
+    dynamicRenderingFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
+    dynamicRenderingFeature.dynamicRendering = VK_TRUE;
+
+    VkPhysicalDeviceSynchronization2Features sync2Features{};
+    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
+    sync2Features.synchronization2 = VK_TRUE;
+
+    dynamicRenderingFeature.pNext = &sync2Features;
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    createInfo.pNext = &dynamicRenderingFeature;
+    // pNext chain: createInfo -> dynamicRenderingFeature
+    //              -> sync2Features -> nullptr
+    // Both dynamic rendering and synchronization2 must be
+    // explicitly enabled. vkCmdPipelineBarrier2 and
+    // VkImageMemoryBarrier2 require synchronization2.
+    // Using them without enabling this feature produces
+    // validation errors and undefined driver behavior.
     createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     createInfo.pQueueCreateInfos = queueCreateInfos.data();
     createInfo.pEnabledFeatures = &deviceFeatures;
@@ -237,12 +258,12 @@ void VulkanContext::createLogicalDevice() {
     vkGetDeviceQueue(m_device, m_presentQueueFamily, 0, &m_presentQueue);
 }
 
-void VulkanContext::createSwapchain(GLFWwindow* window) {
+void VulkanContext::createSwapchain() {
     SwapchainSupportDetails swapchainSupport = querySwapchainSupport(m_physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapchainSupport.formats);
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapchainSupport.presentModes);
-    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities, window);
+    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities);
 
     uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
     if (swapchainSupport.capabilities.maxImageCount > 0 &&
@@ -290,61 +311,6 @@ void VulkanContext::createSwapchain(GLFWwindow* window) {
     m_swapchainExtent = extent;
 }
 
-void VulkanContext::createRenderPass() {
-    VkAttachmentDescription colorAttachment{};
-    colorAttachment.format = m_swapchainImageFormat;
-    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;       // no multisampling for now
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;  // Clear the image to a solid color at
-                                                           // the start of every frame.
-    colorAttachment.storeOp =
-        VK_ATTACHMENT_STORE_OP_STORE;  // Keep the rendered result in memory so it can be presented.
-    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    colorAttachment.stencilStoreOp =
-        VK_ATTACHMENT_STORE_OP_DONT_CARE;  // No stencil buffer needed for 2D compositing.
-    colorAttachment.initialLayout =
-        VK_IMAGE_LAYOUT_UNDEFINED;  // We don't care about the previous contents of the image.
-    colorAttachment.finalLayout =
-        VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;  // Transition the image to be ready for presentation after
-                                          // rendering.
-
-    VkAttachmentReference colorAttachmentRef{};
-    colorAttachmentRef.attachment = 0;  // index into the attachment descriptions array
-    colorAttachmentRef.layout =
-        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;  // The GPU will use this layout during the
-                                                   // subpass for optimal color writes.
-
-    VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &colorAttachmentRef;
-    // The index of the attachment here maps directly to
-    // layout(location = 0) out vec4 outColor in the fragment shader.
-
-    VkSubpassDependency dependency{};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;  // VK_SUBPASS_EXTERNAL refers to work happening
-                                                  // before this render pass.
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    // This dependency ensures the swapchain image
-    // has finished being read for presentation before we start writing to it for the new frame.
-
-    VkRenderPassCreateInfo renderPassInfo{};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    renderPassInfo.attachmentCount = 1;
-    renderPassInfo.pAttachments = &colorAttachment;
-    renderPassInfo.subpassCount = 1;
-    renderPassInfo.pSubpasses = &subpass;
-    renderPassInfo.dependencyCount = 1;
-    renderPassInfo.pDependencies = &dependency;
-
-    if (vkCreateRenderPass(m_device, &renderPassInfo, nullptr, &m_renderPass) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create render pass!");
-    }
-}
-
 void VulkanContext::createImageViews() {
     m_swapchainImageViews.resize(m_swapchainImages.size());
 
@@ -373,34 +339,6 @@ void VulkanContext::createImageViews() {
     }
 }
 
-void VulkanContext::createFramebuffers() {
-    m_swapchainFramebuffers.resize(m_swapchainImageViews.size());
-
-    for (size_t i = 0; i < m_swapchainImageViews.size(); i++) {
-        VkImageView attachments[] = {m_swapchainImageViews[i]};
-
-        VkFramebufferCreateInfo framebufferInfo{};
-        framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = m_renderPass;
-        // The framebuffer must be compatible with this specific
-        // render pass. It will only be used with this render pass.
-        framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
-        // This binds the specific swapchain image view to the
-        // color attachment slot defined in the render pass.
-        framebufferInfo.width = m_swapchainExtent.width;
-        framebufferInfo.height = m_swapchainExtent.height;
-        framebufferInfo.layers = 1;
-        // >1 is used for stereoscopic rendering — not needed here.
-
-        if (vkCreateFramebuffer(m_device, &framebufferInfo, nullptr, &m_swapchainFramebuffers[i]) !=
-            VK_SUCCESS) {
-            throw std::runtime_error("failed to create framebuffer for swapchain image " +
-                                     std::to_string(i) + "!");
-        }
-    }
-}
-
 void VulkanContext::createCommandPool() {
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -414,6 +352,70 @@ void VulkanContext::createCommandPool() {
     if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
     }
+}
+
+void VulkanContext::createDescriptorPool() {
+    VkDescriptorPoolSize poolSizes[] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000}
+        // 1000 allows one descriptor per node preview
+        // image in the compositor. Expand if needed.
+    };
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    // This flag is mandatory to allow external UI systems or node graphs to free individual
+    // descriptor sets internally without resetting the entire pool.
+    poolInfo.maxSets = 1000;
+    // Must be >= the total number of descriptor sets
+    // that will ever be allocated from this pool simultaneously.
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = poolSizes;
+
+    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor pool!");
+    }
+}
+
+VkCommandBuffer VulkanContext::beginSingleTimeCommands() {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = m_commandPool;
+    allocInfo.commandBufferCount = 1;
+    // Allocate a temporary one-shot command buffer.
+    // This is separate from the per-frame command buffers
+    // in m_commandBuffers — it is used only for one-off
+    // GPU transfers and freed immediately after submission.
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    // ONE_TIME_SUBMIT tells the driver this buffer is recorded
+    // once, submitted once, and never reused. Allows optimization.
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    return commandBuffer;
+}
+
+void VulkanContext::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+    vkEndCommandBuffer(commandBuffer);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_graphicsQueue);
+    // vkQueueWaitIdle is a hard sync — the CPU blocks until the
+    // GPU finishes. This is acceptable for one-time setup operations
+    // like texture uploads. Never use this in the render loop.
+
+    vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
 }
 
 void VulkanContext::allocateCommandBuffers() {
@@ -434,28 +436,37 @@ void VulkanContext::allocateCommandBuffers() {
 
 void VulkanContext::createSyncObjects() {
     m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
 
+    // Size this one to our safe maximum
+    m_renderFinishedSemaphores.resize(MAX_SWAPCHAIN_IMAGES);
+
+    // Semaphores have no configuration — they are purely a GPU-side signal with no CPU-visible
+    // state
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    // Semaphores have no configuration — they are purely
-    // a GPU-side signal with no CPU-visible state.
 
+    // Created in the signaled state so the very first
+    // frame does not block waiting on a fence that was never submitted.
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    // Created in the signaled state so the very first
-    // frame does not block waiting on a fence that was never submitted.
 
+    // Create frame-linked objects
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) !=
                 VK_SUCCESS ||
-            vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) !=
-                VK_SUCCESS ||
             vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
-            throw std::runtime_error("failed to create synchronization objects for frame " +
-                                     std::to_string(i) + "!");
+            throw std::runtime_error("failed to create frame synchronization objects!");
+        }
+    }
+
+    // Create image-linked objects
+    for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+        if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) !=
+            VK_SUCCESS) {
+            throw std::runtime_error("failed to create image synchronization objects!");
         }
     }
 }
@@ -463,36 +474,29 @@ void VulkanContext::createSyncObjects() {
 void VulkanContext::cleanupSyncObjects() {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
-        vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
+    }
+    for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+        vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
     }
     m_imageAvailableSemaphores.clear();
     m_renderFinishedSemaphores.clear();
     m_inFlightFences.clear();
+    m_imagesInFlight.clear();
 }
 
 void VulkanContext::cleanupSwapchain() {
-    for (auto framebuffer : m_swapchainFramebuffers) {
-        vkDestroyFramebuffer(m_device, framebuffer, nullptr);
-    }
-    m_swapchainFramebuffers.clear();
-
     for (auto imageView : m_swapchainImageViews) {
         vkDestroyImageView(m_device, imageView, nullptr);
     }
     m_swapchainImageViews.clear();
-
-    if (m_swapchain != VK_NULL_HANDLE) {
-        vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-        m_swapchain = VK_NULL_HANDLE;
-    }
 }
 
-void VulkanContext::recreateSwapchain(GLFWwindow* window) {
+void VulkanContext::recreateSwapchain() {
     int width = 0, height = 0;
-    glfwGetFramebufferSize(window, &width, &height);
+    glfwGetFramebufferSize(m_window, &width, &height);
     while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(window, &width, &height);
+        glfwGetFramebufferSize(m_window, &width, &height);
         glfwWaitEvents();
     }
 
@@ -501,9 +505,8 @@ void VulkanContext::recreateSwapchain(GLFWwindow* window) {
     m_oldSwapchain = m_swapchain;
     cleanupSwapchain();
 
-    createSwapchain(window);
+    createSwapchain();
     createImageViews();
-    createFramebuffers();
     // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
 
     vkDestroySwapchainKHR(m_device, m_oldSwapchain, nullptr);  // safe to destroy now
@@ -560,13 +563,12 @@ VkPresentModeKHR VulkanContext::chooseSwapPresentMode(
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
-VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities,
-                                           GLFWwindow* window) {
+VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
     if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
         return capabilities.currentExtent;
     } else {
         int width, height;
-        glfwGetFramebufferSize(window, &width, &height);
+        glfwGetFramebufferSize(m_window, &width, &height);
 
         VkExtent2D actualExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
 
@@ -716,6 +718,225 @@ std::vector<const char*> VulkanContext::getRequiredExtensions() {
 #endif
 
     return extensions;
+}
+
+void VulkanContext::waitIdle() const { vkDeviceWaitIdle(m_device); }
+
+// Dynamic rendering requires manual image layout transitions.
+// Swapchain images start in UNDEFINED or PRESENT_SRC_KHR layout
+// and must be transitioned to COLOR_ATTACHMENT_OPTIMAL before
+// rendering, then back to PRESENT_SRC_KHR before presentation.
+// Render passes handled this automatically via initialLayout /
+// finalLayout — we now own this responsibility explicitly.
+void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
+                                          VkImageLayout oldLayout, VkImageLayout newLayout) {
+    VkImageMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+        barrier.srcAccessMask = 0;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.srcAccessMask = 0;
+    }
+
+    if (newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    } else if (newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT;
+        barrier.dstAccessMask = 0;
+    }
+
+    VkDependencyInfo depInfo{};
+    depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    depInfo.imageMemoryBarrierCount = 1;
+    depInfo.pImageMemoryBarriers = &barrier;
+
+    vkCmdPipelineBarrier2(cmd, &depInfo);
+}
+
+void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
+    // Retrieve Window wrapper class from the GLFW window
+    auto loomWindow = reinterpret_cast<loom::Window*>(glfwGetWindowUserPointer(m_window));
+
+    // Check if the window was resized
+    if (loomWindow->wasResized()) {
+        recreateSwapchain();
+        loomWindow->resetResizedFlag();
+        return;  // Skip this frame and try again next loop
+    }
+
+    // Step A — Wait for previous frame's fence:
+    // Block the CPU until the GPU has finished rendering the previous use of this frame slot's
+    // resources. UINT64_MAX disables the timeout — wait indefinitely.
+    vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
+
+    // Step B — Acquire next swapchain image:
+    uint32_t imageIndex;
+    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
+                                            m_imageAvailableSemaphores[m_currentFrame],
+                                            VK_NULL_HANDLE, &imageIndex);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        // Swapchain is no longer compatible with the surface — typically caused by a window resize.
+        // Recreate and skip this frame.
+        recreateSwapchain();
+        return;
+    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("failed to acquire swapchain image!");
+    }
+
+    // Check if a previous frame is using this image (i.e. there is its fence to wait on)
+    if (m_imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    }
+    // Mark the image as now being in use by this frame
+    m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapchain();
+        loomWindow->resetResizedFlag();  // Clear it here too, just in case
+        return;
+    }
+
+    // Step C — Reset fence AFTER successful acquire:
+    // Reset only after confirming we will submit
+    // work. Resetting before the acquire result check risks
+    // leaving the fence unsignaled if we returned early,
+    // causing the next frame to wait forever.
+    vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
+
+    // Step D — Build ImGui frame (CPU only, no GPU work yet):
+    imgui.beginFrame();
+    ImGui::ShowDemoWindow();
+    // MILESTONE: Remove ShowDemoWindow() once
+    // the demo window is confirmed working on screen.
+
+    // Step E — Reset and begin command buffer:
+    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = 0;
+    if (vkBeginCommandBuffer(m_commandBuffers[m_currentFrame], &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin command buffer!");
+    }
+
+    // Step F — Transition image to COLOR_ATTACHMENT_OPTIMAL:
+    // The swapchain image starts in an undefined
+    // state each frame. Transition it to the layout required
+    // for color writes before vkCmdBeginRendering.
+    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex],
+                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    // Step G — Begin dynamic rendering:
+    VkRenderingAttachmentInfo colorAttachment{};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.imageView = m_swapchainImageViews[imageIndex];
+    colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}};
+    // Dark grey clear color.
+    // Replace with black or a compositor-appropriate default
+    // once the node editor UI is established.
+
+    VkRenderingInfo renderingInfo{};
+    renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    renderingInfo.renderArea.offset = {0, 0};
+    renderingInfo.renderArea.extent = m_swapchainExtent;
+    renderingInfo.layerCount = 1;
+    renderingInfo.colorAttachmentCount = 1;
+    renderingInfo.pColorAttachments = &colorAttachment;
+
+    vkCmdBeginRendering(m_commandBuffers[m_currentFrame], &renderingInfo);
+
+    // Step H — Record ImGui draw calls:
+    // endFrame calls ImGui::Render() then
+    // ImGui_ImplVulkan_RenderDrawData() internally.
+    // Translates all ImGui geometry into Vulkan draw calls
+    // recorded into the active command buffer.
+    // Must be called inside an active vkCmdBeginRendering block.
+    imgui.endFrame(m_commandBuffers[m_currentFrame]);
+
+    // Step I — End dynamic rendering:
+    vkCmdEndRendering(m_commandBuffers[m_currentFrame]);
+
+    // Step J — Transition image to PRESENT_SRC_KHR:
+    // Transition the image to the layout required
+    // for presentation. The swapchain will reject images that
+    // are not in PRESENT_SRC_KHR when vkQueuePresentKHR is called.
+    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex],
+                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    // Step K — End command buffer:
+    if (vkEndCommandBuffer(m_commandBuffers[m_currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to record command buffer!");
+    }
+
+    // Step L — Submit:
+    VkSemaphore waitSemaphores[] = {m_imageAvailableSemaphores[m_currentFrame]};
+    VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
+    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[imageIndex]};
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &m_commandBuffers[m_currentFrame];
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    if (vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, m_inFlightFences[m_currentFrame]) !=
+        VK_SUCCESS) {
+        throw std::runtime_error("failed to submit draw command buffer!");
+    }
+    // The fence signals when the GPU finishes
+    // this submission. The CPU will wait on it at the start
+    // of the next use of this frame slot in Step A.
+
+    // Step M — Present:
+    VkSwapchainKHR swapchains[] = {m_swapchain};
+    VkPresentInfoKHR presentInfo{};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapchains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    VkResult presentResult = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
+        // Recreate here catches both the
+        // suboptimal case deferred from Step B and any
+        // out-of-date result returned by present itself.
+        recreateSwapchain();
+    } else if (presentResult != VK_SUCCESS) {
+        throw std::runtime_error("failed to present swapchain image!");
+    }
+
+    // Step N — Advance frame index. THIS LINE IS MANDATORY:
+    // Cycle to the next frame slot.
+    // Omitting this line means every frame uses slot 0,
+    // breaking the entire frames-in-flight system silently.
+    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
 }  // namespace loom
