@@ -13,27 +13,34 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # Find Vulkan SDK on system
 find_package(Vulkan REQUIRED)
 
-# FetchContent for GLFW
+# FetchContent for GLFW and GTest
 include(FetchContent)
 
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG 3.3.8 # Or a newer version
+    GIT_TAG 3.3.8
 )
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(glfw)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG v1.14.0
+)
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(glfw googletest)
 
 add_library(imgui STATIC
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
     external/imgui/imgui_tables.cpp
     external/imgui/imgui_widgets.cpp
-    external/imgui/imgui_demo.cpp # TODO: Remove imgui_demo.cpp once ShowDemoWindow is confirmed working.
+    external/imgui/imgui_demo.cpp
     external/imgui/backends/imgui_impl_glfw.cpp
     external/imgui/backends/imgui_impl_vulkan.cpp
 )
@@ -50,7 +57,6 @@ add_executable(Loom
     src/ui/ImGuiRenderer.cpp
 )
 
-# Include directories
 target_include_directories(Loom PRIVATE 
     include
     ${imgui_SOURCE_DIR}
@@ -67,6 +73,19 @@ target_link_libraries(Loom PRIVATE
     glfw
     Vulkan::Vulkan
 )
+
+# Test Suite
+enable_testing()
+add_executable(LoomTests
+    tests/core/SlotMapTest.cpp
+    tests/core/GraphTest.cpp
+    tests/core/TopoTest.cpp
+)
+target_include_directories(LoomTests PRIVATE include)
+target_link_libraries(LoomTests PRIVATE GTest::gtest_main)
+
+include(GoogleTest)
+gtest_discover_tests(LoomTests)
 
 # Apple-specific config for MoltenVK
 if(APPLE)
