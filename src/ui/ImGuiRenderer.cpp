@@ -1,15 +1,15 @@
 #include "ui/ImGuiRenderer.hpp"
+
+#include <iostream>
+#include <stdexcept>
+
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
-#include <stdexcept>
-#include <iostream>
 
 namespace loom {
 
-ImGuiRenderer::~ImGuiRenderer() {
-    shutdown();
-}
+ImGuiRenderer::~ImGuiRenderer() { shutdown(); }
 
 void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     // Step A — Create ImGui context:
@@ -53,13 +53,14 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     // what color format the swapchain uses so it can build
     // its internal pipeline without a render pass object.
     init_info.UseDynamicRendering = true;
-    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+    init_info.PipelineInfoMain.PipelineRenderingCreateInfo.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     init_info.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     init_info.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &m_colorFormat;
 
     init_info.PipelineCache = VK_NULL_HANDLE;
     init_info.Allocator = nullptr;
-    init_info.CheckVkResultFn = nullptr; // Optional: could add a callback here
+    init_info.CheckVkResultFn = nullptr;  // Optional: could add a callback here
 
     if (!ImGui_ImplVulkan_Init(&init_info)) {
         throw std::runtime_error("failed to initialize ImGui Vulkan backend!");
@@ -115,4 +116,4 @@ void ImGuiRenderer::shutdown() {
     m_initialized = false;
 }
 
-} // namespace loom
+}  // namespace loom
