@@ -1,7 +1,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cassert>
+#include <queue>
 #include <stdexcept>
+#include <vector>
 
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
@@ -18,9 +21,9 @@ class Graph {
             node->name = getDefaultNodeName(type);
         }
 
-        // Based on NodeType, instantiate the necessary Pin objects.
         setupNodePins(node);
 
+        isTopoDirty = true;
         return nodeHandle;
     }
 
@@ -28,7 +31,6 @@ class Graph {
         Node* node = nodes.get(nodeHandle);
         if (!node) return;
 
-        // Iterate its input/output pins. Call removeLink on all connected links.
         for (PinHandle pinHandle : node->inputs) {
             Pin* pin = pins.get(pinHandle);
             if (pin && pin->link.isValid()) {
@@ -40,7 +42,6 @@ class Graph {
         for (PinHandle pinHandle : node->outputs) {
             Pin* pin = pins.get(pinHandle);
             if (pin) {
-                // Copy links to avoid iterator invalidation during removal
                 std::vector<LinkHandle> outboundLinks = pin->links;
                 for (LinkHandle linkHandle : outboundLinks) {
                     removeLink(linkHandle);
@@ -50,46 +51,44 @@ class Graph {
         }
 
         nodes.remove(nodeHandle);
+        isTopoDirty = true;
     }
 
     bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
         Pin* startPin = pins.get(startPinHandle);
         Pin* endPin = pins.get(endPinHandle);
 
-        // Validate: Ensure both handles are valid
         if (!startPin || !endPin) return false;
-
-        // Ensure startPin is Output, endPin is Input
         if (startPin->direction != PinDirection::Output) return false;
         if (endPin->direction != PinDirection::Input) return false;
-
-        // Ensure startPin.type == endPin.type
         if (startPin->type != endPin->type) return false;
 
-        // TODO 1.3: Run DFS cycle detection.
+        NodeHandle nodeA = startPin->node;
+        NodeHandle nodeB = endPin->node;
 
-        // Execute: If endPin already has a valid link, call removeLink on it.
+        // Step 2: Self-loop guard
+        if (nodeA == nodeB) return false;
+
+        // Step 2: Cycle check
+        if (isReachable(nodeB, nodeA)) return false;
+
         if (endPin->link.isValid()) {
             removeLink(endPin->link);
         }
 
-        // Create the new Link and add it to the link slot map.
         LinkHandle linkHandle = links.emplace(LinkHandle(), startPinHandle, endPinHandle);
         Link* link = links.get(linkHandle);
         link->id = linkHandle;
 
-        // Update endPin.link with the new handle.
         endPin->link = linkHandle;
-
-        // Add the new handle to startPin.links.
         startPin->links.push_back(linkHandle);
 
-        // Mark the destination Node as dirty.
-        Node* endNode = nodes.get(endPin->node);
+        Node* endNode = nodes.get(nodeB);
         if (endNode) {
             endNode->isDirty = true;
         }
 
+        isTopoDirty = true;
         return true;
     }
 
@@ -100,17 +99,13 @@ class Graph {
         Pin* startPin = pins.get(link->startPin);
         Pin* endPin = pins.get(link->endPin);
 
-        // Remove the link reference from the startPin's vector
         if (startPin) {
             auto& v = startPin->links;
             v.erase(std::remove(v.begin(), v.end(), linkHandle), v.end());
         }
 
-        // Clear the endPin's link handle
         if (endPin) {
-            endPin->link = LinkHandle();  // Invalid handle
-
-            // Mark the destination node as dirty
+            endPin->link = LinkHandle();
             Node* endNode = nodes.get(endPin->node);
             if (endNode) {
                 endNode->isDirty = true;
@@ -118,21 +113,131 @@ class Graph {
         }
 
         links.remove(linkHandle);
+        isTopoDirty = true;
     }
 
-    // Accessors for testing/UI
+    // Step 4: Expose Sorted Output
+    const std::vector<NodeHandle>& getTopologicalOrder() {
+        if (isTopoDirty) {
+            computeTopologicalOrder();
+            isTopoDirty = false;
+        }
+        return topoOrder;
+    }
+
     Node* getNode(NodeHandle h) { return nodes.get(h); }
     Pin* getPin(PinHandle h) { return pins.get(h); }
     Link* getLink(LinkHandle h) { return links.get(h); }
-
-    const SlotMap<Node, NodeHandle>& getNodes() const { return nodes; }
-    const SlotMap<Pin, PinHandle>& getPins() const { return pins; }
-    const SlotMap<Link, LinkHandle>& getLinks() const { return links; }
 
   private:
     SlotMap<Node, NodeHandle> nodes;
     SlotMap<Pin, PinHandle> pins;
     SlotMap<Link, LinkHandle> links;
+
+    std::vector<NodeHandle> topoOrder;
+    bool isTopoDirty = true;
+
+    // Step 1: Cycle Detection (DFS)
+    bool isReachable(NodeHandle startNode, NodeHandle targetNode) const {
+        if (!startNode.isValid() || !targetNode.isValid()) return false;
+        if (startNode == targetNode) return true;
+
+        uint32_t cap = nodes.capacity();
+        std::vector<bool> visited(cap, false);
+        std::vector<NodeHandle> stack;
+        stack.push_back(startNode);
+
+        while (!stack.empty()) {
+            NodeHandle current = stack.back();
+            stack.pop_back();
+
+            if (!nodes.isValid(current)) continue;
+            if (current == targetNode) return true;
+
+            if (current.index >= cap) continue;
+            if (visited[current.index]) continue;
+            visited[current.index] = true;
+
+            const Node* node = nodes.get(current);
+            if (!node) continue;
+
+            for (PinHandle outPinHandle : node->outputs) {
+                const Pin* outPin = pins.get(outPinHandle);
+                if (!outPin) continue;
+
+                for (LinkHandle lh : outPin->links) {
+                    if (!lh.isValid()) continue;
+                    const Link* link = links.get(lh);
+                    if (!link) continue;
+
+                    const Pin* endPin = pins.get(link->endPin);
+                    if (endPin && endPin->node.isValid()) {
+                        stack.push_back(endPin->node);
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    // Step 3: Topological Sorting (Kahn's Algorithm)
+    void computeTopologicalOrder() {
+        topoOrder.clear();
+        uint32_t activeNodeCount = nodes.size();
+        if (activeNodeCount == 0) return;
+
+        std::vector<int> inDegree(nodes.capacity(), 0);
+
+        // Populate in-degree
+        nodes.forEach([&](NodeHandle h, const Node& node) {
+            int count = 0;
+            for (PinHandle inPinHandle : node.inputs) {
+                const Pin* pin = pins.get(inPinHandle);
+                if (pin && pin->link.isValid()) {
+                    count++;
+                }
+            }
+            inDegree[h.index] = count;
+        });
+
+        std::queue<NodeHandle> queue;
+        nodes.forEach([&](NodeHandle h, const Node& node) {
+            if (inDegree[h.index] == 0) {
+                queue.push(h);
+            }
+        });
+
+        while (!queue.empty()) {
+            NodeHandle uHandle = queue.front();
+            queue.pop();
+            topoOrder.push_back(uHandle);
+
+            const Node* uNode = nodes.get(uHandle);
+            if (!uNode) continue;
+
+            for (PinHandle outPinHandle : uNode->outputs) {
+                const Pin* outPin = pins.get(outPinHandle);
+                if (!outPin) continue;
+
+                for (LinkHandle lh : outPin->links) {
+                    const Link* link = links.get(lh);
+                    if (!link) continue;
+
+                    const Pin* vPin = pins.get(link->endPin);
+                    if (vPin) {
+                        NodeHandle vHandle = vPin->node;
+                        inDegree[vHandle.index]--;
+                        if (inDegree[vHandle.index] == 0) {
+                            queue.push(vHandle);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Defensive Invariant
+        assert(topoOrder.size() == activeNodeCount);
+    }
 
     std::string getDefaultNodeName(NodeType type) {
         switch (type) {
@@ -152,6 +257,7 @@ class Graph {
     void setupNodePins(Node* node) {
         switch (node->type) {
             case NodeType::Constant:
+                createPin(node, PinDirection::Input, PinType::Float);
                 createPin(node, PinDirection::Output, PinType::Float);
                 break;
             case NodeType::Merge:
@@ -161,6 +267,7 @@ class Graph {
                 break;
             case NodeType::Viewer:
                 createPin(node, PinDirection::Input, PinType::Float);
+                createPin(node, PinDirection::Output, PinType::Float);
                 break;
             case NodeType::Passthrough:
                 createPin(node, PinDirection::Input, PinType::Float);
@@ -173,12 +280,10 @@ class Graph {
         PinHandle h = pins.emplace(PinHandle(), node->id, dir, type);
         Pin* pin = pins.get(h);
         pin->id = h;
-
-        if (dir == PinDirection::Input) {
+        if (dir == PinDirection::Input)
             node->inputs.push_back(h);
-        } else {
+        else
             node->outputs.push_back(h);
-        }
         return h;
     }
 };
