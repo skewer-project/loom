@@ -35,6 +35,8 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw googletest)
 
+# --- Vendored Libraries ---
+# Base DearImGui
 add_library(imgui STATIC
     external/imgui/imgui.cpp
     external/imgui/imgui_draw.cpp
@@ -43,6 +45,10 @@ add_library(imgui STATIC
     external/imgui/imgui_demo.cpp
     external/imgui/backends/imgui_impl_glfw.cpp
     external/imgui/backends/imgui_impl_vulkan.cpp
+    external/imgui-node-editor/imgui_node_editor.cpp
+    external/imgui-node-editor/imgui_node_editor_api.cpp
+    external/imgui-node-editor/imgui_canvas.cpp
+    external/imgui-node-editor/crude_json.cpp
 )
 
 target_include_directories(imgui PUBLIC
@@ -50,47 +56,10 @@ target_include_directories(imgui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
 
-add_executable(Loom
-    src/main.cpp
-    src/platform/Window.cpp
-    src/gpu/VulkanContext.cpp
-    src/ui/ImGuiRenderer.cpp
-)
-
-target_include_directories(Loom PRIVATE 
-    include
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends
-)
-
 target_link_libraries(imgui PUBLIC
     glfw
     Vulkan::Vulkan
 )
-
-target_link_libraries(Loom PRIVATE
-    imgui
-    glfw
-    Vulkan::Vulkan
-)
-
-# Test Suite
-enable_testing()
-add_executable(LoomTests
-    tests/core/SlotMapTest.cpp
-    tests/core/GraphTest.cpp
-    tests/core/TopoTest.cpp
-)
-target_include_directories(LoomTests PRIVATE include)
-target_link_libraries(LoomTests PRIVATE GTest::gtest_main)
-
-include(GoogleTest)
-gtest_discover_tests(LoomTests)
-
-# Apple-specific config for MoltenVK
-if(APPLE)
-    target_compile_definitions(Loom PRIVATE VK_USE_PLATFORM_MACOS_MVK)
-endif()
 
 # Optional ImGui compile optimization
 if(MSVC)
@@ -98,3 +67,72 @@ if(MSVC)
 else()
     target_compile_options(imgui PRIVATE -O3)
 endif()
+
+
+# ImGui Node Editor
+set(NODE_EDITOR_DIR "external/imgui-node-editor")
+add_library(imgui_node_editor STATIC
+    ${NODE_EDITOR_DIR}/imgui_node_editor.cpp
+    ${NODE_EDITOR_DIR}/imgui_node_editor_api.cpp
+    ${NODE_EDITOR_DIR}/imgui_canvas.cpp
+    ${NODE_EDITOR_DIR}/imgui_extra_math.cpp
+    ${NODE_EDITOR_DIR}/imgui_bezier_math.cpp
+    ${NODE_EDITOR_DIR}/crude_json.cpp
+)
+
+target_include_directories(imgui_node_editor PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/${NODE_EDITOR_DIR}
+)
+
+# Node editor needs base ImGui headers
+target_link_libraries(imgui_node_editor PUBLIC imgui)
+
+
+# --- Loom Engine Core ---
+# We build the engine as a library so BOTH the main app and tests can link to it
+add_library(LoomCore STATIC
+    src/platform/Window.cpp
+    src/gpu/VulkanContext.cpp
+    src/ui/ImGuiRenderer.cpp
+)
+
+target_include_directories(LoomCore PUBLIC include)
+
+# Because we link imgui and node_editor PUBLICLY, anything that links to
+# LoomCore automatically gets their include directories too!
+target_link_libraries(LoomCore PUBLIC
+    imgui
+    imgui_node_editor
+    glfw
+    Vulkan::Vulkan
+)
+
+# Apple-specific config for MoltenVK (Applied to Core so it propagates)
+if(APPLE)
+    target_compile_definitions(LoomCore PUBLIC VK_USE_PLATFORM_MACOS_MVK)
+endif()
+
+
+# --- Loom Application (The Executable) ---
+add_executable(Loom src/main.cpp)
+
+# Just link the Core. CMake handles all the transitive dependencies (ImGui, Vulkan, etc.)
+target_link_libraries(Loom PRIVATE LoomCore)
+
+
+# --- Test Suite ---
+enable_testing()
+add_executable(LoomTests
+    tests/core/SlotMapTest.cpp
+    tests/core/GraphTest.cpp
+    tests/core/TopoTest.cpp
+)
+
+# Link tests to our engine library and the Google Test runner
+target_link_libraries(LoomTests PRIVATE
+    LoomCore
+    gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(LoomTests)
