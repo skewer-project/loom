@@ -1,22 +1,22 @@
 #include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
 
+#include "core/Graph.hpp"
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
+#include "ui/NodeEditorPanel.hpp"
 
 int main() {
     try {
         std::cout << "Initializing Loom..." << std::endl;
 
-        loom::Window window(1280, 720, "Loom");
+        loom::platform::Window window(1280, 720, "Loom");
 
-        loom::VulkanContext vulkan;
+        loom::gpu::VulkanContext vulkan;
         vulkan.init(window, "Loom");
-        // init() takes const loom::Window& — pass window directly,
-        // not window.getNativeWindow(). This is intentional.
 
-        loom::ImGuiRendererCreateInfo imguiInfo{};
+        loom::ui::ImGuiRendererCreateInfo imguiInfo{};
         imguiInfo.window = window.getNativeWindow();
         imguiInfo.instance = vulkan.getVkInstance();
         imguiInfo.physicalDevice = vulkan.getPhysicalDevice();
@@ -28,13 +28,21 @@ int main() {
         imguiInfo.imageCount = static_cast<uint32_t>(vulkan.getSwapchainImageCount());
         imguiInfo.minImageCount = 2;
 
-        loom::ImGuiRenderer imgui;
+        loom::ui::ImGuiRenderer imgui;
         imgui.init(imguiInfo);
+
+        loom::core::Graph graph;
+        loom::ui::NodeEditorPanel nodeEditor(&graph);
 
         std::cout << "Loom initialized successfully." << std::endl;
 
         while (!window.shouldClose()) {
             window.pollEvents();
+
+            // Build UI
+            imgui.beginFrame();
+            nodeEditor.draw("Loom Node Editor");
+
             vulkan.drawFrame(imgui);
         }
 

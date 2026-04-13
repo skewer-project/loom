@@ -4,7 +4,7 @@
 
 #include <string>
 
-namespace loom {
+namespace loom::platform {
 
 class Window {
   public:
@@ -29,4 +29,4 @@ class Window {
     static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 };
 
-}  // namespace loom
+}  // namespace loom::platform

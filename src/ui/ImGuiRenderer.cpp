@@ -7,7 +7,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
 
-namespace loom {
+namespace loom::ui {
 
 ImGuiRenderer::~ImGuiRenderer() { shutdown(); }
 
@@ -116,4 +116,4 @@ void ImGuiRenderer::shutdown() {
     m_initialized = false;
 }
 
-}  // namespace loom
+}  // namespace loom::ui

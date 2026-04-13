@@ -3,7 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 
-namespace loom {
+namespace loom::platform {
 
 Window::Window(int width, int height, const std::string& title) {
     if (!glfwInit()) {
@@ -40,4 +40,4 @@ void Window::framebufferResizeCallback(GLFWwindow* window, int width, int height
     loomWindow->m_framebufferResized = true;
 }
 
-}  // namespace loom
+}  // namespace loom::platform

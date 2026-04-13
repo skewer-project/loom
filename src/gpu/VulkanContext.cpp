@@ -10,7 +10,11 @@
 #include "imgui.h"
 #include "platform/Window.hpp"
 
-namespace loom {
+namespace loom::gpu {
+
+namespace core = loom::core;
+namespace platform = loom::platform;
+namespace ui = loom::ui;
 
 namespace {
 // Helper to load the debug messenger extension function
@@ -84,7 +88,7 @@ VulkanContext::~VulkanContext() {
     }
 }
 
-void VulkanContext::init(const loom::Window& window, const char* appName) {
+void VulkanContext::init(const loom::platform::Window& window, const char* appName) {
     m_window = window.getNativeWindow();
     createInstance(appName);
     setupDebugMessenger();
@@ -419,7 +423,7 @@ void VulkanContext::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
 }
 
 void VulkanContext::allocateCommandBuffers() {
-    m_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    m_commandBuffers.resize(core::MAX_FRAMES_IN_FLIGHT);
 
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -435,12 +439,12 @@ void VulkanContext::allocateCommandBuffers() {
 }
 
 void VulkanContext::createSyncObjects() {
-    m_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
-    m_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    m_imageAvailableSemaphores.resize(core::MAX_FRAMES_IN_FLIGHT);
+    m_inFlightFences.resize(core::MAX_FRAMES_IN_FLIGHT);
     m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
 
     // Size this one to our safe maximum
-    m_renderFinishedSemaphores.resize(MAX_SWAPCHAIN_IMAGES);
+    m_renderFinishedSemaphores.resize(core::MAX_SWAPCHAIN_IMAGES);
 
     // Semaphores have no configuration — they are purely a GPU-side signal with no CPU-visible
     // state
@@ -454,7 +458,7 @@ void VulkanContext::createSyncObjects() {
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     // Create frame-linked objects
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    for (size_t i = 0; i < core::MAX_FRAMES_IN_FLIGHT; i++) {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_imageAvailableSemaphores[i]) !=
                 VK_SUCCESS ||
             vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlightFences[i]) != VK_SUCCESS) {
@@ -463,7 +467,7 @@ void VulkanContext::createSyncObjects() {
     }
 
     // Create image-linked objects
-    for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+    for (size_t i = 0; i < core::MAX_SWAPCHAIN_IMAGES; i++) {
         if (vkCreateSemaphore(m_device, &semaphoreInfo, nullptr, &m_renderFinishedSemaphores[i]) !=
             VK_SUCCESS) {
             throw std::runtime_error("failed to create image synchronization objects!");
@@ -472,11 +476,11 @@ void VulkanContext::createSyncObjects() {
 }
 
 void VulkanContext::cleanupSyncObjects() {
-    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    for (size_t i = 0; i < core::MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(m_device, m_imageAvailableSemaphores[i], nullptr);
         vkDestroyFence(m_device, m_inFlightFences[i], nullptr);
     }
-    for (size_t i = 0; i < MAX_SWAPCHAIN_IMAGES; i++) {
+    for (size_t i = 0; i < core::MAX_SWAPCHAIN_IMAGES; i++) {
         vkDestroySemaphore(m_device, m_renderFinishedSemaphores[i], nullptr);
     }
     m_imageAvailableSemaphores.clear();
@@ -768,9 +772,9 @@ void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
     vkCmdPipelineBarrier2(cmd, &depInfo);
 }
 
-void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
+void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     // Retrieve Window wrapper class from the GLFW window
-    auto loomWindow = reinterpret_cast<loom::Window*>(glfwGetWindowUserPointer(m_window));
+    auto loomWindow = reinterpret_cast<loom::platform::Window*>(glfwGetWindowUserPointer(m_window));
 
     // Check if the window was resized
     if (loomWindow->wasResized()) {
@@ -818,12 +822,6 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     // leaving the fence unsignaled if we returned early,
     // causing the next frame to wait forever.
     vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
-
-    // Step D — Build ImGui frame (CPU only, no GPU work yet):
-    imgui.beginFrame();
-    ImGui::ShowDemoWindow();
-    // MILESTONE: Remove ShowDemoWindow() once
-    // the demo window is confirmed working on screen.
 
     // Step E — Reset and begin command buffer:
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
@@ -936,7 +934,7 @@ void VulkanContext::drawFrame(ImGuiRenderer& imgui) {
     // Cycle to the next frame slot.
     // Omitting this line means every frame uses slot 0,
     // breaking the entire frames-in-flight system silently.
-    m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+    m_currentFrame = (m_currentFrame + 1) % core::MAX_FRAMES_IN_FLIGHT;
 }
 
-}  // namespace loom
+}  // namespace loom::gpu

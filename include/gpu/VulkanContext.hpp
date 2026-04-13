@@ -11,7 +11,7 @@
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
 
-namespace loom {
+namespace loom::gpu {
 
 struct DeviceScore {
     int score = 0;
@@ -37,7 +37,7 @@ class VulkanContext {
     VulkanContext();
     ~VulkanContext();
 
-    void init(const loom::Window& window, const char* appName);
+    void init(const loom::platform::Window& window, const char* appName);
     void createInstance(const char* appName);
     void setupDebugMessenger();
     void createSurface(GLFWwindow* window);
@@ -55,7 +55,7 @@ class VulkanContext {
 
     void waitIdle() const;  // Called from main() before any destructor runs to ensure the GPU has
                             // finished all in-flight work.
-    void drawFrame(ImGuiRenderer& imgui);
+    void drawFrame(loom::ui::ImGuiRenderer& imgui);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -157,4 +157,4 @@ class VulkanContext {
     std::vector<const char*> getRequiredExtensions();
 };
 
-}  // namespace loom
+}  // namespace loom::gpu
