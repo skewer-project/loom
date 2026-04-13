@@ -1,4 +1,3 @@
-#define VMA_IMPLEMENTATION
 #include "gpu/VulkanContext.hpp"
 
 #include <algorithm>
