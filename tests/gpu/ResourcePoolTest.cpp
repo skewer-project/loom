@@ -11,14 +11,19 @@ using namespace loom::platform;
 class ResourcePoolTest : public ::testing::Test {
   protected:
     static void SetUpTestSuite() {
-        if (!glfwInit()) {
-            throw std::runtime_error("failed to initialize GLFW");
+        try {
+            if (!glfwInit()) {
+                return;
+            }
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+            window = std::make_unique<Window>(100, 100, "Test");
+            ctx = std::make_unique<VulkanContext>();
+            ctx->init(*window, "ResourcePoolTest");
+            m_initialized = true;
+        } catch (const std::exception& e) {
+            std::cerr << "[ SKIP     ] ResourcePoolTest: " << e.what() << std::endl;
         }
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);  // Headless-ish
-        window = std::make_unique<Window>(100, 100, "Test");
-        ctx = std::make_unique<VulkanContext>();
-        ctx->init(*window, "ResourcePoolTest");
     }
 
     static void TearDownTestSuite() {
@@ -28,6 +33,9 @@ class ResourcePoolTest : public ::testing::Test {
     }
 
     void SetUp() override {
+        if (!m_initialized) {
+            GTEST_SKIP() << "VulkanContext not initialized (No compatible GPU found)";
+        }
         imagePool = std::make_unique<TransientImagePool>(ctx->getDevice(), ctx->getVmaAllocator(),
                                                          ctx->getBindlessHeap());
         bufferPool = std::make_unique<TransientBufferPool>(ctx->getDevice(), ctx->getVmaAllocator(),
@@ -35,18 +43,22 @@ class ResourcePoolTest : public ::testing::Test {
     }
 
     void TearDown() override {
-        imagePool.reset();
-        bufferPool.reset();
+        if (m_initialized) {
+            imagePool.reset();
+            bufferPool.reset();
+        }
     }
 
     static std::unique_ptr<Window> window;
     static std::unique_ptr<VulkanContext> ctx;
+    static bool m_initialized;
     std::unique_ptr<TransientImagePool> imagePool;
     std::unique_ptr<TransientBufferPool> bufferPool;
 };
 
 std::unique_ptr<Window> ResourcePoolTest::window = nullptr;
 std::unique_ptr<VulkanContext> ResourcePoolTest::ctx = nullptr;
+bool ResourcePoolTest::m_initialized = false;
 
 TEST_F(ResourcePoolTest, ImageRecycle) {
     ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1920, 1080}, VK_IMAGE_USAGE_SAMPLED_BIT};
