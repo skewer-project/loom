@@ -45,10 +45,6 @@ add_library(imgui STATIC
     external/imgui/imgui_demo.cpp
     external/imgui/backends/imgui_impl_glfw.cpp
     external/imgui/backends/imgui_impl_vulkan.cpp
-    external/imgui-node-editor/imgui_node_editor.cpp
-    external/imgui-node-editor/imgui_node_editor_api.cpp
-    external/imgui-node-editor/imgui_canvas.cpp
-    external/imgui-node-editor/crude_json.cpp
 )
 
 target_include_directories(imgui PUBLIC
@@ -75,8 +71,6 @@ add_library(imgui_node_editor STATIC
     ${NODE_EDITOR_DIR}/imgui_node_editor.cpp
     ${NODE_EDITOR_DIR}/imgui_node_editor_api.cpp
     ${NODE_EDITOR_DIR}/imgui_canvas.cpp
-    ${NODE_EDITOR_DIR}/imgui_extra_math.cpp
-    ${NODE_EDITOR_DIR}/imgui_bezier_math.cpp
     ${NODE_EDITOR_DIR}/crude_json.cpp
 )
 
