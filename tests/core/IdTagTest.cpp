@@ -8,8 +8,8 @@ TEST(IdTagTest, EncodeAndDecodeNode) {
     uint32_t index = 42;
     uint64_t encoded = encodeId(index, IdTag::Node);
 
-    // Check top 2 bits for Node (00)
-    EXPECT_EQ(encoded >> 62, 0);
+    // Check tag bits for Node (0x00000000)
+    EXPECT_EQ(encoded & 0xC0000000, 0);
     EXPECT_EQ(decodeIndex(encoded), index);
 }
 
@@ -17,20 +17,19 @@ TEST(IdTagTest, EncodeAndDecodePin) {
     uint32_t index = 123456789;
     uint64_t encoded = encodeId(index, IdTag::Pin);
 
-    // Check top 2 bits for Pin (01)
-    EXPECT_EQ(encoded >> 62, 1);
+    // Check tag bits for Pin (0x40000000)
+    EXPECT_EQ(encoded & 0xC0000000, 0x40000000);
     EXPECT_EQ(decodeIndex(encoded), index);
 }
 
 TEST(IdTagTest, EncodeAndDecodeLink) {
-    uint32_t index = 0xFFFFFFFF;
+    uint32_t index = 0x1FFFFFFF;
     uint64_t encoded = encodeId(index, IdTag::Link);
 
-    // Check top 2 bits for Link (10)
-    EXPECT_EQ(encoded >> 62, 2);
+    // Check tag bits for Link (0x80000000)
+    EXPECT_EQ(encoded & 0xC0000000, 0x80000000);
     EXPECT_EQ(decodeIndex(encoded), index);
 }
-
 TEST(IdTagTest, Partitioning) {
     uint32_t index = 1;
     uint64_t nodeId = encodeId(index, IdTag::Node);
