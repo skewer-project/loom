@@ -55,23 +55,9 @@ class Graph {
     }
 
     bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
-        Pin* startPin = pins.get(startPinHandle);
+        if (!canAddLink(startPinHandle, endPinHandle)) return false;
+
         Pin* endPin = pins.get(endPinHandle);
-
-        if (!startPin || !endPin) return false;
-        if (startPin->direction != PinDirection::Output) return false;
-        if (endPin->direction != PinDirection::Input) return false;
-        if (startPin->type != endPin->type) return false;
-
-        NodeHandle nodeA = startPin->node;
-        NodeHandle nodeB = endPin->node;
-
-        // Step 2: Self-loop guard
-        if (nodeA == nodeB) return false;
-
-        // Step 2: Cycle check
-        if (isReachable(nodeB, nodeA)) return false;
-
         if (endPin->link.isValid()) {
             removeLink(endPin->link);
         }
@@ -80,10 +66,11 @@ class Graph {
         Link* link = links.get(linkHandle);
         link->id = linkHandle;
 
+        Pin* startPin = pins.get(startPinHandle);
         endPin->link = linkHandle;
         startPin->links.push_back(linkHandle);
 
-        Node* endNode = nodes.get(nodeB);
+        Node* endNode = nodes.get(endPin->node);
         if (endNode) {
             endNode->isDirty = true;
         }
@@ -116,7 +103,6 @@ class Graph {
         isTopoDirty = true;
     }
 
-    // Step 4: Expose Sorted Output
     const std::vector<NodeHandle>& getTopologicalOrder() {
         if (isTopoDirty) {
             computeTopologicalOrder();
@@ -125,9 +111,37 @@ class Graph {
         return topoOrder;
     }
 
+    NodeHandle getNodeHandleByIndex(uint32_t index) const { return nodes.getHandleByIndex(index); }
+    PinHandle getPinHandleByIndex(uint32_t index) const { return pins.getHandleByIndex(index); }
+    LinkHandle getLinkHandleByIndex(uint32_t index) const { return links.getHandleByIndex(index); }
+
+    bool canAddLink(PinHandle startPinHandle, PinHandle endPinHandle) const {
+        const Pin* startPin = pins.get(startPinHandle);
+        const Pin* endPin = pins.get(endPinHandle);
+
+        if (!startPin || !endPin) return false;
+        if (startPin->direction != PinDirection::Output) return false;
+        if (endPin->direction != PinDirection::Input) return false;
+        if (startPin->type != endPin->type) return false;
+
+        NodeHandle nodeA = startPin->node;
+        NodeHandle nodeB = endPin->node;
+
+        if (nodeA == nodeB) return false;
+        if (isReachable(nodeB, nodeA)) return false;
+
+        return true;
+    }
+
     Node* getNode(NodeHandle h) { return nodes.get(h); }
+    const Node* getNode(NodeHandle h) const { return nodes.get(h); }
     Pin* getPin(PinHandle h) { return pins.get(h); }
+    const Pin* getPin(PinHandle h) const { return pins.get(h); }
     Link* getLink(LinkHandle h) { return links.get(h); }
+    const Link* getLink(LinkHandle h) const { return links.get(h); }
+
+    void forEachNode(std::function<void(NodeHandle, Node&)> cb) { nodes.forEach(cb); }
+    void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
 
   private:
     SlotMap<Node, NodeHandle> nodes;

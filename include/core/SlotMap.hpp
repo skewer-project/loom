@@ -107,6 +107,13 @@ class SlotMap {
         }
     }
 
+    HandleType getHandleByIndex(uint32_t index) const {
+        if (index < slots.size() && slots[index].isActive) {
+            return HandleType(index, slots[index].generation);
+        }
+        return HandleType();
+    }
+
     uint32_t size() const { return activeCount; }
     uint32_t capacity() const { return static_cast<uint32_t>(slots.size()); }
 

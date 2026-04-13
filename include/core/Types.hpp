@@ -8,6 +8,12 @@
 
 namespace loom::core {
 
+enum class IdTag : uint64_t { Node = (0ULL << 62), Pin = (1ULL << 62), Link = (2ULL << 62) };
+
+inline uint64_t encodeId(uint32_t index, IdTag tag) { return index | (uint64_t)tag; }
+
+inline uint32_t decodeIndex(uint64_t id) { return id & 0x3FFFFFFFFFFFFFFF; }
+
 enum class PinDirection { Input, Output };
 enum class PinType { Float, DeepBuffer };
 enum class NodeType { Constant, Merge, Viewer, Passthrough };
