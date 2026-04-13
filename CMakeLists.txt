@@ -129,6 +129,7 @@ add_executable(LoomTests
     tests/core/TopoTest.cpp
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
+    tests/gpu/ResourcePoolTest.cpp
 )
 
 # Link tests to our engine library and the Google Test runner
