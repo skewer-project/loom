@@ -64,6 +64,11 @@ VulkanContext::~VulkanContext() {
 
     cleanupSyncObjects();
 
+    m_bindlessHeap.reset();
+    if (m_vmaAllocator != VK_NULL_HANDLE) {
+        vmaDestroyAllocator(m_vmaAllocator);
+    }
+
     if (m_commandPool != VK_NULL_HANDLE) {
         vkDestroyCommandPool(m_device, m_commandPool, nullptr);
     }
