@@ -37,20 +37,22 @@ void NodeEditorPanel::draw(const char* title) {
 
 void NodeEditorPanel::renderNodes() {
     m_graph->forEachNode([&](core::NodeHandle h, core::Node& node) {
-        ed::BeginNode(core::encodeId(h.index, core::IdTag::Node));
+        ed::BeginNode(core::encodeId(h.index, h.generation, core::IdTag::Node));
 
         ImGui::TextUnformatted(node.name.c_str());
 
         // Draw Input Pins
         for (auto pinHandle : node.inputs) {
-            ed::BeginPin(core::encodeId(pinHandle.index, core::IdTag::Pin), ed::PinKind::Input);
+            ed::BeginPin(core::encodeId(pinHandle.index, pinHandle.generation, core::IdTag::Pin),
+                         ed::PinKind::Input);
             ImGui::TextUnformatted(m_graph->getPinLabel(pinHandle).c_str());
             ed::EndPin();
         }
 
         // Draw Output Pins
         for (auto pinHandle : node.outputs) {
-            ed::BeginPin(core::encodeId(pinHandle.index, core::IdTag::Pin), ed::PinKind::Output);
+            ed::BeginPin(core::encodeId(pinHandle.index, pinHandle.generation, core::IdTag::Pin),
+                         ed::PinKind::Output);
             ImGui::TextUnformatted(m_graph->getPinLabel(pinHandle).c_str());
             ed::EndPin();
         }
@@ -59,7 +61,7 @@ void NodeEditorPanel::renderNodes() {
 
         // Handle First Frame Position
         if (node.hasSpawnPos) {
-            ed::SetNodePosition(core::encodeId(h.index, core::IdTag::Node),
+            ed::SetNodePosition(core::encodeId(h.index, h.generation, core::IdTag::Node),
                                 ImVec2(node.spawnX, node.spawnY));
             node.hasSpawnPos = false;
         }
@@ -68,9 +70,9 @@ void NodeEditorPanel::renderNodes() {
 
 void NodeEditorPanel::renderLinks() {
     m_graph->forEachLink([&](core::LinkHandle h, core::Link& link) {
-        ed::Link(core::encodeId(h.index, core::IdTag::Link),
-                 core::encodeId(link.startPin.index, core::IdTag::Pin),
-                 core::encodeId(link.endPin.index, core::IdTag::Pin));
+        ed::Link(core::encodeId(h.index, h.generation, core::IdTag::Link),
+                 core::encodeId(link.startPin.index, link.startPin.generation, core::IdTag::Pin),
+                 core::encodeId(link.endPin.index, link.endPin.generation, core::IdTag::Pin));
     });
 }
 
