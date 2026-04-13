@@ -87,11 +87,17 @@ target_link_libraries(imgui_node_editor PUBLIC imgui)
 add_library(LoomCore STATIC
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
+    src/gpu/BindlessHeap.cpp
+    src/gpu/TransientImagePool.cpp
+    src/gpu/TransientBufferPool.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
 )
 
-target_include_directories(LoomCore PUBLIC include)
+target_include_directories(LoomCore PUBLIC 
+    include
+    external/vma
+)
 
 # Because we link imgui and node_editor PUBLICLY, anything that links to
 # LoomCore automatically gets their include directories too!
