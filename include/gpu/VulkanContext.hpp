@@ -5,11 +5,14 @@
 #include <vulkan/vulkan.h>
 
 #include <iostream>
+#include <memory>
 #include <vector>
 
 #include "core/Constants.hpp"
+#include "gpu/BindlessHeap.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
+#include "vk_mem_alloc.h"
 
 namespace loom::gpu {
 
@@ -73,6 +76,9 @@ class VulkanContext {
         return static_cast<uint32_t>(m_swapchainImages.size());
     }
 
+    VmaAllocator getVmaAllocator() const { return m_vmaAllocator; }
+    BindlessHeap& getBindlessHeap() { return *m_bindlessHeap; }
+
   private:
     GLFWwindow* m_window = nullptr;  // Non-owning pointer. The Window object in main() owns the
                                      // GLFW window and outlives VulkanContext.
@@ -82,6 +88,9 @@ class VulkanContext {
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
+
+    VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;
+    std::unique_ptr<BindlessHeap> m_bindlessHeap;
 
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_computeQueue = VK_NULL_HANDLE;
