@@ -1,3 +1,4 @@
+#define VMA_IMPLEMENTATION
 #include "gpu/VulkanContext.hpp"
 
 #include <algorithm>
@@ -101,6 +102,19 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     allocateCommandBuffers();
     createSyncObjects();
     createDescriptorPool();
+
+    // VMA initialization
+    VmaAllocatorCreateInfo allocatorInfo = {};
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+    allocatorInfo.physicalDevice = m_physicalDevice;
+    allocatorInfo.device = m_device;
+    allocatorInfo.instance = m_instance;
+
+    if (vmaCreateAllocator(&allocatorInfo, &m_vmaAllocator) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create VMA allocator!");
+    }
+
+    m_bindlessHeap = std::make_unique<BindlessHeap>(m_device);
 }
 
 void VulkanContext::createInstance(const char* appName) {
