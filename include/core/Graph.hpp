@@ -143,6 +143,29 @@ class Graph {
     void forEachNode(std::function<void(NodeHandle, Node&)> cb) { nodes.forEach(cb); }
     void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
 
+    std::string getPinLabel(PinHandle h) const {
+        const Pin* pin = pins.get(h);
+        if (!pin) return "Unknown";
+
+        std::string label;
+        switch (pin->type) {
+            case PinType::Float:
+                label = "[Float] ";
+                break;
+            case PinType::DeepBuffer:
+                label = "[Deep] ";
+                break;
+        }
+
+        // Simple heuristic for labels if not explicitly named
+        if (pin->direction == PinDirection::Input)
+            label += "In";
+        else
+            label += "Out";
+
+        return label;
+    }
+
   private:
     SlotMap<Node, NodeHandle> nodes;
     SlotMap<Pin, PinHandle> pins;

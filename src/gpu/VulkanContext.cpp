@@ -823,12 +823,6 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     // causing the next frame to wait forever.
     vkResetFences(m_device, 1, &m_inFlightFences[m_currentFrame]);
 
-    // Step D — Build ImGui frame (CPU only, no GPU work yet):
-    imgui.beginFrame();
-    ImGui::ShowDemoWindow();
-    // MILESTONE: Remove ShowDemoWindow() once
-    // the demo window is confirmed working on screen.
-
     // Step E — Reset and begin command buffer:
     vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
 

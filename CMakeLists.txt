@@ -88,6 +88,7 @@ add_library(LoomCore STATIC
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
     src/ui/ImGuiRenderer.cpp
+    src/ui/NodeEditorPanel.cpp
 )
 
 target_include_directories(LoomCore PUBLIC include)

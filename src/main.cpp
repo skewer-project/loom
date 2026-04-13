@@ -1,9 +1,11 @@
 #include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
 
+#include "core/Graph.hpp"
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
+#include "ui/NodeEditorPanel.hpp"
 
 int main() {
     try {
@@ -13,8 +15,6 @@ int main() {
 
         loom::gpu::VulkanContext vulkan;
         vulkan.init(window, "Loom");
-        // init() takes const loom::platform::Window& — pass window directly,
-        // not window.getNativeWindow(). This is intentional.
 
         loom::ui::ImGuiRendererCreateInfo imguiInfo{};
         imguiInfo.window = window.getNativeWindow();
@@ -31,10 +31,18 @@ int main() {
         loom::ui::ImGuiRenderer imgui;
         imgui.init(imguiInfo);
 
+        loom::core::Graph graph;
+        loom::ui::NodeEditorPanel nodeEditor(&graph);
+
         std::cout << "Loom initialized successfully." << std::endl;
 
         while (!window.shouldClose()) {
             window.pollEvents();
+
+            // Build UI
+            imgui.beginFrame();
+            nodeEditor.draw("Loom Node Editor");
+
             vulkan.drawFrame(imgui);
         }
 

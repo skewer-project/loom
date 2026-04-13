@@ -46,6 +46,11 @@ struct Node {
     std::vector<PinHandle> outputs;
     bool isDirty = true;
 
+    // UI/Spawn state
+    bool hasSpawnPos = false;
+    float spawnX = 0.0f;
+    float spawnY = 0.0f;
+
     Node(NodeHandle h, NodeType t, std::string n)
         : id(h), type(t), name(std::move(n)), inputs(), outputs(), isDirty(true) {}
 };
