@@ -72,6 +72,7 @@ class VulkanContext {
     VkFormat getSwapchainImageFormat() const { return m_swapchainImageFormat; }
     uint32_t getGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
+    VkCommandPool getCommandPool() const { return m_commandPool; }
     uint32_t getSwapchainImageCount() const {
         return static_cast<uint32_t>(m_swapchainImages.size());
     }
