@@ -154,14 +154,24 @@ class Graph {
         return true;
     }
 
-    Node* getNode(NodeHandle h) { return nodes.get(h); }
-    const Node* getNode(NodeHandle h) const { return nodes.get(h); }
+    Node* getNode(NodeHandle h) {
+        auto ptr = nodes.get(h);
+        return ptr ? ptr->get() : nullptr;
+    }
+    const Node* getNode(NodeHandle h) const {
+        auto ptr = nodes.get(h);
+        return ptr ? ptr->get() : nullptr;
+    }
     Pin* getPin(PinHandle h) { return pins.get(h); }
     const Pin* getPin(PinHandle h) const { return pins.get(h); }
     Link* getLink(LinkHandle h) { return links.get(h); }
     const Link* getLink(LinkHandle h) const { return links.get(h); }
 
-    void forEachNode(std::function<void(NodeHandle, Node&)> cb) { nodes.forEach(cb); }
+    void forEachNode(std::function<void(NodeHandle, Node&)> cb) {
+        nodes.forEach([&](NodeHandle h, std::unique_ptr<Node>& ptr) {
+            if (ptr) cb(h, *ptr);
+        });
+    }
     void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
 
     std::string getPinLabel(PinHandle h) const {
