@@ -219,6 +219,13 @@ class Graph {
             if (ptr) cb(h, *ptr);
         });
     }
+
+    void forEachNode(std::function<void(NodeHandle, const Node&)> cb) const {
+        nodes.forEach([&](NodeHandle h, const std::unique_ptr<Node>& ptr) {
+            if (ptr) cb(h, *ptr);
+        });
+    }
+
     void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
 
     std::string getPinLabel(PinHandle h) const {
