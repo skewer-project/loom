@@ -5,8 +5,8 @@
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
 
-using namespace loom::gpu;
-using namespace loom::platform;
+namespace gpu = loom::gpu;
+namespace platform = loom::platform;
 
 class ResourcePoolTest : public ::testing::Test {
   protected:
@@ -17,8 +17,8 @@ class ResourcePoolTest : public ::testing::Test {
             }
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
             glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-            window = std::make_unique<Window>(100, 100, "Test");
-            ctx = std::make_unique<VulkanContext>();
+            window = std::make_unique<platform::Window>(100, 100, "Test");
+            ctx = std::make_unique<gpu::VulkanContext>();
             ctx->init(*window, "ResourcePoolTest");
             m_initialized = true;
         } catch (const std::exception& e) {
@@ -36,10 +36,10 @@ class ResourcePoolTest : public ::testing::Test {
         if (!m_initialized) {
             GTEST_SKIP() << "VulkanContext not initialized (No compatible GPU found)";
         }
-        imagePool = std::make_unique<TransientImagePool>(ctx->getDevice(), ctx->getVmaAllocator(),
-                                                         ctx->getBindlessHeap());
-        bufferPool = std::make_unique<TransientBufferPool>(ctx->getDevice(), ctx->getVmaAllocator(),
-                                                           ctx->getBindlessHeap());
+        imagePool = std::make_unique<gpu::TransientImagePool>(
+            ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
+        bufferPool = std::make_unique<gpu::TransientBufferPool>(
+            ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
     }
 
     void TearDown() override {
@@ -49,44 +49,44 @@ class ResourcePoolTest : public ::testing::Test {
         }
     }
 
-    static std::unique_ptr<Window> window;
-    static std::unique_ptr<VulkanContext> ctx;
+    static std::unique_ptr<platform::Window> window;
+    static std::unique_ptr<gpu::VulkanContext> ctx;
     static bool m_initialized;
-    std::unique_ptr<TransientImagePool> imagePool;
-    std::unique_ptr<TransientBufferPool> bufferPool;
+    std::unique_ptr<gpu::TransientImagePool> imagePool;
+    std::unique_ptr<gpu::TransientBufferPool> bufferPool;
 };
 
-std::unique_ptr<Window> ResourcePoolTest::window = nullptr;
-std::unique_ptr<VulkanContext> ResourcePoolTest::ctx = nullptr;
+std::unique_ptr<platform::Window> ResourcePoolTest::window = nullptr;
+std::unique_ptr<gpu::VulkanContext> ResourcePoolTest::ctx = nullptr;
 bool ResourcePoolTest::m_initialized = false;
 
 TEST_F(ResourcePoolTest, ImageRecycle) {
-    ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1920, 1080}, VK_IMAGE_USAGE_SAMPLED_BIT};
-    ImageHandle h1 = imagePool->acquire(spec);
+    gpu::ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1920, 1080}, VK_IMAGE_USAGE_SAMPLED_BIT};
+    gpu::ImageHandle h1 = imagePool->acquire(spec);
     uint32_t slot1 = imagePool->DEBUG_getBindlessSlot(h1);
 
     imagePool->release(h1);
     imagePool->flushPendingReleases();
 
-    ImageHandle h2 = imagePool->acquire(spec);
+    gpu::ImageHandle h2 = imagePool->acquire(spec);
     uint32_t slot2 = imagePool->DEBUG_getBindlessSlot(h2);
 
     EXPECT_EQ(slot1, slot2);
 }
 
 TEST_F(ResourcePoolTest, ImageSpecMismatch) {
-    ImageSpec spec1{VK_FORMAT_R8G8B8A8_UNORM, {1920, 1080}, VK_IMAGE_USAGE_SAMPLED_BIT};
-    ImageSpec spec2{VK_FORMAT_R8G8B8A8_UNORM, {1024, 1024}, VK_IMAGE_USAGE_SAMPLED_BIT};
+    gpu::ImageSpec spec1{VK_FORMAT_R8G8B8A8_UNORM, {1920, 1080}, VK_IMAGE_USAGE_SAMPLED_BIT};
+    gpu::ImageSpec spec2{VK_FORMAT_R8G8B8A8_UNORM, {1024, 1024}, VK_IMAGE_USAGE_SAMPLED_BIT};
 
-    ImageHandle h1 = imagePool->acquire(spec1);
-    ImageHandle h2 = imagePool->acquire(spec2);
+    gpu::ImageHandle h1 = imagePool->acquire(spec1);
+    gpu::ImageHandle h2 = imagePool->acquire(spec2);
 
     EXPECT_NE(imagePool->DEBUG_getBindlessSlot(h1), imagePool->DEBUG_getBindlessSlot(h2));
 }
 
 TEST_F(ResourcePoolTest, StaleHandleRejection) {
-    ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {100, 100}, VK_IMAGE_USAGE_SAMPLED_BIT};
-    ImageHandle h1 = imagePool->acquire(spec);
+    gpu::ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {100, 100}, VK_IMAGE_USAGE_SAMPLED_BIT};
+    gpu::ImageHandle h1 = imagePool->acquire(spec);
 
     imagePool->release(h1);
     imagePool->flushPendingReleases();
@@ -98,13 +98,13 @@ TEST_F(ResourcePoolTest, StaleHandleRejection) {
 TEST_F(ResourcePoolTest, FreeListExhaustion) {
     // Acquire 2048 distinct image specs to exhaust the heap
     for (uint32_t i = 0; i < 2048; ++i) {
-        ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1 + i, 1}, VK_IMAGE_USAGE_SAMPLED_BIT};
+        gpu::ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1 + i, 1}, VK_IMAGE_USAGE_SAMPLED_BIT};
         imagePool->acquire(spec);
     }
 
     // 2049th should return sentinel value
-    ImageSpec spec_last{VK_FORMAT_R8G8B8A8_UNORM, {4000, 4000}, VK_IMAGE_USAGE_SAMPLED_BIT};
-    ImageHandle h_last = imagePool->acquire(spec_last);
+    gpu::ImageSpec spec_last{VK_FORMAT_R8G8B8A8_UNORM, {4000, 4000}, VK_IMAGE_USAGE_SAMPLED_BIT};
+    gpu::ImageHandle h_last = imagePool->acquire(spec_last);
 
     EXPECT_EQ(h_last.poolIndex, 0xFFFFFFFF);
     EXPECT_EQ(h_last.bindlessSlot, 0xFFFFFFFF);
@@ -112,15 +112,15 @@ TEST_F(ResourcePoolTest, FreeListExhaustion) {
 }
 
 TEST_F(ResourcePoolTest, BufferBounds) {
-    BufferHandle h1024 = bufferPool->acquire(1024);
+    gpu::BufferHandle h1024 = bufferPool->acquire(1024);
     bufferPool->release(h1024);
     bufferPool->flushPendingReleases();
 
     // Acquire 4096 - should be a new slot (exceeded 2x bound)
-    BufferHandle h4096 = bufferPool->acquire(4096);
+    gpu::BufferHandle h4096 = bufferPool->acquire(4096);
     EXPECT_NE(bufferPool->DEBUG_getBindlessSlot(h1024), bufferPool->DEBUG_getBindlessSlot(h4096));
 
     // Acquire 512 - should reuse the 1024 slot
-    BufferHandle h512 = bufferPool->acquire(512);
+    gpu::BufferHandle h512 = bufferPool->acquire(512);
     EXPECT_EQ(bufferPool->DEBUG_getBindlessSlot(h1024), bufferPool->DEBUG_getBindlessSlot(h512));
 }

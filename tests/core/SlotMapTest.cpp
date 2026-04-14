@@ -5,7 +5,7 @@
 #include "core/Handle.hpp"
 #include "core/SlotMap.hpp"
 
-using namespace loom::core;
+namespace core = loom::core;
 
 struct MyNode {
     std::string name;
@@ -14,15 +14,15 @@ struct MyNode {
 };
 
 TEST(SlotMapTest, InsertionReturnsValidHandle) {
-    SlotMap<MyNode, NodeHandle> map;
-    NodeHandle h1 = map.emplace("Node A", 42);
+    core::SlotMap<MyNode, core::NodeHandle> map;
+    core::NodeHandle h1 = map.emplace("Node A", 42);
     EXPECT_TRUE(h1.isValid());
     EXPECT_TRUE(map.isValid(h1));
 }
 
 TEST(SlotMapTest, GetReturnsCorrectData) {
-    SlotMap<MyNode, NodeHandle> map;
-    NodeHandle h1 = map.emplace("Node A", 42);
+    core::SlotMap<MyNode, core::NodeHandle> map;
+    core::NodeHandle h1 = map.emplace("Node A", 42);
     MyNode* n1 = map.get(h1);
     ASSERT_NE(n1, nullptr);
     EXPECT_EQ(n1->name, "Node A");
@@ -30,21 +30,21 @@ TEST(SlotMapTest, GetReturnsCorrectData) {
 }
 
 TEST(SlotMapTest, RemovalInvalidatesHandle) {
-    SlotMap<MyNode, NodeHandle> map;
-    NodeHandle h1 = map.emplace("Node A", 42);
+    core::SlotMap<MyNode, core::NodeHandle> map;
+    core::NodeHandle h1 = map.emplace("Node A", 42);
     EXPECT_TRUE(map.remove(h1));
     EXPECT_FALSE(map.isValid(h1));
     EXPECT_EQ(map.get(h1), nullptr);
 }
 
 TEST(SlotMapTest, SlotReusesMemoryWithNewGeneration) {
-    SlotMap<MyNode, NodeHandle> map;
-    NodeHandle h1 = map.emplace("Node A", 42);
+    core::SlotMap<MyNode, core::NodeHandle> map;
+    core::NodeHandle h1 = map.emplace("Node A", 42);
     uint32_t originalIndex = h1.index;
     uint32_t originalGen = h1.generation;
 
     map.remove(h1);
-    NodeHandle h2 = map.emplace("Node B", 99);
+    core::NodeHandle h2 = map.emplace("Node B", 99);
 
     EXPECT_EQ(h2.index, originalIndex);
     EXPECT_GT(h2.generation, originalGen);
@@ -52,14 +52,14 @@ TEST(SlotMapTest, SlotReusesMemoryWithNewGeneration) {
 }
 
 TEST(SlotMapTest, IterationSkipsRemovedItems) {
-    SlotMap<MyNode, NodeHandle> map;
+    core::SlotMap<MyNode, core::NodeHandle> map;
     map.emplace("Node A", 1);
-    NodeHandle h2 = map.emplace("Node B", 2);
+    core::NodeHandle h2 = map.emplace("Node B", 2);
     map.emplace("Node C", 3);
 
     map.remove(h2);
 
     int count = 0;
-    map.forEach([&](NodeHandle h, MyNode& node) { count++; });
+    map.forEach([&](core::NodeHandle h, MyNode& node) { count++; });
     EXPECT_EQ(count, 2);
 }

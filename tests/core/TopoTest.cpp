@@ -5,17 +5,17 @@
 
 #include "core/Graph.hpp"
 
-using namespace loom::core;
+namespace core = loom::core;
 
 class TopoTest : public ::testing::Test {
   protected:
-    Graph graph;
+    core::Graph graph;
 };
 
 TEST_F(TopoTest, LinearSort) {
-    NodeHandle nodeA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
-    NodeHandle nodeC = graph.addNode(NodeType::Viewer, "C");
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Passthrough, "B");
+    core::NodeHandle nodeC = graph.addNode(core::NodeType::Viewer, "C");
 
     graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
     graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
@@ -28,9 +28,9 @@ TEST_F(TopoTest, LinearSort) {
 }
 
 TEST_F(TopoTest, CycleRejection) {
-    NodeHandle nodeA = graph.addNode(NodeType::Passthrough, "A");
-    NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
-    NodeHandle nodeC = graph.addNode(NodeType::Passthrough, "C");
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Passthrough, "A");
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Passthrough, "B");
+    core::NodeHandle nodeC = graph.addNode(core::NodeType::Passthrough, "C");
 
     graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
     graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
@@ -42,10 +42,10 @@ TEST_F(TopoTest, CycleRejection) {
 }
 
 TEST_F(TopoTest, ComplexRejection) {
-    NodeHandle nodeA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle nodeB = graph.addNode(NodeType::Passthrough, "B");
-    NodeHandle nodeC = graph.addNode(NodeType::Passthrough, "C");
-    NodeHandle nodeD = graph.addNode(NodeType::Merge, "D");
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Passthrough, "B");
+    core::NodeHandle nodeC = graph.addNode(core::NodeType::Passthrough, "C");
+    core::NodeHandle nodeD = graph.addNode(core::NodeType::Merge, "D");
 
     graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
     graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeC)->inputs[0]);
@@ -69,16 +69,16 @@ TEST_F(TopoTest, ComplexRejection) {
 }
 
 TEST_F(TopoTest, SelfLoopRejection) {
-    NodeHandle nodeA = graph.addNode(NodeType::Passthrough, "A");
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Passthrough, "A");
     EXPECT_FALSE(
         graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeA)->inputs[0]));
 }
 
 TEST_F(TopoTest, MassiveGraph) {
     const int COUNT = 1000;
-    std::vector<NodeHandle> nodeHandles;
+    std::vector<core::NodeHandle> nodeHandles;
     for (int i = 0; i < COUNT; ++i) {
-        nodeHandles.push_back(graph.addNode(NodeType::Passthrough));
+        nodeHandles.push_back(graph.addNode(core::NodeType::Passthrough));
     }
 
     for (int i = 0; i < COUNT - 1; ++i) {

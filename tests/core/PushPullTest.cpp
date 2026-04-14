@@ -11,9 +11,9 @@
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
 
-using namespace loom::core;
-using namespace loom::gpu;
-using namespace loom::platform;
+namespace core = loom::core;
+namespace gpu = loom::gpu;
+namespace platform = loom::platform;
 
 class PushPullTest : public ::testing::Test {
   protected:
@@ -21,8 +21,8 @@ class PushPullTest : public ::testing::Test {
         if (!glfwInit()) return;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        window = std::make_unique<Window>(100, 100, "PushPullTest");
-        ctx = std::make_unique<VulkanContext>();
+        window = std::make_unique<platform::Window>(100, 100, "PushPullTest");
+        ctx = std::make_unique<gpu::VulkanContext>();
         try {
             ctx->init(*window, "PushPullTest");
             m_initialized = true;
@@ -39,8 +39,8 @@ class PushPullTest : public ::testing::Test {
 
     void SetUp() override {
         if (!m_initialized) GTEST_SKIP();
-        imagePool = std::make_unique<TransientImagePool>(ctx->getDevice(), ctx->getVmaAllocator(),
-                                                         ctx->getBindlessHeap());
+        imagePool = std::make_unique<gpu::TransientImagePool>(
+            ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
 
         VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocInfo.commandPool = ctx->getCommandPool();
@@ -74,27 +74,27 @@ class PushPullTest : public ::testing::Test {
         imagePool->flushPendingReleases();
     }
 
-    static std::unique_ptr<Window> window;
-    static std::unique_ptr<VulkanContext> ctx;
+    static std::unique_ptr<platform::Window> window;
+    static std::unique_ptr<gpu::VulkanContext> ctx;
     static bool m_initialized;
-    std::unique_ptr<TransientImagePool> imagePool;
+    std::unique_ptr<gpu::TransientImagePool> imagePool;
     VkCommandBuffer cmd;
-    EvaluationContext evalCtx;
+    core::EvaluationContext evalCtx;
 };
 
-std::unique_ptr<Window> PushPullTest::window = nullptr;
-std::unique_ptr<VulkanContext> PushPullTest::ctx = nullptr;
+std::unique_ptr<platform::Window> PushPullTest::window = nullptr;
+std::unique_ptr<gpu::VulkanContext> PushPullTest::ctx = nullptr;
 bool PushPullTest::m_initialized = false;
 
 TEST_F(PushPullTest, BasicEval) {
-    Graph graph;
-    NodeHandle hA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle hMerge = graph.addNode(NodeType::Merge, "Merge");
-    NodeHandle hViewer = graph.addNode(NodeType::Viewer, "Viewer");
+    core::Graph graph;
+    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle hMerge = graph.addNode(core::NodeType::Merge, "Merge");
+    core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
-    Node* nodeA = graph.getNode(hA);
-    Node* nodeMerge = graph.getNode(hMerge);
-    Node* nodeViewer = graph.getNode(hViewer);
+    core::Node* nodeA = graph.getNode(hA);
+    core::Node* nodeMerge = graph.getNode(hMerge);
+    core::Node* nodeViewer = graph.getNode(hViewer);
 
     graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]);
     graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[1]);
@@ -118,18 +118,18 @@ TEST_F(PushPullTest, BasicEval) {
 
     EXPECT_FALSE(nodeA->isDirty);
     EXPECT_FALSE(nodeMerge->isDirty);
-    EXPECT_TRUE(((ViewerNode*)nodeViewer)->lastOutput.isValid());
+    EXPECT_TRUE(((core::ViewerNode*)nodeViewer)->lastOutput.isValid());
 }
 
 TEST_F(PushPullTest, DirtyPropagation) {
-    Graph graph;
-    NodeHandle hA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle hMerge = graph.addNode(NodeType::Merge, "Merge");
-    NodeHandle hViewer = graph.addNode(NodeType::Viewer, "Viewer");
+    core::Graph graph;
+    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle hMerge = graph.addNode(core::NodeType::Merge, "Merge");
+    core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
-    Node* nodeA = graph.getNode(hA);
-    Node* nodeMerge = graph.getNode(hMerge);
-    Node* nodeViewer = graph.getNode(hViewer);
+    core::Node* nodeA = graph.getNode(hA);
+    core::Node* nodeMerge = graph.getNode(hMerge);
+    core::Node* nodeViewer = graph.getNode(hViewer);
 
     graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]);
     graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]);
@@ -153,12 +153,12 @@ TEST_F(PushPullTest, DirtyPropagation) {
 }
 
 TEST_F(PushPullTest, CachePersistence) {
-    Graph graph;
-    NodeHandle hA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle hViewer = graph.addNode(NodeType::Viewer, "Viewer");
+    core::Graph graph;
+    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
-    Node* nodeA = graph.getNode(hA);
-    Node* nodeViewer = graph.getNode(hViewer);
+    core::Node* nodeA = graph.getNode(hA);
+    core::Node* nodeViewer = graph.getNode(hViewer);
 
     graph.tryAddLink(nodeA->outputs[0], nodeViewer->inputs[0]);
 
@@ -169,7 +169,7 @@ TEST_F(PushPullTest, CachePersistence) {
     vkEndCommandBuffer(cmd);
     endFrameCleanup();
 
-    gpu::ImageHandle firstHandle = ((ViewerNode*)nodeViewer)->lastOutput;
+    gpu::ImageHandle firstHandle = ((core::ViewerNode*)nodeViewer)->lastOutput;
     EXPECT_TRUE(firstHandle.isValid());
     EXPECT_FALSE(nodeA->isDirty);
 
@@ -179,15 +179,15 @@ TEST_F(PushPullTest, CachePersistence) {
     vkEndCommandBuffer(cmd);
     endFrameCleanup();
 
-    gpu::ImageHandle secondHandle = ((ViewerNode*)nodeViewer)->lastOutput;
+    gpu::ImageHandle secondHandle = ((core::ViewerNode*)nodeViewer)->lastOutput;
     EXPECT_EQ(firstHandle.poolIndex, secondHandle.poolIndex);
     EXPECT_EQ(firstHandle.generation, secondHandle.generation);
 }
 
 TEST_F(PushPullTest, DeletionGC) {
-    Graph graph;
-    NodeHandle hA = graph.addNode(NodeType::Constant, "A");
-    NodeHandle hViewer = graph.addNode(NodeType::Viewer, "Viewer");
+    core::Graph graph;
+    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
+    core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
     graph.tryAddLink(graph.getNode(hA)->outputs[0], graph.getNode(hViewer)->inputs[0]);
 
@@ -212,9 +212,9 @@ TEST_F(PushPullTest, DeletionGC) {
 }
 
 TEST_F(PushPullTest, ReentrancyGuard) {
-    Graph graph;
-    NodeHandle hA = graph.addNode(NodeType::Constant, "A");
-    Node* nodeA = graph.getNode(hA);
+    core::Graph graph;
+    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
+    core::Node* nodeA = graph.getNode(hA);
 
     nodeA->isEvaluating = true;
 
