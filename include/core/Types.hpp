@@ -5,8 +5,12 @@
 #include <vector>
 
 #include "core/Handle.hpp"
+#include "gpu/ResourceHandles.hpp"
 
 namespace loom::core {
+
+class Graph;
+struct EvaluationContext;
 
 enum class IdTag : uint64_t { Node = 0ULL, Pin = 1ULL << 62, Link = 2ULL << 62 };
 
@@ -51,14 +55,24 @@ struct Node {
     std::vector<PinHandle> inputs;
     std::vector<PinHandle> outputs;
     bool isDirty = true;
-
-    // UI/Spawn state
-    bool hasSpawnPos = false;
-    float spawnX = 0.0f;
-    float spawnY = 0.0f;
+    bool isEvaluating = false;
+    Graph* graph = nullptr;
 
     Node(NodeHandle h, NodeType t, std::string n)
-        : id(h), type(t), name(std::move(n)), inputs(), outputs(), isDirty(true) {}
+        : id(h),
+          type(t),
+          name(std::move(n)),
+          inputs(),
+          outputs(),
+          isDirty(true),
+          isEvaluating(false),
+          graph(nullptr) {}
+
+    virtual ~Node() = default;
+    virtual void evaluate(EvaluationContext& ctx) = 0;
+
+  protected:
+    gpu::ImageHandle pullInput(EvaluationContext& ctx, uint32_t inputIndex);
 };
 
 }  // namespace loom::core

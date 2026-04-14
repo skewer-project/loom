@@ -2,19 +2,19 @@
 
 #include "core/Graph.hpp"
 
-using namespace loom::core;
+namespace core = loom::core;
 
 class GraphTest : public ::testing::Test {
   protected:
-    Graph graph;
+    core::Graph graph;
 };
 
 TEST_F(GraphTest, NodeCreation) {
-    NodeHandle h = graph.addNode(NodeType::Merge);
-    Node* node = graph.getNode(h);
+    core::NodeHandle h = graph.addNode(core::NodeType::Merge);
+    core::Node* node = graph.getNode(h);
 
     ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Merge);
+    EXPECT_EQ(node->type, core::NodeType::Merge);
     EXPECT_EQ(node->inputs.size(), 2);
     EXPECT_EQ(node->outputs.size(), 1);
 
@@ -23,22 +23,22 @@ TEST_F(GraphTest, NodeCreation) {
 }
 
 TEST_F(GraphTest, LinkingNodes) {
-    NodeHandle nodeA = graph.addNode(NodeType::Constant);
-    NodeHandle nodeB = graph.addNode(NodeType::Viewer);
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Viewer);
 
-    Node* a = graph.getNode(nodeA);
-    Node* b = graph.getNode(nodeB);
+    core::Node* a = graph.getNode(nodeA);
+    core::Node* b = graph.getNode(nodeB);
 
     ASSERT_FALSE(a->outputs.empty());
     ASSERT_FALSE(b->inputs.empty());
 
-    PinHandle outA = a->outputs[0];
-    PinHandle inB = b->inputs[0];
+    core::PinHandle outA = a->outputs[0];
+    core::PinHandle inB = b->inputs[0];
 
     EXPECT_TRUE(graph.tryAddLink(outA, inB));
 
-    Pin* pOutA = graph.getPin(outA);
-    Pin* pInB = graph.getPin(inB);
+    core::Pin* pOutA = graph.getPin(outA);
+    core::Pin* pInB = graph.getPin(inB);
 
     EXPECT_TRUE(pInB->link.isValid());
     ASSERT_EQ(pOutA->links.size(), 1);
@@ -46,27 +46,27 @@ TEST_F(GraphTest, LinkingNodes) {
 }
 
 TEST_F(GraphTest, TypeSafety) {
-    NodeHandle nodeA = graph.addNode(NodeType::Constant);
-    NodeHandle nodeB = graph.addNode(NodeType::Viewer);
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Viewer);
 
-    PinHandle outA = graph.getNode(nodeA)->outputs[0];
-    PinHandle inB = graph.getNode(nodeB)->inputs[0];
+    core::PinHandle outA = graph.getNode(nodeA)->outputs[0];
+    core::PinHandle inB = graph.getNode(nodeB)->inputs[0];
 
     // Force type mismatch
-    graph.getPin(inB)->type = PinType::DeepBuffer;
+    graph.getPin(inB)->type = core::PinType::DeepBuffer;
 
     EXPECT_FALSE(graph.tryAddLink(outA, inB));
 }
 
 TEST_F(GraphTest, CascadingDeletion) {
-    NodeHandle nodeA = graph.addNode(NodeType::Constant);
-    NodeHandle nodeB = graph.addNode(NodeType::Viewer);
+    core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle nodeB = graph.addNode(core::NodeType::Viewer);
 
-    PinHandle outA = graph.getNode(nodeA)->outputs[0];
-    PinHandle inB = graph.getNode(nodeB)->inputs[0];
+    core::PinHandle outA = graph.getNode(nodeA)->outputs[0];
+    core::PinHandle inB = graph.getNode(nodeB)->inputs[0];
 
     graph.tryAddLink(outA, inB);
-    LinkHandle lh = graph.getPin(inB)->link;
+    core::LinkHandle lh = graph.getPin(inB)->link;
 
     ASSERT_NE(graph.getLink(lh), nullptr);
 

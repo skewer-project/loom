@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cassert>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <vector>
 
+#include "core/Nodes.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
 
@@ -14,21 +16,40 @@ namespace loom::core {
 class Graph {
   public:
     NodeHandle addNode(NodeType type, std::string name = "") {
-        NodeHandle nodeHandle = nodes.emplace(NodeHandle(), type, name);
-        Node* node = nodes.get(nodeHandle);
-        node->id = nodeHandle;
-        if (node->name.empty()) {
-            node->name = getDefaultNodeName(type);
+        if (name.empty()) {
+            name = getDefaultNodeName(type);
         }
 
-        setupNodePins(node);
+        NodeHandle nodeHandle = nodes.emplace(nullptr);
+        std::unique_ptr<Node> node;
+        switch (type) {
+            case NodeType::Constant:
+                node = std::make_unique<ConstantNode>(nodeHandle, name);
+                break;
+            case NodeType::Merge:
+                node = std::make_unique<MergeNode>(nodeHandle, name);
+                break;
+            case NodeType::Viewer:
+                node = std::make_unique<ViewerNode>(nodeHandle, name);
+                break;
+            case NodeType::Passthrough:
+                node = std::make_unique<PassthroughNode>(nodeHandle, name);
+                break;
+            default:
+                throw std::runtime_error("Unknown node type");
+        }
+        node->graph = this;
+        *nodes.get(nodeHandle) = std::move(node);
+
+        Node* nodePtr = nodes.get(nodeHandle)->get();
+        setupNodePins(nodePtr);
 
         isTopoDirty = true;
         return nodeHandle;
     }
 
     void removeNode(NodeHandle nodeHandle) {
-        Node* node = nodes.get(nodeHandle);
+        Node* node = getNode(nodeHandle);
         if (!node) return;
 
         for (PinHandle pinHandle : node->inputs) {
@@ -70,10 +91,7 @@ class Graph {
         endPin->link = linkHandle;
         startPin->links.push_back(linkHandle);
 
-        Node* endNode = nodes.get(endPin->node);
-        if (endNode) {
-            endNode->isDirty = true;
-        }
+        markDirty(endPin->node);
 
         isTopoDirty = true;
         return true;
@@ -93,14 +111,64 @@ class Graph {
 
         if (endPin) {
             endPin->link = LinkHandle();
-            Node* endNode = nodes.get(endPin->node);
-            if (endNode) {
-                endNode->isDirty = true;
-            }
+            markDirty(endPin->node);
         }
 
         links.remove(linkHandle);
         isTopoDirty = true;
+    }
+
+    void markDirty(NodeHandle startNodeHandle) {
+        Node* startNode = getNode(startNodeHandle);
+        if (!startNode || startNode->isDirty) return;
+
+        std::queue<NodeHandle> q;
+        q.push(startNodeHandle);
+
+        while (!q.empty()) {
+            NodeHandle currentHandle = q.front();
+            q.pop();
+
+            Node* currentNode = getNode(currentHandle);
+            if (!currentNode) continue;
+
+            currentNode->isDirty = true;
+
+            for (PinHandle outPinHandle : currentNode->outputs) {
+                Pin* outPin = pins.get(outPinHandle);
+                if (!outPin) continue;
+
+                for (LinkHandle lh : outPin->links) {
+                    Link* link = links.get(lh);
+                    if (!link) continue;
+
+                    Pin* nextPin = pins.get(link->endPin);
+                    if (nextPin) {
+                        NodeHandle nextNodeHandle = nextPin->node;
+                        Node* nextNode = getNode(nextNodeHandle);
+                        if (nextNode && !nextNode->isDirty) {
+                            q.push(nextNodeHandle);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    void startFrameGC(EvaluationContext& ctx) {
+        for (auto it = ctx.outputCache.begin(); it != ctx.outputCache.end();) {
+            uint64_t key = it->first;
+            PinHandle pinHandle;
+            pinHandle.index = (uint32_t)(key & 0xFFFFFFFF);
+            pinHandle.generation = (uint32_t)(key >> 32);
+
+            if (!pins.isValid(pinHandle)) {
+                ctx.pendingImageReleases.push_back(it->second);
+                it = ctx.outputCache.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     const std::vector<NodeHandle>& getTopologicalOrder() {
@@ -133,14 +201,31 @@ class Graph {
         return true;
     }
 
-    Node* getNode(NodeHandle h) { return nodes.get(h); }
-    const Node* getNode(NodeHandle h) const { return nodes.get(h); }
+    Node* getNode(NodeHandle h) {
+        auto ptr = nodes.get(h);
+        return ptr ? ptr->get() : nullptr;
+    }
+    const Node* getNode(NodeHandle h) const {
+        auto ptr = nodes.get(h);
+        return ptr ? ptr->get() : nullptr;
+    }
     Pin* getPin(PinHandle h) { return pins.get(h); }
     const Pin* getPin(PinHandle h) const { return pins.get(h); }
     Link* getLink(LinkHandle h) { return links.get(h); }
     const Link* getLink(LinkHandle h) const { return links.get(h); }
 
-    void forEachNode(std::function<void(NodeHandle, Node&)> cb) { nodes.forEach(cb); }
+    void forEachNode(std::function<void(NodeHandle, Node&)> cb) {
+        nodes.forEach([&](NodeHandle h, std::unique_ptr<Node>& ptr) {
+            if (ptr) cb(h, *ptr);
+        });
+    }
+
+    void forEachNode(std::function<void(NodeHandle, const Node&)> cb) const {
+        nodes.forEach([&](NodeHandle h, const std::unique_ptr<Node>& ptr) {
+            if (ptr) cb(h, *ptr);
+        });
+    }
+
     void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
 
     std::string getPinLabel(PinHandle h) const {
@@ -167,7 +252,7 @@ class Graph {
     }
 
   private:
-    SlotMap<Node, NodeHandle> nodes;
+    SlotMap<std::unique_ptr<Node>, NodeHandle> nodes;
     SlotMap<Pin, PinHandle> pins;
     SlotMap<Link, LinkHandle> links;
 
@@ -202,7 +287,7 @@ class Graph {
             if (m_visitedScratch[current.index]) continue;
             m_visitedScratch[current.index] = 1;
 
-            const Node* node = nodes.get(current);
+            const Node* node = getNode(current);
             if (!node) continue;
 
             for (PinHandle outPinHandle : node->outputs) {
@@ -233,7 +318,7 @@ class Graph {
         std::vector<int> inDegree(nodes.capacity(), 0);
 
         // Populate in-degree
-        nodes.forEach([&](NodeHandle h, const Node& node) {
+        forEachNode([&](NodeHandle h, const Node& node) {
             int count = 0;
             for (PinHandle inPinHandle : node.inputs) {
                 const Pin* pin = pins.get(inPinHandle);
@@ -245,7 +330,7 @@ class Graph {
         });
 
         std::queue<NodeHandle> queue;
-        nodes.forEach([&](NodeHandle h, const Node& node) {
+        forEachNode([&](NodeHandle h, const Node& node) {
             if (inDegree[h.index] == 0) {
                 queue.push(h);
             }
@@ -256,7 +341,7 @@ class Graph {
             queue.pop();
             topoOrder.push_back(uHandle);
 
-            const Node* uNode = nodes.get(uHandle);
+            const Node* uNode = getNode(uHandle);
             if (!uNode) continue;
 
             for (PinHandle outPinHandle : uNode->outputs) {

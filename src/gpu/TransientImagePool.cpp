@@ -120,4 +120,9 @@ VkImageView TransientImagePool::getView(ImageHandle handle) const {
     return m_images[handle.poolIndex].view;
 }
 
+VkImage TransientImagePool::getImage(ImageHandle handle) const {
+    assert(handle.isValid() && handle.poolIndex < m_images.size());
+    return m_images[handle.poolIndex].image;
+}
+
 }  // namespace loom::gpu

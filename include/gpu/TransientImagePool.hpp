@@ -34,6 +34,7 @@ class TransientImagePool {
     void setLayout(ImageHandle handle, VkImageLayout layout);
 
     VkImageView getView(ImageHandle handle) const;
+    VkImage getImage(ImageHandle handle) const;
     uint32_t DEBUG_getBindlessSlot(ImageHandle handle) const { return handle.bindlessSlot; }
 
   private:

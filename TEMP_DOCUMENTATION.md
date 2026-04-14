@@ -141,3 +141,58 @@ During the implementation of cycle detection and topological sorting, several `E
 - **Architectural Walls:** Prevents "spaghetti code" by making cross-layer dependencies explicit.
 - **Namespace Aliases:** In `.cpp` files, we use `namespace core = loom::core;` to balance brevity with clarity.
 - **Directory Mirroring:** The logical namespace structure directly mirrors the physical directory structure for developer predictability.
+
+---
+
+## Phase 4: Push-Dirty / Pull-Eval Engine
+**Objective:** Implement a two-pass execution model to minimize redundant work and manage Vulkan resource lifetimes across frames.
+
+### Implementation Details
+- **EvaluationContext:** A persistent structure passed through the pull phase.
+    - **Caching:** Stores `ImageHandle`s keyed by the upstream Output `PinHandle` (`generation << 32 | index`).
+    - **Deferred GC:** Maintains vectors for `pendingImageReleases` and `pendingBufferFrees` to be processed after GPU synchronization.
+- **Polymorphic Nodes:** Refactored `Node` to be an abstract base class with a virtual `evaluate(EvaluationContext& ctx)` method. Subclasses (`Constant`, `Merge`, `Viewer`, `Passthrough`) implement specific logic.
+- **Two-Pass Logic:**
+    1. **Push-Dirty:** When a link is added/removed or a node's parameter changes, `markDirty` uses a BFS to propagate the dirty flag downstream, pruning branches that are already dirty.
+    2. **Pull-Eval:** Nodes recursively call `pullInput`. 
+        - **Cache Hit:** If the upstream node is clean, the cached handle is returned immediately.
+        - **Cache Eviction:** If the upstream node is dirty, its old cached outputs are marked for release before re-evaluation.
+- **Stub Node Execution:**
+    - **ConstantNode:** Allocates a host-visible staging buffer, fills it with color data, and records a `vkCmdCopyBufferToImage` into the frame's command buffer.
+    - **MergeNode:** Pulls two inputs (triggering upstream eval if needed) and writes a purple placeholder to its output.
+
+### Key Decisions
+- **unique_ptr in SlotMap:** Changed `SlotMap<Node, NodeHandle>` to `SlotMap<std::unique_ptr<Node>, NodeHandle>` to allow polymorphic behavior while preserving handle stability.
+- **RAII Re-entrancy Guard:** Used a scoped `EvalGuard` to manage the `isEvaluating` flag, providing robust runtime cycle detection during the pull phase.
+- **Start-of-Frame GC:** Added `Graph::startFrameGC` to evict cached resources associated with pins that were deleted since the last frame, preventing memory leaks in the transient pool.
+
+### Phase 4 Engineering Post-Mortem: Staging and Synchronization
+#### 1. The Staging Buffer Size Mismatch
+*   **The Bug:** Initial stub nodes allocated a fixed 16-byte staging buffer (enough for one RGBA float), but the Vulkan copy command attempted to fill a 100x100 image (160,000 bytes).
+*   **The Result:** Vulkan Validation Layers triggered a critical error (`VUID-vkCmdCopyBufferToImage-pRegions-00171`) indicating the source buffer was too small.
+*   **The Fix:** Updated the node evaluation logic to calculate staging buffer size dynamically based on the `requestedExtent` provided in the `EvaluationContext`.
+
+#### 2. Handle Namespace Collisions
+*   **The Problem:** Despite `using namespace loom::gpu`, the compiler occasionally failed to resolve `ImageHandle` in test code when nested within other namespaces or templates.
+*   **The Fix:** Standardized on explicit `loom::gpu::ImageHandle` naming in test suites to ensure portability across different compiler versions (Clang/GCC).
+
+#### 3. SlotMap Iterator Invalidation
+*   **The Problem:** `SlotMap::forEach` expects a specific callback signature. Changing the storage to `unique_ptr` broke existing Kahn's algorithm and DFS logic.
+*   **The Fix:** Implemented `Graph::forEachNode` wrappers that handle the unique_ptr dereferencing internally, shielding the core algorithms from the underlying storage change.
+
+---
+
+## Post-Phase 4: Refactoring & Safety Hardening
+**Objective:** Decouple UI-specific metadata from the headless core and improve error propagation for GPU resource allocation.
+
+### Implementation Details
+- **UI/Core Decoupling:**
+    - Removed `spawnX`, `spawnY`, and `hasSpawnPos` from the `core::Node` struct.
+    - Introduced `UINodeState` in `ui::NodeEditorPanel`.
+    - Implemented `std::unordered_map<core::NodeHandle, UINodeState> m_nodeStates` within the UI layer to store layout metadata.
+- **Handle Hashing:** Added a `std::hash` specialization for the templated `Handle<Tag>` struct in `core/Handle.hpp`. This allows node, pin, and link handles to be used as keys in standard associative containers without custom hasher structs.
+- **VMA Assertions:** Added `assert(res == VK_SUCCESS)` to all VMA buffer creation and memory mapping calls in `src/core/Nodes.cpp`. This ensures that in debug builds, resource allocation failures are caught immediately at the call site rather than failing silently or causing downstream segfaults.
+
+### Engineering Rationale
+- **Architectural Purity:** The `core` namespace is now strictly "headless." It contains no logic or data related to screen-space coordinates or UI state, fulfilling the requirement for a clean separation of concerns.
+- **Fail-Fast Methodology:** By asserting on `VkResult` return codes from VMA, we identify "Out of Memory" or "Invalid Argument" errors during the recording phase of the pull-eval engine, preventing the submission of corrupted command buffers to the GPU.

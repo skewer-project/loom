@@ -60,10 +60,11 @@ void NodeEditorPanel::renderNodes() {
         ed::EndNode();
 
         // Handle First Frame Position
-        if (node.hasSpawnPos) {
+        auto it = m_nodeStates.find(h);
+        if (it != m_nodeStates.end() && it->second.hasSpawnPos) {
             ed::SetNodePosition(core::encodeId(h.index, h.generation, core::IdTag::Node),
-                                ImVec2(node.spawnX, node.spawnY));
-            node.hasSpawnPos = false;
+                                ImVec2(it->second.spawnX, it->second.spawnY));
+            it->second.hasSpawnPos = false;
         }
     });
 }
@@ -122,10 +123,10 @@ void NodeEditorPanel::handleContextMenu() {
         auto spawnNode = [&](core::NodeType type) {
             ImVec2 pos = ed::ScreenToCanvas(ImGui::GetMousePos());
             core::NodeHandle newNode = m_graph->addNode(type);
-            core::Node* node = m_graph->getNode(newNode);
-            node->hasSpawnPos = true;
-            node->spawnX = pos.x;
-            node->spawnY = pos.y;
+            UINodeState& state = m_nodeStates[newNode];
+            state.hasSpawnPos = true;
+            state.spawnX = pos.x;
+            state.spawnY = pos.y;
         };
 
         if (ImGui::MenuItem("Constant")) spawnNode(core::NodeType::Constant);
