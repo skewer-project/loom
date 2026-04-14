@@ -318,7 +318,7 @@ class Graph {
         std::vector<int> inDegree(nodes.capacity(), 0);
 
         // Populate in-degree
-        nodes.forEach([&](NodeHandle h, const Node& node) {
+        forEachNode([&](NodeHandle h, const Node& node) {
             int count = 0;
             for (PinHandle inPinHandle : node.inputs) {
                 const Pin* pin = pins.get(inPinHandle);
@@ -330,7 +330,7 @@ class Graph {
         });
 
         std::queue<NodeHandle> queue;
-        nodes.forEach([&](NodeHandle h, const Node& node) {
+        forEachNode([&](NodeHandle h, const Node& node) {
             if (inDegree[h.index] == 0) {
                 queue.push(h);
             }
@@ -341,7 +341,7 @@ class Graph {
             queue.pop();
             topoOrder.push_back(uHandle);
 
-            const Node* uNode = nodes.get(uHandle);
+            const Node* uNode = getNode(uHandle);
             if (!uNode) continue;
 
             for (PinHandle outPinHandle : uNode->outputs) {
