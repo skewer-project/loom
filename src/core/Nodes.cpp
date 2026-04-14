@@ -22,7 +22,7 @@ static void transitionImage(VkCommandBuffer cmd, VkImage image, VkImageLayout ol
     barrier.subresourceRange.baseMipLevel = 0;
     barrier.subresourceRange.levelCount = 1;
     barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceLayerCount = 1;
+    barrier.subresourceRange.layerCount = 1;
 
     VkPipelineStageFlags sourceStage;
     VkPipelineStageFlags destinationStage;
@@ -132,7 +132,7 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     ctx.pendingBufferFrees.push_back({stagingBuffer, stagingAllocation});
 
     gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32_A32_SFLOAT;
+    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage =
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
@@ -164,7 +164,7 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     pullInput(ctx, 1);
 
     gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32_A32_SFLOAT;
+    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage =
         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
