@@ -25,13 +25,18 @@ struct Handle {
     }
 };
 
-struct NodeTag {};
-using NodeHandle = Handle<NodeTag>;
+}  // namespace loom::core
 
-struct PinTag {};
-using PinHandle = Handle<PinTag>;
+namespace std {
+template <typename Tag>
+struct hash<loom::core::Handle<Tag>> {
+    size_t operator()(const loom::core::Handle<Tag>& h) const noexcept {
+        return hash<uint64_t>{}((static_cast<uint64_t>(h.generation) << 32) | h.index);
+    }
+};
+}  // namespace std
 
-struct LinkTag {};
-using LinkHandle = Handle<LinkTag>;
+namespace loom::core {
+... using LinkHandle = Handle<LinkTag>;
 
 }  // namespace loom::core

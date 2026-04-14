@@ -58,11 +58,6 @@ struct Node {
     bool isEvaluating = false;
     Graph* graph = nullptr;
 
-    // UI/Spawn state
-    bool hasSpawnPos = false;
-    float spawnX = 0.0f;
-    float spawnY = 0.0f;
-
     Node(NodeHandle h, NodeType t, std::string n)
         : id(h),
           type(t),
