@@ -105,6 +105,7 @@ add_library(LoomCore STATIC
     src/gpu/TransientBufferPool.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
+    src/core/Nodes.cpp
 )
 
 target_include_directories(LoomCore PUBLIC
@@ -143,6 +144,7 @@ add_executable(LoomTests
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
     tests/gpu/ResourcePoolTest.cpp
+    tests/core/PushPullTest.cpp
 )
 
 # Link tests to our engine library and the Google Test runner
