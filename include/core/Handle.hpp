@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <limits>
 
 namespace loom::core {
@@ -25,6 +26,15 @@ struct Handle {
     }
 };
 
+struct NodeTag {};
+using NodeHandle = Handle<NodeTag>;
+
+struct PinTag {};
+using PinHandle = Handle<PinTag>;
+
+struct LinkTag {};
+using LinkHandle = Handle<LinkTag>;
+
 }  // namespace loom::core
 
 namespace std {
@@ -35,8 +45,3 @@ struct hash<loom::core::Handle<Tag>> {
     }
 };
 }  // namespace std
-
-namespace loom::core {
-... using LinkHandle = Handle<LinkTag>;
-
-}  // namespace loom::core
