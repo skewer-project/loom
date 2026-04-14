@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/Handle.hpp"
+#include "gpu/ResourceHandles.hpp"
 
 namespace loom::core {
 
@@ -74,6 +75,9 @@ struct Node {
 
     virtual ~Node() = default;
     virtual void evaluate(EvaluationContext& ctx) = 0;
+
+  protected:
+    gpu::ImageHandle pullInput(EvaluationContext& ctx, uint32_t inputIndex);
 };
 
 }  // namespace loom::core
