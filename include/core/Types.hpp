@@ -8,6 +8,7 @@
 
 namespace loom::core {
 
+class Graph;
 struct EvaluationContext;
 
 enum class IdTag : uint64_t { Node = 0ULL, Pin = 1ULL << 62, Link = 2ULL << 62 };
@@ -54,6 +55,7 @@ struct Node {
     std::vector<PinHandle> outputs;
     bool isDirty = true;
     bool isEvaluating = false;
+    Graph* graph = nullptr;
 
     // UI/Spawn state
     bool hasSpawnPos = false;
@@ -67,7 +69,8 @@ struct Node {
           inputs(),
           outputs(),
           isDirty(true),
-          isEvaluating(false) {}
+          isEvaluating(false),
+          graph(nullptr) {}
 
     virtual ~Node() = default;
     virtual void evaluate(EvaluationContext& ctx) = 0;
