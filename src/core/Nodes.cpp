@@ -1,5 +1,6 @@
 #include "core/Nodes.hpp"
 
+#include <cassert>
 #include <cstring>
 #include <iostream>
 
@@ -119,14 +120,15 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     VmaAllocationCreateInfo allocInfo = {};
     allocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
 
-    if (vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer, &stagingAllocation,
-                        nullptr) != VK_SUCCESS) {
-        return;
-    }
+    VkResult res = vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer,
+                                   &stagingAllocation, nullptr);
+    assert(res == VK_SUCCESS);
+    if (res != VK_SUCCESS) return;
 
     float color[4] = {1.0f, 0.0f, 0.0f, 1.0f};
     void* data;
-    vmaMapMemory(ctx.allocator, stagingAllocation, &data);
+    res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
+    assert(res == VK_SUCCESS);
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, color, sizeof(color));
     }
@@ -182,12 +184,15 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
 
     VmaAllocationCreateInfo allocInfo = {};
     allocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
-    vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer, &stagingAllocation,
-                    nullptr);
+    VkResult res = vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer,
+                                   &stagingAllocation, nullptr);
+    assert(res == VK_SUCCESS);
+    if (res != VK_SUCCESS) return;
 
     float purple[4] = {1.0f, 0.0f, 1.0f, 1.0f};
     void* data;
-    vmaMapMemory(ctx.allocator, stagingAllocation, &data);
+    res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
+    assert(res == VK_SUCCESS);
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, purple, sizeof(purple));
     }
