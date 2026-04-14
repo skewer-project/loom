@@ -82,22 +82,41 @@ target_include_directories(imgui_node_editor PUBLIC
 target_link_libraries(imgui_node_editor PUBLIC imgui)
 
 
+# Vulkan Memory Allocator
+add_library(vma STATIC external/vma/vma_implementation.cpp)
+
+target_include_directories(vma PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/vma
+)
+target_link_libraries(vma PUBLIC Vulkan::Vulkan)
+
+# Optional: Silence VMA compiler warnings since it's external code we won't edit
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
+    target_compile_options(vma PRIVATE -Wno-nullability-completeness -Wno-unused-variable -Wno-unused-parameter)
+endif()
+
 # --- Loom Engine Core ---
 # We build the engine as a library so BOTH the main app and tests can link to it
 add_library(LoomCore STATIC
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
+    src/gpu/BindlessHeap.cpp
+    src/gpu/TransientImagePool.cpp
+    src/gpu/TransientBufferPool.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
 )
 
-target_include_directories(LoomCore PUBLIC include)
+target_include_directories(LoomCore PUBLIC
+    include
+)
 
 # Because we link imgui and node_editor PUBLICLY, anything that links to
 # LoomCore automatically gets their include directories too!
 target_link_libraries(LoomCore PUBLIC
     imgui
     imgui_node_editor
+    vma
     glfw
     Vulkan::Vulkan
 )
@@ -123,6 +142,7 @@ add_executable(LoomTests
     tests/core/TopoTest.cpp
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
+    tests/gpu/ResourcePoolTest.cpp
 )
 
 # Link tests to our engine library and the Google Test runner

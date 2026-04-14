@@ -55,36 +55,48 @@ VulkanContext::VulkanContext() {}
 VulkanContext::~VulkanContext() {
     if (m_device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(m_device);
-    }
 
-    cleanupSwapchain();
-    vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-    m_swapchain = VK_NULL_HANDLE;
+        cleanupSwapchain();
+        if (m_swapchain != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
+            m_swapchain = VK_NULL_HANDLE;
+        }
 
-    cleanupSyncObjects();
+        cleanupSyncObjects();
 
-    if (m_commandPool != VK_NULL_HANDLE) {
-        vkDestroyCommandPool(m_device, m_commandPool, nullptr);
-    }
+        m_bindlessHeap.reset();
+        if (m_vmaAllocator != VK_NULL_HANDLE) {
+            vmaDestroyAllocator(m_vmaAllocator);
+            m_vmaAllocator = VK_NULL_HANDLE;
+        }
 
-    if (m_descriptorPool != VK_NULL_HANDLE) {
-        vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-    }
+        if (m_commandPool != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(m_device, m_commandPool, nullptr);
+            m_commandPool = VK_NULL_HANDLE;
+        }
 
-    if (m_device != VK_NULL_HANDLE) {
+        if (m_descriptorPool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+            m_descriptorPool = VK_NULL_HANDLE;
+        }
+
         vkDestroyDevice(m_device, nullptr);
-    }
-
-    if (m_surface != VK_NULL_HANDLE) {
-        vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
-    }
-
-    if (m_enableValidationLayers && m_debugMessenger != VK_NULL_HANDLE) {
-        DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
+        m_device = VK_NULL_HANDLE;
     }
 
     if (m_instance != VK_NULL_HANDLE) {
+        if (m_surface != VK_NULL_HANDLE) {
+            vkDestroySurfaceKHR(m_instance, m_surface, nullptr);
+            m_surface = VK_NULL_HANDLE;
+        }
+
+        if (m_enableValidationLayers && m_debugMessenger != VK_NULL_HANDLE) {
+            DestroyDebugUtilsMessengerEXT(m_instance, m_debugMessenger, nullptr);
+            m_debugMessenger = VK_NULL_HANDLE;
+        }
+
         vkDestroyInstance(m_instance, nullptr);
+        m_instance = VK_NULL_HANDLE;
     }
 }
 
@@ -101,6 +113,19 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     allocateCommandBuffers();
     createSyncObjects();
     createDescriptorPool();
+
+    // VMA initialization
+    VmaAllocatorCreateInfo allocatorInfo = {};
+    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
+    allocatorInfo.physicalDevice = m_physicalDevice;
+    allocatorInfo.device = m_device;
+    allocatorInfo.instance = m_instance;
+
+    if (vmaCreateAllocator(&allocatorInfo, &m_vmaAllocator) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create VMA allocator!");
+    }
+
+    m_bindlessHeap = std::make_unique<BindlessHeap>(m_device);
 }
 
 void VulkanContext::createInstance(const char* appName) {
@@ -227,7 +252,15 @@ void VulkanContext::createLogicalDevice() {
     sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
     sync2Features.synchronization2 = VK_TRUE;
 
+    VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
+    descriptorIndexingFeatures.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
+    descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+    descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+    descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+
     dynamicRenderingFeature.pNext = &sync2Features;
+    sync2Features.pNext = &descriptorIndexingFeatures;
 
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
