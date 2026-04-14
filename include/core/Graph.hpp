@@ -49,7 +49,7 @@ class Graph {
     }
 
     void removeNode(NodeHandle nodeHandle) {
-        Node* node = nodes.get(nodeHandle);
+        Node* node = getNode(nodeHandle);
         if (!node) return;
 
         for (PinHandle pinHandle : node->inputs) {
