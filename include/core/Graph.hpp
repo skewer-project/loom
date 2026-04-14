@@ -91,10 +91,7 @@ class Graph {
         endPin->link = linkHandle;
         startPin->links.push_back(linkHandle);
 
-        Node* endNode = nodes.get(endPin->node);
-        if (endNode) {
-            endNode->isDirty = true;
-        }
+        markDirty(endPin->node);
 
         isTopoDirty = true;
         return true;
@@ -114,14 +111,48 @@ class Graph {
 
         if (endPin) {
             endPin->link = LinkHandle();
-            Node* endNode = nodes.get(endPin->node);
-            if (endNode) {
-                endNode->isDirty = true;
-            }
+            markDirty(endPin->node);
         }
 
         links.remove(linkHandle);
         isTopoDirty = true;
+    }
+
+    void markDirty(NodeHandle startNodeHandle) {
+        Node* startNode = getNode(startNodeHandle);
+        if (!startNode || startNode->isDirty) return;
+
+        std::queue<NodeHandle> q;
+        q.push(startNodeHandle);
+
+        while (!q.empty()) {
+            NodeHandle currentHandle = q.front();
+            q.pop();
+
+            Node* currentNode = getNode(currentHandle);
+            if (!currentNode) continue;
+
+            currentNode->isDirty = true;
+
+            for (PinHandle outPinHandle : currentNode->outputs) {
+                Pin* outPin = pins.get(outPinHandle);
+                if (!outPin) continue;
+
+                for (LinkHandle lh : outPin->links) {
+                    Link* link = links.get(lh);
+                    if (!link) continue;
+
+                    Pin* nextPin = pins.get(link->endPin);
+                    if (nextPin) {
+                        NodeHandle nextNodeHandle = nextPin->node;
+                        Node* nextNode = getNode(nextNodeHandle);
+                        if (nextNode && !nextNode->isDirty) {
+                            q.push(nextNodeHandle);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     const std::vector<NodeHandle>& getTopologicalOrder() {
