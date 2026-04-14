@@ -19,6 +19,7 @@ namespace loom::core {
 struct EvaluationContext {
     VkExtent2D requestedExtent;
     gpu::TransientImagePool* imagePool;
+    VmaAllocator allocator;
     VkCommandBuffer cmd;  // Shared command buffer for this frame
 
     // Persistent Cache keyed by upstream Output PinHandle: (generation << 32 | index).
