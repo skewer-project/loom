@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cassert>
+#include <memory>
 #include <queue>
 #include <stdexcept>
 #include <vector>
 
+#include "core/Nodes.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
 
@@ -14,14 +16,33 @@ namespace loom::core {
 class Graph {
   public:
     NodeHandle addNode(NodeType type, std::string name = "") {
-        NodeHandle nodeHandle = nodes.emplace(NodeHandle(), type, name);
-        Node* node = nodes.get(nodeHandle);
-        node->id = nodeHandle;
-        if (node->name.empty()) {
-            node->name = getDefaultNodeName(type);
+        if (name.empty()) {
+            name = getDefaultNodeName(type);
         }
 
-        setupNodePins(node);
+        NodeHandle nodeHandle = nodes.emplace(nullptr);
+        std::unique_ptr<Node> node;
+        switch (type) {
+            case NodeType::Constant:
+                node = std::make_unique<ConstantNode>(nodeHandle, name);
+                break;
+            case NodeType::Merge:
+                node = std::make_unique<MergeNode>(nodeHandle, name);
+                break;
+            case NodeType::Viewer:
+                node = std::make_unique<ViewerNode>(nodeHandle, name);
+                break;
+            case NodeType::Passthrough:
+                node = std::make_unique<PassthroughNode>(nodeHandle, name);
+                break;
+            default:
+                throw std::runtime_error("Unknown node type");
+        }
+        node->graph = this;
+        *nodes.get(nodeHandle) = std::move(node);
+
+        Node* nodePtr = nodes.get(nodeHandle)->get();
+        setupNodePins(nodePtr);
 
         isTopoDirty = true;
         return nodeHandle;
@@ -167,7 +188,7 @@ class Graph {
     }
 
   private:
-    SlotMap<Node, NodeHandle> nodes;
+    SlotMap<std::unique_ptr<Node>, NodeHandle> nodes;
     SlotMap<Pin, PinHandle> pins;
     SlotMap<Link, LinkHandle> links;
 
