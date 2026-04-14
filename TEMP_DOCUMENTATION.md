@@ -179,3 +179,20 @@ During the implementation of cycle detection and topological sorting, several `E
 #### 3. SlotMap Iterator Invalidation
 *   **The Problem:** `SlotMap::forEach` expects a specific callback signature. Changing the storage to `unique_ptr` broke existing Kahn's algorithm and DFS logic.
 *   **The Fix:** Implemented `Graph::forEachNode` wrappers that handle the unique_ptr dereferencing internally, shielding the core algorithms from the underlying storage change.
+
+---
+
+## Post-Phase 4: Refactoring & Safety Hardening
+**Objective:** Decouple UI-specific metadata from the headless core and improve error propagation for GPU resource allocation.
+
+### Implementation Details
+- **UI/Core Decoupling:**
+    - Removed `spawnX`, `spawnY`, and `hasSpawnPos` from the `core::Node` struct.
+    - Introduced `UINodeState` in `ui::NodeEditorPanel`.
+    - Implemented `std::unordered_map<core::NodeHandle, UINodeState> m_nodeStates` within the UI layer to store layout metadata.
+- **Handle Hashing:** Added a `std::hash` specialization for the templated `Handle<Tag>` struct in `core/Handle.hpp`. This allows node, pin, and link handles to be used as keys in standard associative containers without custom hasher structs.
+- **VMA Assertions:** Added `assert(res == VK_SUCCESS)` to all VMA buffer creation and memory mapping calls in `src/core/Nodes.cpp`. This ensures that in debug builds, resource allocation failures are caught immediately at the call site rather than failing silently or causing downstream segfaults.
+
+### Engineering Rationale
+- **Architectural Purity:** The `core` namespace is now strictly "headless." It contains no logic or data related to screen-space coordinates or UI state, fulfilling the requirement for a clean separation of concerns.
+- **Fail-Fast Methodology:** By asserting on `VkResult` return codes from VMA, we identify "Out of Memory" or "Invalid Argument" errors during the recording phase of the pull-eval engine, preventing the submission of corrupted command buffers to the GPU.
