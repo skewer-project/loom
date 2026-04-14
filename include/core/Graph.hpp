@@ -287,7 +287,7 @@ class Graph {
             if (m_visitedScratch[current.index]) continue;
             m_visitedScratch[current.index] = 1;
 
-            const Node* node = nodes.get(current);
+            const Node* node = getNode(current);
             if (!node) continue;
 
             for (PinHandle outPinHandle : node->outputs) {
