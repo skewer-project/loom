@@ -8,6 +8,8 @@
 
 namespace loom::core {
 
+struct EvaluationContext;
+
 enum class IdTag : uint64_t { Node = 0ULL, Pin = 1ULL << 62, Link = 2ULL << 62 };
 
 inline uint64_t encodeId(uint32_t index, uint32_t generation, IdTag tag) {
@@ -51,6 +53,7 @@ struct Node {
     std::vector<PinHandle> inputs;
     std::vector<PinHandle> outputs;
     bool isDirty = true;
+    bool isEvaluating = false;
 
     // UI/Spawn state
     bool hasSpawnPos = false;
@@ -58,7 +61,16 @@ struct Node {
     float spawnY = 0.0f;
 
     Node(NodeHandle h, NodeType t, std::string n)
-        : id(h), type(t), name(std::move(n)), inputs(), outputs(), isDirty(true) {}
+        : id(h),
+          type(t),
+          name(std::move(n)),
+          inputs(),
+          outputs(),
+          isDirty(true),
+          isEvaluating(false) {}
+
+    virtual ~Node() = default;
+    virtual void evaluate(EvaluationContext& ctx) = 0;
 };
 
 }  // namespace loom::core
