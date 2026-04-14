@@ -112,7 +112,8 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     VkBuffer stagingBuffer;
     VmaAllocation stagingAllocation;
     VkBufferCreateInfo bufferInfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bufferInfo.size = 4 * sizeof(float);
+    size_t pixelCount = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height;
+    bufferInfo.size = pixelCount * 4 * sizeof(float);
     bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
     VmaAllocationCreateInfo allocInfo = {};
@@ -126,7 +127,9 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     float color[4] = {1.0f, 0.0f, 0.0f, 1.0f};
     void* data;
     vmaMapMemory(ctx.allocator, stagingAllocation, &data);
-    memcpy(data, color, sizeof(color));
+    for (size_t i = 0; i < pixelCount; ++i) {
+        memcpy((float*)data + i * 4, color, sizeof(color));
+    }
     vmaUnmapMemory(ctx.allocator, stagingAllocation);
 
     ctx.pendingBufferFrees.push_back({stagingBuffer, stagingAllocation});
@@ -173,7 +176,8 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     VkBuffer stagingBuffer;
     VmaAllocation stagingAllocation;
     VkBufferCreateInfo bufferInfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    bufferInfo.size = 4 * sizeof(float);
+    size_t pixelCount = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height;
+    bufferInfo.size = pixelCount * 4 * sizeof(float);
     bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
     VmaAllocationCreateInfo allocInfo = {};
@@ -184,7 +188,9 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     float purple[4] = {1.0f, 0.0f, 1.0f, 1.0f};
     void* data;
     vmaMapMemory(ctx.allocator, stagingAllocation, &data);
-    memcpy(data, purple, sizeof(purple));
+    for (size_t i = 0; i < pixelCount; ++i) {
+        memcpy((float*)data + i * 4, purple, sizeof(purple));
+    }
     vmaUnmapMemory(ctx.allocator, stagingAllocation);
 
     ctx.pendingBufferFrees.push_back({stagingBuffer, stagingAllocation});
