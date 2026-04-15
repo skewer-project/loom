@@ -22,7 +22,8 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
 
         VkImageLayout currentLayout = imagePool->getLayout(handle);
         if (currentLayout != VK_IMAGE_LAYOUT_GENERAL) {
-            VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+            VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                          .pNext = nullptr};
             barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
             barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
             barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -45,7 +46,8 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
     if (finalViewerImage.isValid()) addBarrier(finalViewerImage);
 
     if (!barriers.empty()) {
-        VkDependencyInfo dependencyInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        VkDependencyInfo dependencyInfo{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                        .pNext = nullptr};
         dependencyInfo.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size());
         dependencyInfo.pImageMemoryBarriers = barriers.data();
         vkCmdPipelineBarrier2(cmd, &dependencyInfo);
@@ -67,13 +69,14 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
         }
 
         if (needsHazardBarrier) {
-            VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            VkMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .pNext = nullptr};
             barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
             barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
             barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
 
-            VkDependencyInfo dependencyInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            VkDependencyInfo dependencyInfo{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                            .pNext = nullptr};
             dependencyInfo.memoryBarrierCount = 1;
             dependencyInfo.pMemoryBarriers = &barrier;
             vkCmdPipelineBarrier2(cmd, &dependencyInfo);
@@ -100,7 +103,8 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
 
     // Pass 3 — Viewer Transition
     if (finalViewerImage.isValid()) {
-        VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        VkImageMemoryBarrier2 barrier{.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                      .pNext = nullptr};
         barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
         barrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
@@ -110,7 +114,8 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
         barrier.image = imagePool->getImage(finalViewerImage);
         barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
-        VkDependencyInfo dependencyInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        VkDependencyInfo dependencyInfo{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                        .pNext = nullptr};
         dependencyInfo.imageMemoryBarrierCount = 1;
         dependencyInfo.pImageMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(cmd, &dependencyInfo);
