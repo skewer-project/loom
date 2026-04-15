@@ -112,13 +112,13 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
 
     VkBuffer stagingBuffer;
     VmaAllocation stagingAllocation;
-    VkBufferCreateInfo bufferInfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    size_t pixelCount = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height;
-    bufferInfo.size = pixelCount * 4 * sizeof(float);
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBufferCreateInfo bufferInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height * 4 * sizeof(float),
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
 
-    VmaAllocationCreateInfo allocInfo = {};
-    allocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    VmaAllocationCreateInfo allocInfo = {.usage = VMA_MEMORY_USAGE_CPU_ONLY};
 
     VkResult res = vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer,
                                    &stagingAllocation, nullptr);
@@ -129,6 +129,7 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     void* data;
     res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
     assert(res == VK_SUCCESS);
+    size_t pixelCount = 0;
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, color, sizeof(color));
     }
@@ -177,13 +178,13 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
 
     VkBuffer stagingBuffer;
     VmaAllocation stagingAllocation;
-    VkBufferCreateInfo bufferInfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-    size_t pixelCount = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height;
-    bufferInfo.size = pixelCount * 4 * sizeof(float);
-    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBufferCreateInfo bufferInfo = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = (size_t)ctx.requestedExtent.width * ctx.requestedExtent.height * 4 * sizeof(float),
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
 
-    VmaAllocationCreateInfo allocInfo = {};
-    allocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    VmaAllocationCreateInfo allocInfo = {.usage = VMA_MEMORY_USAGE_CPU_ONLY};
     VkResult res = vmaCreateBuffer(ctx.allocator, &bufferInfo, &allocInfo, &stagingBuffer,
                                    &stagingAllocation, nullptr);
     assert(res == VK_SUCCESS);
@@ -193,6 +194,7 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     void* data;
     res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
     assert(res == VK_SUCCESS);
+    size_t pixelCount = 0;
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, purple, sizeof(purple));
     }

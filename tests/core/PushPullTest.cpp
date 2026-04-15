@@ -42,10 +42,12 @@ class PushPullTest : public ::testing::Test {
         imagePool = std::make_unique<gpu::TransientImagePool>(
             ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
 
-        VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
-        allocInfo.commandPool = ctx->getCommandPool();
-        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        allocInfo.commandBufferCount = 1;
+        VkCommandBufferAllocateInfo allocInfo = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = ctx->getCommandPool(),
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
         vkAllocateCommandBuffers(ctx->getDevice(), &allocInfo, &cmd);
 
         evalCtx.requestedExtent = {100, 100};
@@ -101,7 +103,7 @@ TEST_F(PushPullTest, BasicEval) {
     graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]);
 
     // Frame 1
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
 
     graph.startFrameGC(evalCtx);
@@ -109,9 +111,11 @@ TEST_F(PushPullTest, BasicEval) {
 
     vkEndCommandBuffer(cmd);
 
-    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &cmd;
+    VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cmd,
+    };
     vkQueueSubmit(ctx->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
 
     endFrameCleanup();
@@ -135,7 +139,7 @@ TEST_F(PushPullTest, DirtyPropagation) {
     graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]);
 
     // Initial eval to clear dirty flags
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
     nodeViewer->evaluate(evalCtx);
     vkEndCommandBuffer(cmd);
@@ -163,7 +167,7 @@ TEST_F(PushPullTest, CachePersistence) {
     graph.tryAddLink(nodeA->outputs[0], nodeViewer->inputs[0]);
 
     // Frame 1
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
     nodeViewer->evaluate(evalCtx);
     vkEndCommandBuffer(cmd);
@@ -192,7 +196,7 @@ TEST_F(PushPullTest, DeletionGC) {
     graph.tryAddLink(graph.getNode(hA)->outputs[0], graph.getNode(hViewer)->inputs[0]);
 
     // Eval to populate cache
-    VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
     graph.getNode(hViewer)->evaluate(evalCtx);
     vkEndCommandBuffer(cmd);

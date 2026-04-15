@@ -38,7 +38,7 @@ Loom requires the **Vulkan SDK** to be installed and correctly configured on you
       *Tip: Add this to your `~/.zshrc` or `~/.bashrc` to make it permanent.*
     - **Windows**: The installer typically sets the `VULKAN_SDK` environment variable automatically.
 
-### Building and Running
+### Building and Running (Standard)
 
 1. **Create and enter the build directory:**
    ```bash
@@ -47,19 +47,41 @@ Loom requires the **Vulkan SDK** to be installed and correctly configured on you
    ```
 
 2. **Configure the project:**
+   You can specify the build type using `-DCMAKE_BUILD_TYPE`. Options include `Debug` (default), `Release`, and `Sanitize` (enables Address and Undefined Behavior sanitizers).
    ```bash
-   cmake ..
+   cmake -DCMAKE_BUILD_TYPE=Debug ..
    ```
-   *Note: Dependencies like GLFW will be automatically downloaded during this step.*
+   *Note: Dependencies like GLFW and GoogleTest will be automatically downloaded during this step.*
 
 3. **Build the project:**
    ```bash
-   cmake --build .
+   cmake --build . --parallel
    ```
 
-4. **Run the executable:**
+4. **Run the executable or tests:**
    ```bash
    ./bin/Loom
+   ./bin/LoomTests
+   ```
+
+### Building and Running (Modern Presets)
+
+If you have CMake 3.21+ installed, you can use presets for a more streamlined workflow:
+
+1. **Configure with a preset:**
+   ```bash
+   cmake --preset debug
+   # or 'release', 'sanitize'
+   ```
+
+2. **Build with a preset:**
+   ```bash
+   cmake --build --preset debug
+   ```
+
+3. **Run tests with a preset:**
+   ```bash
+   ctest --preset debug
    ```
 
 ### Development Workflow

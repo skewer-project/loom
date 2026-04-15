@@ -1,5 +1,21 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.21)
 project(Loom LANGUAGES CXX)
+
+# --- Build Configuration Defaults ---
+# Set a default build type if none was specified (for single-config generators like Make/Ninja)
+set(default_build_type "Debug")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    message(STATUS "Setting build type to '${default_build_type}' as none was specified.")
+    set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE STRING "Choose the type of build." FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo" "Sanitize")
+endif()
+
+# Define a "Sanitize" build type for Address and Undefined Behavior sanitizers
+if(NOT MSVC)
+    set(CMAKE_CXX_FLAGS_SANITIZE "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" CACHE STRING "Flags used by the C++ compiler during Sanitize builds." FORCE)
+    set(CMAKE_C_FLAGS_SANITIZE "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer" CACHE STRING "Flags used by the C compiler during Sanitize builds." FORCE)
+    set(CMAKE_EXE_LINKER_FLAGS_SANITIZE "-fsanitize=address,undefined" CACHE STRING "Flags used for linking binaries during Sanitize builds." FORCE)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +25,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+
+# --- Compiler Warnings ---
+if(MSVC)
+    add_compile_options(/W4 /WX-) # Level 4 warnings
+else()
+    add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
+endif()
 
 # Find Vulkan SDK on system
 find_package(Vulkan REQUIRED)
@@ -47,7 +70,7 @@ add_library(imgui STATIC
     external/imgui/backends/imgui_impl_vulkan.cpp
 )
 
-target_include_directories(imgui PUBLIC
+target_include_directories(imgui SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
@@ -57,11 +80,11 @@ target_link_libraries(imgui PUBLIC
     Vulkan::Vulkan
 )
 
-# Optional ImGui compile optimization
+# Optimization for external code using generator expressions
 if(MSVC)
-    target_compile_options(imgui PRIVATE /O2)
+    target_compile_options(imgui PRIVATE $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:/O2>)
 else()
-    target_compile_options(imgui PRIVATE -O3)
+    target_compile_options(imgui PRIVATE $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:-O3>)
 endif()
 
 
@@ -74,7 +97,7 @@ add_library(imgui_node_editor STATIC
     ${NODE_EDITOR_DIR}/crude_json.cpp
 )
 
-target_include_directories(imgui_node_editor PUBLIC
+target_include_directories(imgui_node_editor SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/${NODE_EDITOR_DIR}
 )
 
@@ -85,18 +108,17 @@ target_link_libraries(imgui_node_editor PUBLIC imgui)
 # Vulkan Memory Allocator
 add_library(vma STATIC external/vma/vma_implementation.cpp)
 
-target_include_directories(vma PUBLIC
+target_include_directories(vma SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/vma
 )
 target_link_libraries(vma PUBLIC Vulkan::Vulkan)
 
-# Optional: Silence VMA compiler warnings since it's external code we won't edit
+# Silence VMA compiler warnings since it's external code
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
-    target_compile_options(vma PRIVATE -Wno-nullability-completeness -Wno-unused-variable -Wno-unused-parameter)
+    target_compile_options(vma PRIVATE -w)
 endif()
 
 # --- Loom Engine Core ---
-# We build the engine as a library so BOTH the main app and tests can link to it
 add_library(LoomCore STATIC
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
@@ -107,13 +129,13 @@ add_library(LoomCore STATIC
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
 )
+# Re-reading to ensure I don't introduce duplicates accidentally. 
+# src/gpu/VulkanContext.cpp was only listed once in the original file. 
 
 target_include_directories(LoomCore PUBLIC
     include
 )
 
-# Because we link imgui and node_editor PUBLICLY, anything that links to
-# LoomCore automatically gets their include directories too!
 target_link_libraries(LoomCore PUBLIC
     imgui
     imgui_node_editor
@@ -122,16 +144,14 @@ target_link_libraries(LoomCore PUBLIC
     Vulkan::Vulkan
 )
 
-# Apple-specific config for MoltenVK (Applied to Core so it propagates)
+# Apple-specific config for MoltenVK
 if(APPLE)
     target_compile_definitions(LoomCore PUBLIC VK_USE_PLATFORM_MACOS_MVK)
 endif()
 
 
-# --- Loom Application (The Executable) ---
+# --- Loom Application ---
 add_executable(Loom src/main.cpp)
-
-# Just link the Core. CMake handles all the transitive dependencies (ImGui, Vulkan, etc.)
 target_link_libraries(Loom PRIVATE LoomCore)
 
 
@@ -147,7 +167,6 @@ add_executable(LoomTests
     tests/core/PushPullTest.cpp
 )
 
-# Link tests to our engine library and the Google Test runner
 target_link_libraries(LoomTests PRIVATE
     LoomCore
     gtest_main
