@@ -119,34 +119,40 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
 endif()
 
 # --- Shader Compilation ---
-find_program(SHADER_COMPILER NAMES glslc glslangValidator glslang REQUIRED)
-message(STATUS "Using shader compiler: ${SHADER_COMPILER}")
+find_program(SHADER_COMPILER NAMES glslc glslangValidator glslang)
+if(SHADER_COMPILER)
+    message(STATUS "Using shader compiler: ${SHADER_COMPILER}")
 
-# glslangValidator needs -V to target Vulkan/SPIR-V
-set(SHADER_COMPILER_FLAGS "")
-if(SHADER_COMPILER MATCHES "glslangValidator" OR SHADER_COMPILER MATCHES "glslang")
-    set(SHADER_COMPILER_FLAGS "-V")
+    # glslangValidator needs -V to target Vulkan/SPIR-V
+    set(SHADER_COMPILER_FLAGS "")
+    if(SHADER_COMPILER MATCHES "glslangValidator" OR SHADER_COMPILER MATCHES "glslang")
+        set(SHADER_COMPILER_FLAGS "-V")
+    endif()
+
+    file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
+    set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
+    file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
+
+    set(SHADER_SPV_FILES "")
+    foreach(SHADER_FILE ${SHADER_SOURCES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        set(SPV_FILE "${SHADER_SPV_DIR}/${SHADER_NAME}.spv")
+        
+        add_custom_command(
+            OUTPUT ${SPV_FILE}
+            COMMAND ${SHADER_COMPILER} ${SHADER_COMPILER_FLAGS} ${SHADER_FILE} -o ${SPV_FILE}
+            DEPENDS ${SHADER_FILE}
+            COMMENT "Compiling shader ${SHADER_FILE} using ${SHADER_COMPILER}"
+        )
+        list(APPEND SHADER_SPV_FILES ${SPV_FILE})
+    endforeach()
+
+    add_custom_target(CompileShaders ALL DEPENDS ${SHADER_SPV_FILES})
+    set(HAS_SHADER_COMPILER ON)
+else()
+    message(WARNING "Shader compiler not found. Shaders will not be compiled. Some tests may fail.")
+    set(HAS_SHADER_COMPILER OFF)
 endif()
-
-file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
-set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
-file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
-
-set(SHADER_SPV_FILES "")
-foreach(SHADER_FILE ${SHADER_SOURCES})
-    get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
-    set(SPV_FILE "${SHADER_SPV_DIR}/${SHADER_NAME}.spv")
-    
-    add_custom_command(
-        OUTPUT ${SPV_FILE}
-        COMMAND ${SHADER_COMPILER} ${SHADER_COMPILER_FLAGS} ${SHADER_FILE} -o ${SPV_FILE}
-        DEPENDS ${SHADER_FILE}
-        COMMENT "Compiling shader ${SHADER_FILE} using ${SHADER_COMPILER}"
-    )
-    list(APPEND SHADER_SPV_FILES ${SPV_FILE})
-endforeach()
-
-add_custom_target(CompileShaders ALL DEPENDS ${SHADER_SPV_FILES})
 
 # --- Loom Engine Core ---
 add_library(LoomCore STATIC
@@ -161,7 +167,10 @@ add_library(LoomCore STATIC
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
 )
-add_dependencies(LoomCore CompileShaders)
+if(HAS_SHADER_COMPILER)
+    add_dependencies(LoomCore CompileShaders)
+    target_compile_definitions(LoomCore PUBLIC LOOM_HAS_SHADER_COMPILER)
+endif()
 
 target_include_directories(LoomCore PUBLIC
     include

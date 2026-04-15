@@ -266,3 +266,22 @@ During the implementation of cycle detection and topological sorting, several `E
 #### 2. `ctest` Working Directory Failures
 *   **The Bug:** Tests were written assuming the CWD was the `bin/` directory. When run via `ctest` from the `build/` root, the relative path `shaders/Fill.comp.spv` could not be resolved.
 *   **The Fix:** Moving to absolute path resolution via `LOOM_SHADER_DIR` and `std::filesystem::path` allows tests to remain portable and independent of the execution entry point.
+
+---
+
+## Phase 5.2: CI Resilience & Dependency Management
+**Objective:** Address SPIR-V toolchain dependencies in CI and ensure the project remains buildable even when shader compilers are missing.
+
+### Implementation Details
+- **Satisfying Glslang Dependencies:** 
+    - Added `SPIRV-Tools` to the `vulkan-components` in the GitHub Actions workflow. This provides the necessary optimizer binaries (`spirv-opt`) required when `Glslang` is built from source on certain platforms (e.g., macOS arm64).
+- **Optional Shader Compilation:**
+    - Refactored `CMakeLists.txt` to make the shader compiler (`glslc`, `glslang`) optional.
+    - Introduced the `LOOM_HAS_SHADER_COMPILER` compile-time definition to track compiler availability.
+- **Graceful Test Skipping:**
+    - Updated `ComputeDispatchTest.cpp` to use `GTEST_SKIP()` if `LOOM_HAS_SHADER_COMPILER` is not defined. This ensures that the test suite reports "skipped" rather than "failed" in environments lacking a shader compiler.
+
+### Engineering Rationale
+- **Dependency Isolation:** By explicitly providing `SPIRV-Tools` in the workflow, we resolve the "ENABLE_OPT" build error without having to compromise on compiler features.
+- **Headless Compatibility:** Making the shader compiler optional ensures that the "Loom Core" (the C++ headless model) can still be developed and verified on machines that do not have a full Vulkan SDK installed.
+- **Signal vs. Noise:** Skipping shader-dependent tests instead of failing them provides a clear signal that the environment is restricted, rather than the code being broken.

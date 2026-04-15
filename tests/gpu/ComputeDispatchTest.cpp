@@ -62,6 +62,9 @@ class ComputeDispatchTest : public ::testing::Test {
         if (!m_initialized) {
             GTEST_SKIP() << "VulkanContext not initialized";
         }
+#ifndef LOOM_HAS_SHADER_COMPILER
+        GTEST_SKIP() << "Shader compiler not found, skipping GPU dispatch tests";
+#endif
         imagePool = std::make_unique<gpu::TransientImagePool>(
             ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
         pipelineCache = std::make_unique<gpu::PipelineCache>(ctx->getDevice(), pipelineLayout);
