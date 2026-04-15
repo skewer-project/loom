@@ -129,6 +129,7 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     void* data;
     res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
     assert(res == VK_SUCCESS);
+    size_t pixelCount = 0;
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, color, sizeof(color));
     }
@@ -193,6 +194,7 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     void* data;
     res = vmaMapMemory(ctx.allocator, stagingAllocation, &data);
     assert(res == VK_SUCCESS);
+    size_t pixelCount = 0;
     for (size_t i = 0; i < pixelCount; ++i) {
         memcpy((float*)data + i * 4, purple, sizeof(purple));
     }
