@@ -118,6 +118,29 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
     target_compile_options(vma PRIVATE -w)
 endif()
 
+# --- Shader Compilation ---
+find_program(GLSLC_EXECUTABLE glslc REQUIRED)
+
+file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
+set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
+file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
+
+set(SHADER_SPV_FILES "")
+foreach(SHADER_FILE ${SHADER_SOURCES})
+    get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+    set(SPV_FILE "${SHADER_SPV_DIR}/${SHADER_NAME}.spv")
+    
+    add_custom_command(
+        OUTPUT ${SPV_FILE}
+        COMMAND ${GLSLC_EXECUTABLE} ${SHADER_FILE} -o ${SPV_FILE}
+        DEPENDS ${SHADER_FILE}
+        COMMENT "Compiling shader ${SHADER_FILE}"
+    )
+    list(APPEND SHADER_SPV_FILES ${SPV_FILE})
+endforeach()
+
+add_custom_target(CompileShaders ALL DEPENDS ${SHADER_SPV_FILES})
+
 # --- Loom Engine Core ---
 add_library(LoomCore STATIC
     src/platform/Window.cpp
@@ -129,6 +152,7 @@ add_library(LoomCore STATIC
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
 )
+add_dependencies(LoomCore CompileShaders)
 # Re-reading to ensure I don't introduce duplicates accidentally. 
 # src/gpu/VulkanContext.cpp was only listed once in the original file. 
 
