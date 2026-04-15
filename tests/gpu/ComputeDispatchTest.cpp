@@ -150,11 +150,6 @@ TEST_F(ComputeDispatchTest, DispatchExecution) {
 
     VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
 
-    gpu::ViewerNode* viewer =
-        static_cast<gpu::ViewerNode*>(nViewer);  // This is actually core::ViewerNode
-    // Wait, ViewerNode is in core namespace, but I named it PassthroughNode in core.
-    // Let's check Nodes.hpp again.
-
     dispatchManager->submit(cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(nViewer)->lastOutput,
                             ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout,
                             imagePool.get());
