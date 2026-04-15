@@ -117,7 +117,7 @@ void ImGuiRenderer::shutdown() {
 
 void ImGuiRenderer::drawDockspace() {
     // Establish the fullscreen dockspace using the native helper
-    ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+    ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
 
     // Step 2: The DockBuilder Initialization (Conditional, Not Unconditional)
     // The layout must only be generated when no existing layout is loaded from imgui.ini.
