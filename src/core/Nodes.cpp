@@ -70,7 +70,7 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     if (outputs.empty()) return;
 
     gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32_SFLOAT;
+    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
@@ -110,7 +110,7 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     gpu::ImageHandle in2 = pullInput(ctx, 1);
 
     gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32_SFLOAT;
+    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
@@ -154,7 +154,7 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
     if (outputs.empty() || !in.isValid()) return;
 
     gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32_SFLOAT;
+    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
     gpu::ImageHandle out = ctx.imagePool->acquire(spec);
