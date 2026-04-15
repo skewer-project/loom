@@ -167,6 +167,8 @@ target_include_directories(LoomCore PUBLIC
     include
 )
 
+target_compile_definitions(LoomCore PRIVATE LOOM_SHADER_DIR="${SHADER_SPV_DIR}")
+
 target_link_libraries(LoomCore PUBLIC
     imgui
     imgui_node_editor

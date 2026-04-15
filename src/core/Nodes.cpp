@@ -76,7 +76,7 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
 
     gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("shaders/Fill.comp.spv");
+    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
 
     struct {
         float color[4];
@@ -117,7 +117,7 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
 
     // For now, MergeNode also just fills with purple using Fill.comp
     gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("shaders/Fill.comp.spv");
+    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
 
     struct {
         float color[4];
@@ -160,7 +160,7 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
     gpu::ImageHandle out = ctx.imagePool->acquire(spec);
 
     gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("shaders/Passthrough.comp.spv");
+    task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
 
     struct {
         uint32_t inputSlot;
