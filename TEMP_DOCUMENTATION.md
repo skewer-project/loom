@@ -237,3 +237,32 @@ During the implementation of cycle detection and topological sorting, several `E
 #### 3. Test Environment Segfaults
 *   **The Bug:** `PushPullTest` (an older test suite) was not updated to initialize the new `PipelineCache`, resulting in null-pointer dereferences when the refactored nodes attempted to load shaders.
 *   **The Fix:** Hardened the test fixtures to provide a valid `PipelineLayout` and `PipelineCache` to the `EvaluationContext`, ensuring legacy tests remain functional as the architecture evolves.
+
+---
+
+## Phase 5.1: Shader Compiler Robustness & Path Resolution
+**Objective:** Ensure stable shader compilation across different environments (CI/Local) and allow tests to run from any working directory.
+
+### Implementation Details
+- **Multi-Compiler Fallback:** 
+    - Updated CMake logic to search for `glslc`, `glslangValidator`, or `glslang`.
+    - Automatically injects the `-V` flag when using `glslang` variants to ensure SPIR-V output (Vulkan target).
+- **Absolute Shader Pathing (`LOOM_SHADER_DIR`):**
+    - Defined a compile-time macro `LOOM_SHADER_DIR` in CMake pointing to the absolute ${CMAKE_BINARY_DIR}/bin/shaders directory.
+    - This decouples the application's resource loading from the current working directory (CWD).
+- **Robust `PipelineCache` Loading:**
+    - Integrated `std::filesystem` into the shader loading pipeline.
+    - If a shader path is relative, the `PipelineCache` now prepends the absolute `LOOM_SHADER_DIR`, ensuring shaders are found even when running `ctest` from the build root.
+
+### Key Decisions
+- **Compile-Time Macros over Environment Variables:** Chose a macro for the shader directory to avoid requiring users or CI runners to set environment variables, making the "build and run" experience seamless.
+- **Base Filenames in Nodes:** Refactored nodes to use base filenames (e.g., `Fill.comp.spv`) instead of hardcoded relative paths (`shaders/...`), centralizing path logic within the GPU infrastructure.
+
+### Phase 5.1 Engineering Post-Mortem: CI Environment Discrepancies
+#### 1. The Missing `glslc` in GitHub Actions
+*   **The Bug:** The lightweight Vulkan SDK setup in GitHub Actions does not always include the `glslc` (Google) compiler by default, causing CMake configuration failures.
+*   **The Fix:** Expanded `find_program` to support `glslangValidator` (Khronos), which is more commonly available in minimal SDK installations.
+
+#### 2. `ctest` Working Directory Failures
+*   **The Bug:** Tests were written assuming the CWD was the `bin/` directory. When run via `ctest` from the `build/` root, the relative path `shaders/Fill.comp.spv` could not be resolved.
+*   **The Fix:** Moving to absolute path resolution via `LOOM_SHADER_DIR` and `std::filesystem::path` allows tests to remain portable and independent of the execution entry point.
