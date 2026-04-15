@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
+#include "imgui_internal.h"
 
 namespace loom::ui {
 
@@ -17,10 +18,8 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.IniFilename = "config/layout.ini";
-    // Enable keyboard navigation. Add
-    // ImGuiConfigFlags_DockingEnable here later for the
-    // compositor's dockable panel layout.
 
     // Step B — Set ImGui style:
     ImGui::StyleColorsDark();
@@ -114,6 +113,58 @@ void ImGuiRenderer::shutdown() {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
     m_initialized = false;
+}
+
+void ImGuiRenderer::drawDockspace() {
+    // Establish the fullscreen dockspace using the native helper
+    ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport());
+
+    // Step 2: The DockBuilder Initialization (Conditional, Not Unconditional)
+    // The layout must only be generated when no existing layout is loaded from imgui.ini.
+    // On all subsequent launches, imgui.ini populates the dock tree before the first frame,
+    // so this block is skipped entirely. Using a bare static bool firstTime would break ini
+    // persistence.
+    if (ImGui::DockBuilderGetNode(dockspace_id) == nullptr) {
+        ImGui::DockBuilderRemoveNode(dockspace_id);
+        ImGui::DockBuilderAddNode(dockspace_id, ImGuiDockNodeFlags_None);
+        ImGui::DockBuilderSetNodeSize(dockspace_id, ImGui::GetMainViewport()->Size);
+
+        // Step 3: Layout Topology (Top/Bottom Split)
+        ImGuiID nodeEditorId, viewportId;
+        // The third parameter (0.3f) is the size ratio of the DIRECTION side.
+        // out_id_at_dir (nodeEditorId) = the bottom node, 30% height
+        // out_id_opposite (viewportId) = the top node, 70% height
+        ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.3f, &nodeEditorId, &viewportId);
+
+        // Dock the windows by their exact string names.
+        // These names must remain stable across sessions for ini persistence to function correctly.
+        ImGui::DockBuilderDockWindow("Viewport", viewportId);
+        ImGui::DockBuilderDockWindow("Node Editor", nodeEditorId);
+
+        ImGui::DockBuilderFinish(dockspace_id);
+    }
+
+    // Step 4: Viewport Panel & Size Tracking
+    ImGui::Begin("Viewport");
+    ImVec2 currentSize = ImGui::GetContentRegionAvail();
+
+    // GetContentRegionAvail() returns pixel-snapped float values.
+    // Direct ImVec2 comparison is correct here — do not introduce an
+    // epsilon tolerance, as that would mask legitimate single-pixel resize events.
+    if (currentSize.x > 0 && currentSize.y > 0 &&
+        (currentSize.x != m_viewportSize.x || currentSize.y != m_viewportSize.y)) {
+        m_viewportSize = currentSize;
+        // Signal downstream Vulkan resize logic here.
+        // The zero-size guard prevents 0x0 framebuffer creation if the
+        // panel is collapsed, which is undefined behavior in Vulkan.
+    }
+    ImGui::End();
+
+    // Step 5: Node Editor Panel (Placeholder)
+    // This window will be replaced with the full NodeEditorPanel::draw() call in the next phase.
+    ImGui::Begin("Node Editor");
+    ImGui::Text("Node Editor Canvas goes here.");
+    ImGui::End();
 }
 
 }  // namespace loom::ui
