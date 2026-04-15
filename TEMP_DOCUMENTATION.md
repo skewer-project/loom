@@ -196,3 +196,44 @@ During the implementation of cycle detection and topological sorting, several `E
 ### Engineering Rationale
 - **Architectural Purity:** The `core` namespace is now strictly "headless." It contains no logic or data related to screen-space coordinates or UI state, fulfilling the requirement for a clean separation of concerns.
 - **Fail-Fast Methodology:** By asserting on `VkResult` return codes from VMA, we identify "Out of Memory" or "Invalid Argument" errors during the recording phase of the pull-eval engine, preventing the submission of corrupted command buffers to the GPU.
+
+
+---
+
+## Phase 5: Compute Dispatch Manager
+**Objective:** Transition from CPU-mapped stubs to GPU compute by separating DAG evaluation from execution and implementing a robust synchronization layer.
+
+### Implementation Details
+- **Shader Infrastructure:**
+    - Integrated `glslc` into the CMake build process to compile `.comp` shaders to SPIR-V at build time.
+    - Created `Fill.comp` for image initialization and `Passthrough.comp` for data transfer.
+- **Pipeline Registry (`PipelineCache`):**
+    - Centralized `VkPipeline` creation and caching to prevent nodes from managing Vulkan objects directly.
+    - Standardized on a single **Global Pipeline Layout** with a 128-byte push constant range, compatible with all compute nodes.
+- **The `ComputeTask` Struct:**
+    - Introduced a payload-based communication between the evaluator and the recorder.
+    - Stores pipeline handles, packed push constant data, group counts, and explicit read/write dependencies.
+- **The Dispatch Manager:**
+    - **Pass 1 — Batched Layout Transitions:** Automatically detects images not in `VK_IMAGE_LAYOUT_GENERAL` and emits a single `vkCmdPipelineBarrier2` to transition them.
+    - **Pass 2 — RAW Hazard Synchronization:** Tracks `bindlessSlot` identities during the recording loop. If a task reads a slot that was written earlier in the same frame, a compute-to-compute memory barrier is injected before the dispatch.
+    - **Pass 3 — Viewer Transition:** Transitions the final output image to `SHADER_READ_ONLY_OPTIMAL` for safe ImGui sampling.
+
+### Key Decisions
+- **General Layout for Compute:** Standardized on `VK_IMAGE_LAYOUT_GENERAL` for all transient storage images to simplify state tracking while maintaining high-performance read/write access.
+- **Vulkan 1.3 Synchronization (Sync2):** Leveraged `VK_KHR_synchronization2` for all barriers to utilize the more expressive and less error-prone `VkImageMemoryBarrier2` API.
+- **Decoupled Recording:** Nodes now only generate "Intent" (Tasks); the `DispatchManager` owns the "Action" (Vulkan commands), ensuring that synchronization logic is centralized rather than scattered across node implementations.
+
+### Phase 5 Engineering Post-Mortem: Format Support and Feature Parity
+#### 1. The RGBA vs. RGB Storage Failure
+*   **The Bug:** Initial implementation used `VK_FORMAT_R32G32B32_SFLOAT` (RGB32F). On many hardware platforms (including Apple Silicon), 3-component formats are not supported for storage image writes.
+*   **The Result:** Vulkan Validation Layers reported `VK_ERROR_FORMAT_NOT_SUPPORTED` and the application crashed during texture descriptor validation.
+*   **The Fix:** Standardized on `VK_FORMAT_R32G32B32A32_SFLOAT` (RGBA32F) across all nodes and shaders, which has near-universal support for compute storage.
+
+#### 2. SPIR-V Capability Desync
+*   **The Bug:** Shaders used `nonuniformEXT` and runtime arrays, which require the `runtimeDescriptorArray` feature to be explicitly enabled in the Vulkan device.
+*   **The Result:** Validation error `VUID-VkShaderModuleCreateInfo-pCode-08740` (Capability RuntimeDescriptorArray was declared but not satisfied).
+*   **The Fix:** Updated `VulkanContext::createLogicalDevice` to include `VkPhysicalDeviceDescriptorIndexingFeatures` in the `pNext` chain with `runtimeDescriptorArray = VK_TRUE`.
+
+#### 3. Test Environment Segfaults
+*   **The Bug:** `PushPullTest` (an older test suite) was not updated to initialize the new `PipelineCache`, resulting in null-pointer dereferences when the refactored nodes attempted to load shaders.
+*   **The Fix:** Hardened the test fixtures to provide a valid `PipelineLayout` and `PipelineCache` to the `EvaluationContext`, ensuring legacy tests remain functional as the architecture evolves.
