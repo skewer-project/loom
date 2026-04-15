@@ -70,11 +70,13 @@ int main() {
 
             // Build UI
             imgui.beginFrame();
-            nodeEditor.draw("Loom Node Editor");
+            imgui.drawDockspace();
+            nodeEditor.draw("Node Editor");
 
             // Evaluate Graph
             loom::core::EvaluationContext evalCtx{};
-            evalCtx.requestedExtent = {1280, 720};
+            evalCtx.requestedExtent = {static_cast<uint32_t>(imgui.getViewportSize().x),
+                                       static_cast<uint32_t>(imgui.getViewportSize().y)};
             evalCtx.imagePool = &imagePool;
             evalCtx.pipelineCache = &pipelineCache;
             evalCtx.allocator = vulkan.getVmaAllocator();
