@@ -285,3 +285,40 @@ During the implementation of cycle detection and topological sorting, several `E
 - **Dependency Isolation:** By explicitly providing `SPIRV-Tools` in the workflow, we resolve the "ENABLE_OPT" build error without having to compromise on compiler features.
 - **Headless Compatibility:** Making the shader compiler optional ensures that the "Loom Core" (the C++ headless model) can still be developed and verified on machines that do not have a full Vulkan SDK installed.
 - **Signal vs. Noise:** Skipping shader-dependent tests instead of failing them provides a clear signal that the environment is restricted, rather than the code being broken.
+
+
+
+## Phase 5.5: ImGui Dockspace & Viewport Layout
+**Objective:** Implement a professional, persistent workspace layout using ImGui Docking to separate the node graph from the render output.
+
+### Implementation Details
+- **Fullscreen Dockspace:** 
+    - Enabled  in the ImGui context.
+    - Utilized  to establish a root dock node that covers the entire application window.
+- **Conditional DockBuilder API:**
+    - **Persistence Guard:** Implemented a check using . This ensures that the programmatic layout is only generated on the first launch (or if `imgui.ini` is deleted), allowing user customizations to persist across sessions.
+    - **Layout Topology:** Programmatically split the dockspace into two regions using  with a 0.3f (30%) ratio for the bottom section.
+- **Viewport Size Tracking:**
+    - Used  inside the "Viewport" panel to track its actual pixel dimensions in real-time.
+    - **Vulkan Zero-Size Guard:** Implemented a  check. This prevents the downstream Vulkan pipeline from attempting to create 0x0 framebuffers when the panel is collapsed or minimized, which would trigger undefined driver behavior.
+- **Dynamic Extent Integration:** Updated  to feed the tracked  directly into the , ensuring the compute graph always renders at the exact resolution of the UI panel.
+
+### Key Decisions
+- **Stable Window Naming:** Standardized on hardcoded strings (`"Viewport"`, `"Node Editor"`) for panel titles. Renaming these would break the link to the saved layout in `imgui.ini`.
+- **Internal API Usage:** Included `imgui_internal.h` to access the  symbols, which are required for programmatic layout setup but are not part of the standard ImGui public API.
+- **Immediate-Mode Resizing:** Chose to update the viewport extent on every frame rather than via a callback. This provides instantaneous visual feedback during panel resizing without the complexity of an event-driven system.
+
+### Phase 6 Engineering Post-Mortem: Docking and Layout Initialization
+
+#### 1. The "Vanishing Windows" Bug (Initialization Order)
+*   **The Bug:** Initially,  was called *after* the layout initialization logic. 
+*   **The Result:** Because  implicitly creates the dock node if it doesn't exist, the  check was failing to trigger on the first frame, leaving the "Viewport" and "Node Editor" windows floating and undocked.
+*   **The Fix:** Refactored  to retrieve the ID via  first, then perform the layout build, and finally call  to host the dockspace.
+
+#### 2. The Persistence Conflict
+*   **The Problem:** Using a simple  to trigger layout setup would overwrite the user's `imgui.ini` every time the application restarted.
+*   **The Decision:** Shifted to the  check. This allows ImGui to remain the "source of truth" for the layout after the initial bootstrap, respecting the user's workspace preferences.
+
+#### 3. Redundant Window Definitions
+*   **The Problem:** Both  and  were attempting to define the "Node Editor" window, leading to duplicated window logic.
+*   **The Fix:** Centralized the window definition.  now establishes the dock node, and  populates it by using the matching window name.
