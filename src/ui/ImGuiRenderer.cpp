@@ -116,8 +116,8 @@ void ImGuiRenderer::shutdown() {
 }
 
 void ImGuiRenderer::drawDockspace() {
-    // Establish the fullscreen dockspace using the native helper
-    ImGuiID dockspace_id = ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    // Establish the fullscreen dockspace ID
+    ImGuiID dockspace_id = ImGui::GetID("##DockSpace");
 
     // Step 2: The DockBuilder Initialization (Conditional, Not Unconditional)
     // The layout must only be generated when no existing layout is loaded from imgui.ini.
@@ -144,6 +144,9 @@ void ImGuiRenderer::drawDockspace() {
         ImGui::DockBuilderFinish(dockspace_id);
     }
 
+    // Establish the fullscreen dockspace using the native helper
+    ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport());
+
     // Step 4: Viewport Panel & Size Tracking
     ImGui::Begin("Viewport");
     ImVec2 currentSize = ImGui::GetContentRegionAvail();
@@ -158,12 +161,6 @@ void ImGuiRenderer::drawDockspace() {
         // The zero-size guard prevents 0x0 framebuffer creation if the
         // panel is collapsed, which is undefined behavior in Vulkan.
     }
-    ImGui::End();
-
-    // Step 5: Node Editor Panel (Placeholder)
-    // This window will be replaced with the full NodeEditorPanel::draw() call in the next phase.
-    ImGui::Begin("Node Editor");
-    ImGui::Text("Node Editor Canvas goes here.");
     ImGui::End();
 }
 
