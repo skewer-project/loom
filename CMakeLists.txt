@@ -119,7 +119,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
 endif()
 
 # --- Shader Compilation ---
-find_program(GLSLC_EXECUTABLE glslc REQUIRED)
+find_program(SHADER_COMPILER NAMES glslc glslangValidator glslang REQUIRED)
+message(STATUS "Using shader compiler: ${SHADER_COMPILER}")
+
+# glslangValidator needs -V to target Vulkan/SPIR-V
+set(SHADER_COMPILER_FLAGS "")
+if(SHADER_COMPILER MATCHES "glslangValidator" OR SHADER_COMPILER MATCHES "glslang")
+    set(SHADER_COMPILER_FLAGS "-V")
+endif()
 
 file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
 set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
@@ -132,9 +139,9 @@ foreach(SHADER_FILE ${SHADER_SOURCES})
     
     add_custom_command(
         OUTPUT ${SPV_FILE}
-        COMMAND ${GLSLC_EXECUTABLE} ${SHADER_FILE} -o ${SPV_FILE}
+        COMMAND ${SHADER_COMPILER} ${SHADER_COMPILER_FLAGS} ${SHADER_FILE} -o ${SPV_FILE}
         DEPENDS ${SHADER_FILE}
-        COMMENT "Compiling shader ${SHADER_FILE}"
+        COMMENT "Compiling shader ${SHADER_FILE} using ${SHADER_COMPILER}"
     )
     list(APPEND SHADER_SPV_FILES ${SPV_FILE})
 endforeach()
