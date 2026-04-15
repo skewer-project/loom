@@ -258,6 +258,7 @@ void VulkanContext::createLogicalDevice() {
     descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
     descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
     descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+    descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
 
     dynamicRenderingFeature.pNext = &sync2Features;
     sync2Features.pNext = &descriptorIndexingFeatures;
