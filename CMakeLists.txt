@@ -148,13 +148,13 @@ add_library(LoomCore STATIC
     src/gpu/BindlessHeap.cpp
     src/gpu/TransientImagePool.cpp
     src/gpu/TransientBufferPool.cpp
+    src/gpu/PipelineCache.cpp
+    src/gpu/DispatchManager.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
 )
 add_dependencies(LoomCore CompileShaders)
-# Re-reading to ensure I don't introduce duplicates accidentally. 
-# src/gpu/VulkanContext.cpp was only listed once in the original file. 
 
 target_include_directories(LoomCore PUBLIC
     include
@@ -189,6 +189,7 @@ add_executable(LoomTests
     tests/core/NodeBehaviorTest.cpp
     tests/gpu/ResourcePoolTest.cpp
     tests/core/PushPullTest.cpp
+    tests/gpu/ComputeDispatchTest.cpp
 )
 
 target_link_libraries(LoomTests PRIVATE
