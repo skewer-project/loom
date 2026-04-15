@@ -131,7 +131,39 @@ TEST_F(ComputeDispatchTest, TaskGeneration) {
     EXPECT_EQ(task1.writeDependencies[0].bindlessSlot, task2.readDependencies[0].bindlessSlot);
 }
 
-TEST_F(ComputeDispatchTest, DispatchExecution) {
+TEST_F(ComputeDispatchTest, RAWHazardBarrier) {
+    auto hConst = graph->addNode(core::NodeType::Constant, "Const");
+    auto hPass = graph->addNode(core::NodeType::Passthrough, "Pass");
+    auto hViewer = graph->addNode(core::NodeType::Viewer, "Viewer");
+
+    core::Node* nConst = graph->getNode(hConst);
+    core::Node* nPass = graph->getNode(hPass);
+    core::Node* nViewer = graph->getNode(hViewer);
+
+    graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]);
+    graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]);
+
+    core::EvaluationContext evalCtx{};
+    evalCtx.requestedExtent = {64, 64};
+    evalCtx.imagePool = imagePool.get();
+    evalCtx.pipelineCache = pipelineCache.get();
+    evalCtx.allocator = ctx->getVmaAllocator();
+
+    nViewer->evaluate(evalCtx);
+
+    VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+
+    // This submission should include a RAW hazard barrier because task2 reads what task1 writes.
+    // If it doesn't, and validation layers are on, it might fire (though C2C hazards are sometimes
+    // subtle).
+    dispatchManager->submit(cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(nViewer)->lastOutput,
+                            ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout,
+                            imagePool.get());
+
+    ctx->endSingleTimeCommands(cmd);
+}
+
+TEST_F(ComputeDispatchTest, LayoutReentry) {
     auto hConst = graph->addNode(core::NodeType::Constant, "Const");
     auto hViewer = graph->addNode(core::NodeType::Viewer, "Viewer");
 
@@ -146,17 +178,35 @@ TEST_F(ComputeDispatchTest, DispatchExecution) {
     evalCtx.pipelineCache = pipelineCache.get();
     evalCtx.allocator = ctx->getVmaAllocator();
 
-    nViewer->evaluate(evalCtx);
+    graph->getNode(hViewer)->evaluate(evalCtx);
 
-    VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+    // Frame 1
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        dispatchManager->submit(
+            cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(graph->getNode(hViewer))->lastOutput,
+            ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout, imagePool.get());
+        ctx->endSingleTimeCommands(cmd);
+    }
 
-    dispatchManager->submit(cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(nViewer)->lastOutput,
-                            ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout,
-                            imagePool.get());
+    // At the end of Frame 1, finalViewerImage is in SHADER_READ_ONLY_OPTIMAL.
+    gpu::ImageHandle viewerImage =
+        static_cast<core::ViewerNode*>(graph->getNode(hViewer))->lastOutput;
+    EXPECT_EQ(imagePool->getLayout(viewerImage), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-    ctx->endSingleTimeCommands(cmd);
+    // Frame 2
+    evalCtx.tasks.clear();
+    graph->markDirty(hConst);
+    graph->getNode(hViewer)->evaluate(evalCtx);
 
-    // Pixel correctness check would go here if we had a way to read back the image.
-    // But we don't have a helper for that easily available without more boilerplate.
-    // We can at least assert that no validation errors occurred.
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        // DispatchManager should transition viewerImage back to GENERAL in Pass 1.
+        dispatchManager->submit(
+            cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(graph->getNode(hViewer))->lastOutput,
+            ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout, imagePool.get());
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    EXPECT_EQ(imagePool->getLayout(viewerImage), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
