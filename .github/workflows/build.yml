@@ -53,7 +53,7 @@ jobs:
         uses: humbletim/setup-vulkan-sdk@v1.2.1
         with:
           vulkan-query-version: latest
-          vulkan-components: Vulkan-Headers, Vulkan-Loader
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, shaderc
           vulkan-use-cache: true
 
       - name: Setup Compiler Cache
