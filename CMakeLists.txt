@@ -70,7 +70,7 @@ add_library(imgui STATIC
     external/imgui/backends/imgui_impl_vulkan.cpp
 )
 
-target_include_directories(imgui PUBLIC
+target_include_directories(imgui SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui
     ${CMAKE_CURRENT_SOURCE_DIR}/external/imgui/backends
 )
@@ -97,7 +97,7 @@ add_library(imgui_node_editor STATIC
     ${NODE_EDITOR_DIR}/crude_json.cpp
 )
 
-target_include_directories(imgui_node_editor PUBLIC
+target_include_directories(imgui_node_editor SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/${NODE_EDITOR_DIR}
 )
 
@@ -108,7 +108,7 @@ target_link_libraries(imgui_node_editor PUBLIC imgui)
 # Vulkan Memory Allocator
 add_library(vma STATIC external/vma/vma_implementation.cpp)
 
-target_include_directories(vma PUBLIC
+target_include_directories(vma SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/external/vma
 )
 target_link_libraries(vma PUBLIC Vulkan::Vulkan)
