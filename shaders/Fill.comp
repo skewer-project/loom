@@ -1,0 +1,18 @@
+#version 460
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(set = 0, binding = 0, rgba32f) uniform image2D bindlessImages[];
+
+layout(push_constant) uniform PushConstants {
+    vec4 color;
+    uint outputSlot;
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= pc.width || coord.y >= pc.height) return;
+    imageStore(bindlessImages[pc.outputSlot], coord, pc.color);
+}

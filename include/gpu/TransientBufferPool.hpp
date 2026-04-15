@@ -33,7 +33,7 @@ class TransientBufferPool {
         bool isFree = true;
     };
 
-    VkDevice m_device;
+    VkDevice m_device;  // Note: unused as of phase 4
     VmaAllocator m_allocator;
     BindlessHeap& m_bindlessHeap;
     std::vector<BufferEntry> m_buffers;

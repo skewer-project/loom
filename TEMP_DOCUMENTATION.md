@@ -196,3 +196,92 @@ During the implementation of cycle detection and topological sorting, several `E
 ### Engineering Rationale
 - **Architectural Purity:** The `core` namespace is now strictly "headless." It contains no logic or data related to screen-space coordinates or UI state, fulfilling the requirement for a clean separation of concerns.
 - **Fail-Fast Methodology:** By asserting on `VkResult` return codes from VMA, we identify "Out of Memory" or "Invalid Argument" errors during the recording phase of the pull-eval engine, preventing the submission of corrupted command buffers to the GPU.
+
+
+---
+
+## Phase 5: Compute Dispatch Manager
+**Objective:** Transition from CPU-mapped stubs to GPU compute by separating DAG evaluation from execution and implementing a robust synchronization layer.
+
+### Implementation Details
+- **Shader Infrastructure:**
+    - Integrated `glslc` into the CMake build process to compile `.comp` shaders to SPIR-V at build time.
+    - Created `Fill.comp` for image initialization and `Passthrough.comp` for data transfer.
+- **Pipeline Registry (`PipelineCache`):**
+    - Centralized `VkPipeline` creation and caching to prevent nodes from managing Vulkan objects directly.
+    - Standardized on a single **Global Pipeline Layout** with a 128-byte push constant range, compatible with all compute nodes.
+- **The `ComputeTask` Struct:**
+    - Introduced a payload-based communication between the evaluator and the recorder.
+    - Stores pipeline handles, packed push constant data, group counts, and explicit read/write dependencies.
+- **The Dispatch Manager:**
+    - **Pass 1 — Batched Layout Transitions:** Automatically detects images not in `VK_IMAGE_LAYOUT_GENERAL` and emits a single `vkCmdPipelineBarrier2` to transition them.
+    - **Pass 2 — RAW Hazard Synchronization:** Tracks `bindlessSlot` identities during the recording loop. If a task reads a slot that was written earlier in the same frame, a compute-to-compute memory barrier is injected before the dispatch.
+    - **Pass 3 — Viewer Transition:** Transitions the final output image to `SHADER_READ_ONLY_OPTIMAL` for safe ImGui sampling.
+
+### Key Decisions
+- **General Layout for Compute:** Standardized on `VK_IMAGE_LAYOUT_GENERAL` for all transient storage images to simplify state tracking while maintaining high-performance read/write access.
+- **Vulkan 1.3 Synchronization (Sync2):** Leveraged `VK_KHR_synchronization2` for all barriers to utilize the more expressive and less error-prone `VkImageMemoryBarrier2` API.
+- **Decoupled Recording:** Nodes now only generate "Intent" (Tasks); the `DispatchManager` owns the "Action" (Vulkan commands), ensuring that synchronization logic is centralized rather than scattered across node implementations.
+
+### Phase 5 Engineering Post-Mortem: Format Support and Feature Parity
+#### 1. The RGBA vs. RGB Storage Failure
+*   **The Bug:** Initial implementation used `VK_FORMAT_R32G32B32_SFLOAT` (RGB32F). On many hardware platforms (including Apple Silicon), 3-component formats are not supported for storage image writes.
+*   **The Result:** Vulkan Validation Layers reported `VK_ERROR_FORMAT_NOT_SUPPORTED` and the application crashed during texture descriptor validation.
+*   **The Fix:** Standardized on `VK_FORMAT_R32G32B32A32_SFLOAT` (RGBA32F) across all nodes and shaders, which has near-universal support for compute storage.
+
+#### 2. SPIR-V Capability Desync
+*   **The Bug:** Shaders used `nonuniformEXT` and runtime arrays, which require the `runtimeDescriptorArray` feature to be explicitly enabled in the Vulkan device.
+*   **The Result:** Validation error `VUID-VkShaderModuleCreateInfo-pCode-08740` (Capability RuntimeDescriptorArray was declared but not satisfied).
+*   **The Fix:** Updated `VulkanContext::createLogicalDevice` to include `VkPhysicalDeviceDescriptorIndexingFeatures` in the `pNext` chain with `runtimeDescriptorArray = VK_TRUE`.
+
+#### 3. Test Environment Segfaults
+*   **The Bug:** `PushPullTest` (an older test suite) was not updated to initialize the new `PipelineCache`, resulting in null-pointer dereferences when the refactored nodes attempted to load shaders.
+*   **The Fix:** Hardened the test fixtures to provide a valid `PipelineLayout` and `PipelineCache` to the `EvaluationContext`, ensuring legacy tests remain functional as the architecture evolves.
+
+---
+
+## Phase 5.1: Shader Compiler Robustness & Path Resolution
+**Objective:** Ensure stable shader compilation across different environments (CI/Local) and allow tests to run from any working directory.
+
+### Implementation Details
+- **Multi-Compiler Fallback:** 
+    - Updated CMake logic to search for `glslc`, `glslangValidator`, or `glslang`.
+    - Automatically injects the `-V` flag when using `glslang` variants to ensure SPIR-V output (Vulkan target).
+- **Absolute Shader Pathing (`LOOM_SHADER_DIR`):**
+    - Defined a compile-time macro `LOOM_SHADER_DIR` in CMake pointing to the absolute ${CMAKE_BINARY_DIR}/bin/shaders directory.
+    - This decouples the application's resource loading from the current working directory (CWD).
+- **Robust `PipelineCache` Loading:**
+    - Integrated `std::filesystem` into the shader loading pipeline.
+    - If a shader path is relative, the `PipelineCache` now prepends the absolute `LOOM_SHADER_DIR`, ensuring shaders are found even when running `ctest` from the build root.
+
+### Key Decisions
+- **Compile-Time Macros over Environment Variables:** Chose a macro for the shader directory to avoid requiring users or CI runners to set environment variables, making the "build and run" experience seamless.
+- **Base Filenames in Nodes:** Refactored nodes to use base filenames (e.g., `Fill.comp.spv`) instead of hardcoded relative paths (`shaders/...`), centralizing path logic within the GPU infrastructure.
+
+### Phase 5.1 Engineering Post-Mortem: CI Environment Discrepancies
+#### 1. The Missing `glslc` in GitHub Actions
+*   **The Bug:** The lightweight Vulkan SDK setup in GitHub Actions does not always include the `glslc` (Google) compiler by default, causing CMake configuration failures.
+*   **The Fix:** Expanded `find_program` to support `glslangValidator` (Khronos), which is more commonly available in minimal SDK installations.
+
+#### 2. `ctest` Working Directory Failures
+*   **The Bug:** Tests were written assuming the CWD was the `bin/` directory. When run via `ctest` from the `build/` root, the relative path `shaders/Fill.comp.spv` could not be resolved.
+*   **The Fix:** Moving to absolute path resolution via `LOOM_SHADER_DIR` and `std::filesystem::path` allows tests to remain portable and independent of the execution entry point.
+
+---
+
+## Phase 5.2: CI Resilience & Dependency Management
+**Objective:** Address SPIR-V toolchain dependencies in CI and ensure the project remains buildable even when shader compilers are missing.
+
+### Implementation Details
+- **Satisfying Glslang Dependencies:** 
+    - Added `SPIRV-Tools` to the `vulkan-components` in the GitHub Actions workflow. This provides the necessary optimizer binaries (`spirv-opt`) required when `Glslang` is built from source on certain platforms (e.g., macOS arm64).
+- **Optional Shader Compilation:**
+    - Refactored `CMakeLists.txt` to make the shader compiler (`glslc`, `glslang`) optional.
+    - Introduced the `LOOM_HAS_SHADER_COMPILER` compile-time definition to track compiler availability.
+- **Graceful Test Skipping:**
+    - Updated `ComputeDispatchTest.cpp` to use `GTEST_SKIP()` if `LOOM_HAS_SHADER_COMPILER` is not defined. This ensures that the test suite reports "skipped" rather than "failed" in environments lacking a shader compiler.
+
+### Engineering Rationale
+- **Dependency Isolation:** By explicitly providing `SPIRV-Tools` in the workflow, we resolve the "ENABLE_OPT" build error without having to compromise on compiler features.
+- **Headless Compatibility:** Making the shader compiler optional ensures that the "Loom Core" (the C++ headless model) can still be developed and verified on machines that do not have a full Vulkan SDK installed.
+- **Signal vs. Noise:** Skipping shader-dependent tests instead of failing them provides a clear signal that the environment is restricted, rather than the code being broken.

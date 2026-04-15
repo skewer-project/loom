@@ -7,6 +7,7 @@
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
 #include "core/Nodes.hpp"
+#include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
@@ -25,6 +26,26 @@ class PushPullTest : public ::testing::Test {
         ctx = std::make_unique<gpu::VulkanContext>();
         try {
             ctx->init(*window, "PushPullTest");
+
+            VkPushConstantRange pushConstantRange{};
+            pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+            pushConstantRange.offset = 0;
+            pushConstantRange.size = 128;
+
+            VkDescriptorSetLayout setLayout = ctx->getBindlessHeap().getLayout();
+
+            VkPipelineLayoutCreateInfo layoutInfo{};
+            layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            layoutInfo.setLayoutCount = 1;
+            layoutInfo.pSetLayouts = &setLayout;
+            layoutInfo.pushConstantRangeCount = 1;
+            layoutInfo.pPushConstantRanges = &pushConstantRange;
+
+            if (vkCreatePipelineLayout(ctx->getDevice(), &layoutInfo, nullptr, &pipelineLayout) !=
+                VK_SUCCESS) {
+                throw std::runtime_error("failed to create pipeline layout!");
+            }
+
             m_initialized = true;
         } catch (const std::exception& e) {
             std::cerr << "Vulkan init failed: " << e.what() << std::endl;
@@ -32,6 +53,9 @@ class PushPullTest : public ::testing::Test {
     }
 
     static void TearDownTestSuite() {
+        if (m_initialized) {
+            vkDestroyPipelineLayout(ctx->getDevice(), pipelineLayout, nullptr);
+        }
         ctx.reset();
         window.reset();
         glfwTerminate();
@@ -41,6 +65,7 @@ class PushPullTest : public ::testing::Test {
         if (!m_initialized) GTEST_SKIP();
         imagePool = std::make_unique<gpu::TransientImagePool>(
             ctx->getDevice(), ctx->getVmaAllocator(), ctx->getBindlessHeap());
+        pipelineCache = std::make_unique<gpu::PipelineCache>(ctx->getDevice(), pipelineLayout);
 
         VkCommandBufferAllocateInfo allocInfo = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -52,6 +77,7 @@ class PushPullTest : public ::testing::Test {
 
         evalCtx.requestedExtent = {100, 100};
         evalCtx.imagePool = imagePool.get();
+        evalCtx.pipelineCache = pipelineCache.get();
         evalCtx.allocator = ctx->getVmaAllocator();
         evalCtx.cmd = cmd;
     }
@@ -59,6 +85,7 @@ class PushPullTest : public ::testing::Test {
     void TearDown() override {
         if (m_initialized) {
             vkFreeCommandBuffers(ctx->getDevice(), ctx->getCommandPool(), 1, &cmd);
+            pipelineCache.reset();
             imagePool.reset();
         }
     }
@@ -78,14 +105,17 @@ class PushPullTest : public ::testing::Test {
 
     static std::unique_ptr<platform::Window> window;
     static std::unique_ptr<gpu::VulkanContext> ctx;
+    static VkPipelineLayout pipelineLayout;
     static bool m_initialized;
     std::unique_ptr<gpu::TransientImagePool> imagePool;
+    std::unique_ptr<gpu::PipelineCache> pipelineCache;
     VkCommandBuffer cmd;
     core::EvaluationContext evalCtx;
 };
 
 std::unique_ptr<platform::Window> PushPullTest::window = nullptr;
 std::unique_ptr<gpu::VulkanContext> PushPullTest::ctx = nullptr;
+VkPipelineLayout PushPullTest::pipelineLayout = VK_NULL_HANDLE;
 bool PushPullTest::m_initialized = false;
 
 TEST_F(PushPullTest, BasicEval) {

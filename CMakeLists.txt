@@ -118,6 +118,42 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|AppleClang|GNU")
     target_compile_options(vma PRIVATE -w)
 endif()
 
+# --- Shader Compilation ---
+find_program(SHADER_COMPILER NAMES glslc glslangValidator glslang)
+if(SHADER_COMPILER)
+    message(STATUS "Using shader compiler: ${SHADER_COMPILER}")
+
+    # glslangValidator needs -V to target Vulkan/SPIR-V
+    set(SHADER_COMPILER_FLAGS "")
+    if(SHADER_COMPILER MATCHES "glslangValidator" OR SHADER_COMPILER MATCHES "glslang")
+        set(SHADER_COMPILER_FLAGS "-V")
+    endif()
+
+    file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
+    set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
+    file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
+
+    set(SHADER_SPV_FILES "")
+    foreach(SHADER_FILE ${SHADER_SOURCES})
+        get_filename_component(SHADER_NAME ${SHADER_FILE} NAME)
+        set(SPV_FILE "${SHADER_SPV_DIR}/${SHADER_NAME}.spv")
+        
+        add_custom_command(
+            OUTPUT ${SPV_FILE}
+            COMMAND ${SHADER_COMPILER} ${SHADER_COMPILER_FLAGS} ${SHADER_FILE} -o ${SPV_FILE}
+            DEPENDS ${SHADER_FILE}
+            COMMENT "Compiling shader ${SHADER_FILE} using ${SHADER_COMPILER}"
+        )
+        list(APPEND SHADER_SPV_FILES ${SPV_FILE})
+    endforeach()
+
+    add_custom_target(CompileShaders ALL DEPENDS ${SHADER_SPV_FILES})
+    set(HAS_SHADER_COMPILER ON)
+else()
+    message(WARNING "Shader compiler not found. Shaders will not be compiled. Some tests may fail.")
+    set(HAS_SHADER_COMPILER OFF)
+endif()
+
 # --- Loom Engine Core ---
 add_library(LoomCore STATIC
     src/platform/Window.cpp
@@ -125,16 +161,22 @@ add_library(LoomCore STATIC
     src/gpu/BindlessHeap.cpp
     src/gpu/TransientImagePool.cpp
     src/gpu/TransientBufferPool.cpp
+    src/gpu/PipelineCache.cpp
+    src/gpu/DispatchManager.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
 )
-# Re-reading to ensure I don't introduce duplicates accidentally. 
-# src/gpu/VulkanContext.cpp was only listed once in the original file. 
+if(HAS_SHADER_COMPILER)
+    add_dependencies(LoomCore CompileShaders)
+    target_compile_definitions(LoomCore PUBLIC LOOM_HAS_SHADER_COMPILER)
+endif()
 
 target_include_directories(LoomCore PUBLIC
     include
 )
+
+target_compile_definitions(LoomCore PRIVATE LOOM_SHADER_DIR="${SHADER_SPV_DIR}")
 
 target_link_libraries(LoomCore PUBLIC
     imgui
@@ -165,6 +207,7 @@ add_executable(LoomTests
     tests/core/NodeBehaviorTest.cpp
     tests/gpu/ResourcePoolTest.cpp
     tests/core/PushPullTest.cpp
+    tests/gpu/ComputeDispatchTest.cpp
 )
 
 target_link_libraries(LoomTests PRIVATE
