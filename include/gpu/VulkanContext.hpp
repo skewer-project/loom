@@ -133,6 +133,7 @@ class VulkanContext {
 
     // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
     uint32_t m_currentFrame = 0;
+    uint32_t m_currentImageIndex = 0;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
