@@ -234,6 +234,25 @@ void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     vkCmdEndRendering(cmd);
+
+    // Barrier 3: Transition dstImage to SHADER_READ_ONLY_OPTIMAL for ImGui
+    VkImageMemoryBarrier2 postBarrier{};
+    postBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    postBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    postBarrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    postBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    postBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+    postBarrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    postBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    postBarrier.image = dstImage;
+    postBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+
+    VkDependencyInfo postDepInfo{};
+    postDepInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    postDepInfo.imageMemoryBarrierCount = 1;
+    postDepInfo.pImageMemoryBarriers = &postBarrier;
+
+    vkCmdPipelineBarrier2(cmd, &postDepInfo);
 }
 
 }  // namespace loom::gpu
