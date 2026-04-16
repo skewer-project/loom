@@ -167,6 +167,7 @@ add_library(LoomCore STATIC
     src/gpu/TransientBufferPool.cpp
     src/gpu/PipelineCache.cpp
     src/gpu/DispatchManager.cpp
+    src/gpu/DisplayPass.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
