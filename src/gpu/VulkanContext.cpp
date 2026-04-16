@@ -806,7 +806,16 @@ void VulkanContext::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
     vkCmdPipelineBarrier2(cmd, &depInfo);
 }
 
-void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
+VkCommandBuffer VulkanContext::beginFrame() {
+    // Minimization Guard: Check the GLFW window size.
+    // If width or height is 0, call glfwWaitEvents() and return VK_NULL_HANDLE.
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(m_window, &width, &height);
+    if (width == 0 || height == 0) {
+        glfwWaitEvents();
+        return VK_NULL_HANDLE;
+    }
+
     // Retrieve Window wrapper class from the GLFW window
     auto loomWindow = reinterpret_cast<loom::platform::Window*>(glfwGetWindowUserPointer(m_window));
 
@@ -814,7 +823,7 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     if (loomWindow->wasResized()) {
         recreateSwapchain();
         loomWindow->resetResizedFlag();
-        return;  // Skip this frame and try again next loop
+        return VK_NULL_HANDLE;  // Skip this frame and try again next loop
     }
 
     // Step A — Wait for previous frame's fence:
@@ -823,32 +832,25 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
 
     // Step B — Acquire next swapchain image:
-    uint32_t imageIndex;
     VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
                                             m_imageAvailableSemaphores[m_currentFrame],
-                                            VK_NULL_HANDLE, &imageIndex);
+                                            VK_NULL_HANDLE, &m_currentImageIndex);
 
     if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         // Swapchain is no longer compatible with the surface — typically caused by a window resize.
         // Recreate and skip this frame.
         recreateSwapchain();
-        return;
+        return VK_NULL_HANDLE;
     } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swapchain image!");
     }
 
     // Check if a previous frame is using this image (i.e. there is its fence to wait on)
-    if (m_imagesInFlight[imageIndex] != VK_NULL_HANDLE) {
-        vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+    if (m_imagesInFlight[m_currentImageIndex] != VK_NULL_HANDLE) {
+        vkWaitForFences(m_device, 1, &m_imagesInFlight[m_currentImageIndex], VK_TRUE, UINT64_MAX);
     }
     // Mark the image as now being in use by this frame
-    m_imagesInFlight[imageIndex] = m_inFlightFences[m_currentFrame];
-
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        recreateSwapchain();
-        loomWindow->resetResizedFlag();  // Clear it here too, just in case
-        return;
-    }
+    m_imagesInFlight[m_currentImageIndex] = m_inFlightFences[m_currentFrame];
 
     // Step C — Reset fence AFTER successful acquire:
     // Reset only after confirming we will submit
@@ -867,24 +869,26 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
         throw std::runtime_error("failed to begin command buffer!");
     }
 
+    return m_commandBuffers[m_currentFrame];
+}
+
+void VulkanContext::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui) {
     // Step F — Transition image to COLOR_ATTACHMENT_OPTIMAL:
     // The swapchain image starts in an undefined
     // state each frame. Transition it to the layout required
     // for color writes before vkCmdBeginRendering.
-    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex],
-                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    transitionImageLayout(cmd, m_swapchainImages[m_currentImageIndex], VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     // Step G — Begin dynamic rendering:
     VkRenderingAttachmentInfo colorAttachment{};
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = m_swapchainImageViews[imageIndex];
+    colorAttachment.imageView = m_swapchainImageViews[m_currentImageIndex];
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     colorAttachment.clearValue.color = {{0.1f, 0.1f, 0.1f, 1.0f}};
     // Dark grey clear color.
-    // Replace with black or a compositor-appropriate default
-    // once the node editor UI is established.
 
     VkRenderingInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -894,36 +898,30 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachments = &colorAttachment;
 
-    vkCmdBeginRendering(m_commandBuffers[m_currentFrame], &renderingInfo);
+    vkCmdBeginRendering(cmd, &renderingInfo);
 
     // Step H — Record ImGui draw calls:
     // endFrame calls ImGui::Render() then
     // ImGui_ImplVulkan_RenderDrawData() internally.
-    // Translates all ImGui geometry into Vulkan draw calls
-    // recorded into the active command buffer.
-    // Must be called inside an active vkCmdBeginRendering block.
-    imgui.endFrame(m_commandBuffers[m_currentFrame]);
+    imgui.endFrame(cmd);
 
     // Step I — End dynamic rendering:
-    vkCmdEndRendering(m_commandBuffers[m_currentFrame]);
+    vkCmdEndRendering(cmd);
 
     // Step J — Transition image to PRESENT_SRC_KHR:
-    // Transition the image to the layout required
-    // for presentation. The swapchain will reject images that
-    // are not in PRESENT_SRC_KHR when vkQueuePresentKHR is called.
-    transitionImageLayout(m_commandBuffers[m_currentFrame], m_swapchainImages[imageIndex],
+    transitionImageLayout(cmd, m_swapchainImages[m_currentImageIndex],
                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                           VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     // Step K — End command buffer:
-    if (vkEndCommandBuffer(m_commandBuffers[m_currentFrame]) != VK_SUCCESS) {
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
         throw std::runtime_error("failed to record command buffer!");
     }
 
     // Step L — Submit:
     VkSemaphore waitSemaphores[] = {m_imageAvailableSemaphores[m_currentFrame]};
     VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[imageIndex]};
+    VkSemaphore signalSemaphores[] = {m_renderFinishedSemaphores[m_currentImageIndex]};
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -931,7 +929,7 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &m_commandBuffers[m_currentFrame];
+    submitInfo.pCommandBuffers = &cmd;
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -939,9 +937,6 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
         VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
-    // The fence signals when the GPU finishes
-    // this submission. The CPU will wait on it at the start
-    // of the next use of this frame slot in Step A.
 
     // Step M — Present:
     VkSwapchainKHR swapchains[] = {m_swapchain};
@@ -951,23 +946,20 @@ void VulkanContext::drawFrame(loom::ui::ImGuiRenderer& imgui) {
     presentInfo.pWaitSemaphores = signalSemaphores;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapchains;
-    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pImageIndices = &m_currentImageIndex;
 
     VkResult presentResult = vkQueuePresentKHR(m_presentQueue, &presentInfo);
 
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
-        // Recreate here catches both the
-        // suboptimal case deferred from Step B and any
-        // out-of-date result returned by present itself.
+        auto loomWindow =
+            reinterpret_cast<loom::platform::Window*>(glfwGetWindowUserPointer(m_window));
+        loomWindow->resetResizedFlag();  // Ensure flag is set for next frame
         recreateSwapchain();
     } else if (presentResult != VK_SUCCESS) {
         throw std::runtime_error("failed to present swapchain image!");
     }
 
-    // Step N — Advance frame index. THIS LINE IS MANDATORY:
-    // Cycle to the next frame slot.
-    // Omitting this line means every frame uses slot 0,
-    // breaking the entire frames-in-flight system silently.
+    // Step N — Advance frame index:
     m_currentFrame = (m_currentFrame + 1) % core::MAX_FRAMES_IN_FLIGHT;
 }
 

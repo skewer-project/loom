@@ -285,3 +285,82 @@ During the implementation of cycle detection and topological sorting, several `E
 - **Dependency Isolation:** By explicitly providing `SPIRV-Tools` in the workflow, we resolve the "ENABLE_OPT" build error without having to compromise on compiler features.
 - **Headless Compatibility:** Making the shader compiler optional ensures that the "Loom Core" (the C++ headless model) can still be developed and verified on machines that do not have a full Vulkan SDK installed.
 - **Signal vs. Noise:** Skipping shader-dependent tests instead of failing them provides a clear signal that the environment is restricted, rather than the code being broken.
+
+
+
+## Phase 5.5: ImGui Dockspace & Viewport Layout
+**Objective:** Implement a professional, persistent workspace layout using ImGui Docking to separate the node graph from the render output.
+
+### Implementation Details
+- **Fullscreen Dockspace:** 
+    - Enabled  in the ImGui context.
+    - Utilized  to establish a root dock node that covers the entire application window.
+- **Conditional DockBuilder API:**
+    - **Persistence Guard:** Implemented a check using . This ensures that the programmatic layout is only generated on the first launch (or if `imgui.ini` is deleted), allowing user customizations to persist across sessions.
+    - **Layout Topology:** Programmatically split the dockspace into two regions using  with a 0.3f (30%) ratio for the bottom section.
+- **Viewport Size Tracking:**
+    - Used  inside the "Viewport" panel to track its actual pixel dimensions in real-time.
+    - **Vulkan Zero-Size Guard:** Implemented a  check. This prevents the downstream Vulkan pipeline from attempting to create 0x0 framebuffers when the panel is collapsed or minimized, which would trigger undefined driver behavior.
+- **Dynamic Extent Integration:** Updated  to feed the tracked  directly into the , ensuring the compute graph always renders at the exact resolution of the UI panel.
+
+### Key Decisions
+- **Stable Window Naming:** Standardized on hardcoded strings (`"Viewport"`, `"Node Editor"`) for panel titles. Renaming these would break the link to the saved layout in `imgui.ini`.
+- **Internal API Usage:** Included `imgui_internal.h` to access the  symbols, which are required for programmatic layout setup but are not part of the standard ImGui public API.
+- **Immediate-Mode Resizing:** Chose to update the viewport extent on every frame rather than via a callback. This provides instantaneous visual feedback during panel resizing without the complexity of an event-driven system.
+
+### Phase 6 Engineering Post-Mortem: Docking and Layout Initialization
+
+#### 1. The "Vanishing Windows" Bug (Initialization Order)
+*   **The Bug:** Initially,  was called *after* the layout initialization logic. 
+*   **The Result:** Because  implicitly creates the dock node if it doesn't exist, the  check was failing to trigger on the first frame, leaving the "Viewport" and "Node Editor" windows floating and undocked.
+*   **The Fix:** Refactored  to retrieve the ID via  first, then perform the layout build, and finally call  to host the dockspace.
+
+#### 2. The Persistence Conflict
+*   **The Problem:** Using a simple  to trigger layout setup would overwrite the user's `imgui.ini` every time the application restarted.
+*   **The Decision:** Shifted to the  check. This allows ImGui to remain the "source of truth" for the layout after the initial bootstrap, respecting the user's workspace preferences.
+
+#### 3. Redundant Window Definitions
+*   **The Problem:** Both  and  were attempting to define the "Node Editor" window, leading to duplicated window logic.
+*   **The Fix:** Centralized the window definition.  now establishes the dock node, and  populates it by using the matching window name.
+
+---
+
+## Phase 5.6: Frame Lifecycle Split & Resize Robustness
+**Objective:** Resolve the ImGui assertion crash during window resizing and establish a professional, industry-standard render loop.
+
+### The Crash: Anatomy of an Unbalanced Frame
+- **The Symptom:** `Assertion failed: ... "Forgot to call Render() or EndFrame() at the end of the previous frame?"`.
+- **The Root Cause:** The monolithic `VulkanContext::drawFrame` performed swapchain acquisition and resize checks *after* the UI logic had already called `imgui.beginFrame()`. When a resize was detected, `drawFrame` returned early to recreate the swapchain, skipping `imgui.endFrame()` (which calls `ImGui::Render()`). This left the ImGui state machine in an "active frame" state, causing a crash when the next iteration attempted to start a new frame.
+
+### Implementation: The Split-Lifecycle Pattern
+- **Refactored `VulkanContext`:** Split `drawFrame` into `beginFrame()` and `endFrame(cmd, imgui)`.
+    - **`beginFrame()`:** Handles fence synchronization, minimization guards (waiting for events if size is 0), and swapchain acquisition. It returns the active `VkCommandBuffer` if successful, or `VK_NULL_HANDLE` if the frame should be skipped.
+    - **`endFrame()`:** Handles image layout transitions, dynamic rendering, ImGui recording, command submission, and presentation.
+- **Main Loop Restructuring:** The main loop in `main.cpp` now uses a conditional block:
+    ```cpp
+    if (VkCommandBuffer cmd = vulkan.beginFrame()) {
+        imgui.beginFrame();
+        imgui.drawDockspace();
+        nodeEditor.draw("Node Editor");
+
+        // Evaluate Graph logic here...
+
+        vulkan.endFrame(cmd, imgui);
+    }
+    ```
+    This ensures that ImGui is only invoked if a valid GPU frame is guaranteed, keeping the CPU/UI and GPU/Render lifecycles perfectly synchronized.
+
+### Key Decisions
+- **Industry-Standard vs. Band-aid:** Rejected the simple fix of calling `ImGui::EndFrame()` inside the old `drawFrame`. While functional, it would still waste CPU cycles building UI data for a frame that would never be shown. The split-lifecycle approach is the gold standard for high-performance Vulkan engines.
+- **Minimization Guard:** Explicitly handled the "zero-extent" case (minimizing the window). The engine now calls `glfwWaitEvents()` and skips rendering until the window is restored, preventing swapchain recreation loops.
+- **Compute Readiness:** By exposing the `VkCommandBuffer` to the main loop, we've laid the architectural foundation for Phase 6, where compute dispatches will be recorded into the same buffer as the UI draw calls.
+
+### Phase 5.6 Engineering Post-Mortem: Synchronization and State
+#### 1. The "Suboptimal" Reentry
+*   **The Problem:** `vkAcquireNextImageKHR` often returns `VK_SUBOPTIMAL_KHR` on macOS during resizing. Treating this as a "success" allowed the frame to proceed, but if the surface was already incompatible, the subsequent `vkQueuePresentKHR` would fail.
+*   **The Fix:** Updated the present logic to catch both `VK_ERROR_OUT_OF_DATE_KHR` and `VK_SUBOPTIMAL_KHR`, triggering a swapchain recreation for the *next* frame to ensure continuous stability.
+
+#### 2. Fence Reset Timing
+*   **The Bug:** Resetting the in-flight fence *before* acquiring the next image.
+*   **The Risk:** If `vkAcquireNextImageKHR` fails or returns early, the fence remains unsignaled, but the CPU has already "forgotten" it waited, potentially leading to a deadlock on the next frame.
+*   **The Fix:** Strictly moved `vkResetFences` to occur only *after* a successful image acquisition and before command buffer recording begins.

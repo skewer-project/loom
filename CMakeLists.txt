@@ -208,6 +208,7 @@ add_executable(LoomTests
     tests/gpu/ResourcePoolTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
+    tests/gpu/WindowResizeTest.cpp
 )
 
 target_link_libraries(LoomTests PRIVATE

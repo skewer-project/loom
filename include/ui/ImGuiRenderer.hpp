@@ -5,6 +5,8 @@
 
 #include <cstdint>
 
+#include "imgui.h"
+
 namespace loom::ui {
 
 struct ImGuiRendererCreateInfo {
@@ -36,10 +38,18 @@ class ImGuiRenderer {
     void endFrame(VkCommandBuffer cmd);
     void shutdown();
 
+    // Establishes a fullscreen dockspace and generates the default layout
+    // if no persistent state exists in imgui.ini.
+    void drawDockspace();
+
+    ImVec2 getViewportSize() const { return m_viewportSize; }
+
   private:
     // Guards against double-shutdown if the destructor and an explicit shutdown() call overlap
     bool m_initialized = false;
     VkFormat m_colorFormat = VK_FORMAT_UNDEFINED;
+
+    ImVec2 m_viewportSize = {0, 0};
 };
 
 }  // namespace loom::ui

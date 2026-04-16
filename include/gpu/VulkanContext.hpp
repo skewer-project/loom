@@ -58,7 +58,9 @@ class VulkanContext {
 
     void waitIdle() const;  // Called from main() before any destructor runs to ensure the GPU has
                             // finished all in-flight work.
-    void drawFrame(loom::ui::ImGuiRenderer& imgui);
+
+    VkCommandBuffer beginFrame();
+    void endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -131,6 +133,7 @@ class VulkanContext {
 
     // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
     uint32_t m_currentFrame = 0;
+    uint32_t m_currentImageIndex = 0;
 
 #ifndef NDEBUG
     const bool m_enableValidationLayers = true;
