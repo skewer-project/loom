@@ -214,6 +214,7 @@ add_executable(LoomTests
     tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
+    tests/gpu/GraphExecutionTest.cpp
     tests/gpu/WindowResizeTest.cpp
 )
 
