@@ -364,3 +364,41 @@ During the implementation of cycle detection and topological sorting, several `E
 *   **The Bug:** Resetting the in-flight fence *before* acquiring the next image.
 *   **The Risk:** If `vkAcquireNextImageKHR` fails or returns early, the fence remains unsignaled, but the CPU has already "forgotten" it waited, potentially leading to a deadlock on the next frame.
 *   **The Fix:** Strictly moved `vkResetFences` to occur only *after* a successful image acquisition and before command buffer recording begins.
+
+---
+
+## Phase 6.5: ImGui Viewport Integration & Evaluation Robustness
+
+### Objectives
+Bridge the Vulkan Display Pass to the ImGui UI layout and ensure the node graph evaluation is stable, leak-free, and user-friendly during interactive re-wiring.
+
+### 1. Viewport Bridging
+*   **Vulkan-to-ImGui Pipeline:** Added a persistent `VkSampler` and `VkDescriptorSet` to `ImGuiRenderer`.
+*   **Dynamic Resizing:** Implemented `recreateViewportTarget` which reallocates an offscreen `VkImage` whenever the ImGui "Viewport" panel size changes. This image is registered with ImGui via `ImGui_ImplVulkan_AddTexture`.
+*   **Synchronization:** Integrated a final Image Memory Barrier in `DisplayPass` to transition the render target to `SHADER_READ_ONLY_OPTIMAL` before ImGui attempts to sample it.
+
+### 2. Bug Fixes & System Stability
+
+#### Critical Image Pool Leak
+*   **Issue:** `ImageHandle`s acquired during graph evaluation were never released. This caused Bindless Heap exhaustion (2048 slots) within seconds, leading to a silent viewport "lockup."
+*   **Fix:** Implemented per-frame garbage collection in `main.cpp`. All handles in the `EvaluationContext` cache and pending release list are now explicitly returned to the `TransientImagePool` at the end of the frame.
+
+#### Stale Evaluation Caching
+*   **Issue:** `Node::pullInput` incorrectly returned cached results from *previous* frames if a node was not explicitly marked dirty, even though the `EvaluationContext` was fresh.
+*   **Fix:** Updated caching logic to strictly enforce that a node must have been evaluated in the *current* frame (existence in current cache) to skip re-evaluation. This ensures the graph always reflects the latest state after every frame loop.
+
+#### Missing Input Handling
+*   **Issue:** `PassthroughNode` and `MergeNode` would return early or skip rendering if inputs were missing, leaving the viewport with stale data from the last successful frame.
+*   **Fix:** Updated evaluation logic to always generate a `ComputeTask`. If inputs are missing, nodes now explicitly fill their output with black (Passthrough) or dark gray (Merge) placeholders.
+
+### 3. UX & Logic Refinement
+
+#### Smart Merge Logic
+*   **Improvement:** `MergeNode` now acts as a passthrough if only one input is connected. It only displays the "missing input" gray if completely disconnected, and the "merged" purple if fully connected. This prevents the graph from feeling "broken" during intermediate wiring steps.
+
+#### Bidirectional Wiring
+*   **Issue:** The Graph engine required a strict `(Output, Input)` order for link creation, causing links dragged "backwards" in the UI to be silently rejected.
+*   **Fix:** Updated `NodeEditorPanel` to detect drag direction and automatically swap handles to maintain the engine's required invariant, allowing users to wire pins in either direction.
+
+#### Platform Compatibility
+*   **Fix:** Updated all node output formats from `VK_FORMAT_R32G32B32_SFLOAT` to `VK_FORMAT_R32G32B32A32_SFLOAT` to resolve `VK_ERROR_FORMAT_NOT_SUPPORTED` crashes on macOS/MoltenVK and other hardware with strict 4-component alignment requirements for storage images.
