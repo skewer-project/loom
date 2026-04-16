@@ -322,3 +322,45 @@ During the implementation of cycle detection and topological sorting, several `E
 #### 3. Redundant Window Definitions
 *   **The Problem:** Both  and  were attempting to define the "Node Editor" window, leading to duplicated window logic.
 *   **The Fix:** Centralized the window definition.  now establishes the dock node, and  populates it by using the matching window name.
+
+---
+
+## Phase 5.6: Frame Lifecycle Split & Resize Robustness
+**Objective:** Resolve the ImGui assertion crash during window resizing and establish a professional, industry-standard render loop.
+
+### The Crash: Anatomy of an Unbalanced Frame
+- **The Symptom:** `Assertion failed: ... "Forgot to call Render() or EndFrame() at the end of the previous frame?"`.
+- **The Root Cause:** The monolithic `VulkanContext::drawFrame` performed swapchain acquisition and resize checks *after* the UI logic had already called `imgui.beginFrame()`. When a resize was detected, `drawFrame` returned early to recreate the swapchain, skipping `imgui.endFrame()` (which calls `ImGui::Render()`). This left the ImGui state machine in an "active frame" state, causing a crash when the next iteration attempted to start a new frame.
+
+### Implementation: The Split-Lifecycle Pattern
+- **Refactored `VulkanContext`:** Split `drawFrame` into `beginFrame()` and `endFrame(cmd, imgui)`.
+    - **`beginFrame()`:** Handles fence synchronization, minimization guards (waiting for events if size is 0), and swapchain acquisition. It returns the active `VkCommandBuffer` if successful, or `VK_NULL_HANDLE` if the frame should be skipped.
+    - **`endFrame()`:** Handles image layout transitions, dynamic rendering, ImGui recording, command submission, and presentation.
+- **Main Loop Restructuring:** The main loop in `main.cpp` now uses a conditional block:
+    ```cpp
+    if (VkCommandBuffer cmd = vulkan.beginFrame()) {
+        imgui.beginFrame();
+        imgui.drawDockspace();
+        nodeEditor.draw("Node Editor");
+
+        // Evaluate Graph logic here...
+
+        vulkan.endFrame(cmd, imgui);
+    }
+    ```
+    This ensures that ImGui is only invoked if a valid GPU frame is guaranteed, keeping the CPU/UI and GPU/Render lifecycles perfectly synchronized.
+
+### Key Decisions
+- **Industry-Standard vs. Band-aid:** Rejected the simple fix of calling `ImGui::EndFrame()` inside the old `drawFrame`. While functional, it would still waste CPU cycles building UI data for a frame that would never be shown. The split-lifecycle approach is the gold standard for high-performance Vulkan engines.
+- **Minimization Guard:** Explicitly handled the "zero-extent" case (minimizing the window). The engine now calls `glfwWaitEvents()` and skips rendering until the window is restored, preventing swapchain recreation loops.
+- **Compute Readiness:** By exposing the `VkCommandBuffer` to the main loop, we've laid the architectural foundation for Phase 6, where compute dispatches will be recorded into the same buffer as the UI draw calls.
+
+### Phase 5.6 Engineering Post-Mortem: Synchronization and State
+#### 1. The "Suboptimal" Reentry
+*   **The Problem:** `vkAcquireNextImageKHR` often returns `VK_SUBOPTIMAL_KHR` on macOS during resizing. Treating this as a "success" allowed the frame to proceed, but if the surface was already incompatible, the subsequent `vkQueuePresentKHR` would fail.
+*   **The Fix:** Updated the present logic to catch both `VK_ERROR_OUT_OF_DATE_KHR` and `VK_SUBOPTIMAL_KHR`, triggering a swapchain recreation for the *next* frame to ensure continuous stability.
+
+#### 2. Fence Reset Timing
+*   **The Bug:** Resetting the in-flight fence *before* acquiring the next image.
+*   **The Risk:** If `vkAcquireNextImageKHR` fails or returns early, the fence remains unsignaled, but the CPU has already "forgotten" it waited, potentially leading to a deadlock on the next frame.
+*   **The Fix:** Strictly moved `vkResetFences` to occur only *after* a successful image acquisition and before command buffer recording begins.
