@@ -174,6 +174,26 @@ void ImGuiRenderer::shutdown() {
     // Guard with m_initialized to prevent double-shutdown:
     if (!m_initialized) return;
 
+    vkDeviceWaitIdle(m_device);
+
+    if (m_viewportTextureId != VK_NULL_HANDLE) {
+        ImGui_ImplVulkan_RemoveTexture(m_viewportTextureId);
+        m_viewportTextureId = VK_NULL_HANDLE;
+    }
+    if (m_viewportImageView != VK_NULL_HANDLE) {
+        vkDestroyImageView(m_device, m_viewportImageView, nullptr);
+        m_viewportImageView = VK_NULL_HANDLE;
+    }
+    if (m_viewportImage != VK_NULL_HANDLE) {
+        vmaDestroyImage(m_vmaAllocator, m_viewportImage, m_viewportAllocation);
+        m_viewportImage = VK_NULL_HANDLE;
+        m_viewportAllocation = VK_NULL_HANDLE;
+    }
+    if (m_viewportSampler != VK_NULL_HANDLE) {
+        vkDestroySampler(m_device, m_viewportSampler, nullptr);
+        m_viewportSampler = VK_NULL_HANDLE;
+    }
+
     // Shutdown order is the strict reverse of
     // initialization order. Vulkan backend first, then GLFW,
     // then the ImGui context itself.
@@ -225,10 +245,19 @@ void ImGuiRenderer::drawDockspace() {
     if (currentSize.x > 0 && currentSize.y > 0 &&
         (currentSize.x != m_viewportSize.x || currentSize.y != m_viewportSize.y)) {
         m_viewportSize = currentSize;
-        // Signal downstream Vulkan resize logic here.
-        // The zero-size guard prevents 0x0 framebuffer creation if the
-        // panel is collapsed, which is undefined behavior in Vulkan.
+
+        // Trigger reallocation of the offscreen render target
+        recreateViewportTarget((uint32_t)m_viewportSize.x, (uint32_t)m_viewportSize.y);
     }
+
+    if (m_viewportTextureId) {
+        // Phase 6 maps UV (0,0) to the top-left, matching ImGui's default exactly.
+        // Do NOT flip the V coordinate here.
+        ImGui::Image((ImTextureID)m_viewportTextureId, currentSize);
+    } else {
+        ImGui::Text("No output available.");
+    }
+
     ImGui::End();
 }
 
