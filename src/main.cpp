@@ -3,6 +3,7 @@
 
 #include "core/Graph.hpp"
 #include "gpu/DispatchManager.hpp"
+#include "gpu/DisplayPass.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
 #include "gpu/VulkanContext.hpp"
@@ -26,6 +27,7 @@ int main() {
         pushConstantRange.size = 128;
 
         VkDescriptorSetLayout setLayout = vulkan.getBindlessHeap().getLayout();
+        VkDescriptorSet bindlessSet = vulkan.getBindlessHeap().getDescriptorSet();
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -45,6 +47,9 @@ int main() {
         loom::gpu::TransientImagePool imagePool(vulkan.getDevice(), vulkan.getVmaAllocator(),
                                                 vulkan.getBindlessHeap());
 
+        loom::gpu::DisplayPass displayPass(vulkan.getDevice(), VK_FORMAT_R32G32B32A32_SFLOAT,
+                                           setLayout);
+
         loom::ui::ImGuiRendererCreateInfo imguiInfo{};
         imguiInfo.window = window.getNativeWindow();
         imguiInfo.instance = vulkan.getVkInstance();
@@ -56,12 +61,27 @@ int main() {
         imguiInfo.colorFormat = vulkan.getSwapchainImageFormat();
         imguiInfo.imageCount = static_cast<uint32_t>(vulkan.getSwapchainImageCount());
         imguiInfo.minImageCount = 2;
+        imguiInfo.vmaAllocator = vulkan.getVmaAllocator();
 
         loom::ui::ImGuiRenderer imgui;
         imgui.init(imguiInfo);
 
         loom::core::Graph graph;
         loom::ui::NodeEditorPanel nodeEditor(&graph);
+
+        // Step 5: Initial Testing Graph
+        {
+            auto constNodeHandle = graph.addNode(loom::core::NodeType::Constant);
+            auto viewerNodeHandle = graph.addNode(loom::core::NodeType::Viewer);
+
+            loom::core::Node* constNode = graph.getNode(constNodeHandle);
+            loom::core::Node* viewerNode = graph.getNode(viewerNodeHandle);
+
+            if (constNode && viewerNode) {
+                // Connect Constant output to Viewer input
+                graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0]);
+            }
+        }
 
         std::cout << "Loom initialized successfully." << std::endl;
 
@@ -82,11 +102,39 @@ int main() {
                 evalCtx.pipelineCache = &pipelineCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
-                // Note: In a real app we'd use the per-frame command buffer from VulkanContext.
-                // For now, let's keep it simple and just do UI rendering.
-                // Phase 6 will likely integrate the compute dispatch into drawFrame.
+                // Find all viewers and evaluate them
+                loom::gpu::ImageHandle viewerOutput;
+                graph.forEachNode([&](loom::core::NodeHandle h, loom::core::Node& node) {
+                    if (node.type == loom::core::NodeType::Viewer) {
+                        node.evaluate(evalCtx);
+                        viewerOutput = static_cast<loom::core::ViewerNode&>(node).lastOutput;
+                    }
+                });
+
+                // Record compute dispatches
+                dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
+                                       pipelineLayout, &imagePool);
+
+                // If we have a viewer output, render it to the viewport
+                if (viewerOutput.isValid()) {
+                    displayPass.record(cmd, imagePool.getImage(viewerOutput),
+                                       imgui.getViewportImage(), imgui.getViewportImageView(),
+                                       bindlessSet, viewerOutput.bindlessSlot,
+                                       (uint32_t)imgui.getViewportSize().x,
+                                       (uint32_t)imgui.getViewportSize().y, 0);
+                }
 
                 vulkan.endFrame(cmd, imgui);
+
+                // Step 6: Frame Garbage Collection
+                // All images acquired this frame must be released back to the pool
+                // so they can be reused in the next frame.
+                for (auto& [key, handle] : evalCtx.outputCache) {
+                    imagePool.release(handle);
+                }
+                for (auto handle : evalCtx.pendingImageReleases) {
+                    imagePool.release(handle);
+                }
             }
 
             imagePool.flushPendingReleases();

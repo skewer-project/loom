@@ -32,13 +32,14 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
 
     uint64_t key = pinKey(srcPinHandle);
 
-    // Cache Hit
+    // Cache Hit (Only if node is NOT dirty AND it's in the current frame's cache)
     if (!srcNode->isDirty) {
         auto it = ctx.outputCache.find(key);
         if (it != ctx.outputCache.end()) return it->second;
     }
 
-    // Cache Eviction
+    // If it's a new frame (empty cache) or node is dirty, we must evaluate.
+    // If it WAS in cache but node is dirty, we must evict and re-evaluate.
     for (PinHandle outPinHandle : srcNode->outputs) {
         uint64_t outKey = pinKey(outPinHandle);
         auto it = ctx.outputCache.find(outKey);
@@ -109,13 +110,23 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     gpu::ImageHandle in1 = pullInput(ctx, 0);
     gpu::ImageHandle in2 = pullInput(ctx, 1);
 
+    // Pass-through Logic for partial connections:
+    // If only one input is connected, we treat the merge as a passthrough.
+    if (in1.isValid() && !in2.isValid()) {
+        ctx.outputCache[pinKey(outputs[0])] = in1;
+        return;
+    }
+    if (!in1.isValid() && in2.isValid()) {
+        ctx.outputCache[pinKey(outputs[0])] = in2;
+        return;
+    }
+
     gpu::ImageSpec spec{};
     spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
     spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
 
-    // For now, MergeNode also just fills with purple using Fill.comp
     gpu::ComputeTask task{};
     task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
 
@@ -125,10 +136,25 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
         uint32_t width;
         uint32_t height;
     } pc;
-    pc.color[0] = 1.0f;
-    pc.color[1] = 0.0f;
-    pc.color[2] = 1.0f;
-    pc.color[3] = 1.0f;
+
+    if (in1.isValid() && in2.isValid()) {
+        // Both inputs present: Purple (Temporary placeholder for actual merge)
+        pc.color[0] = 1.0f;
+        pc.color[1] = 0.0f;
+        pc.color[2] = 1.0f;
+        pc.color[3] = 1.0f;
+        // In a real merge, we'd add both as read dependencies.
+        // For the Fill placeholder, we don't strictly need them, but it's good practice.
+        task.readDependencies.push_back(in1);
+        task.readDependencies.push_back(in2);
+    } else {
+        // Both missing: Dark Gray placeholder
+        pc.color[0] = 0.1f;
+        pc.color[1] = 0.1f;
+        pc.color[2] = 0.1f;
+        pc.color[3] = 1.0f;
+    }
+
     pc.outputSlot = handle.bindlessSlot;
     pc.width = ctx.requestedExtent.width;
     pc.height = ctx.requestedExtent.height;
@@ -150,8 +176,9 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
 void ViewerNode::evaluate(EvaluationContext& ctx) { lastOutput = pullInput(ctx, 0); }
 
 void PassthroughNode::evaluate(EvaluationContext& ctx) {
+    if (outputs.empty()) return;
+
     gpu::ImageHandle in = pullInput(ctx, 0);
-    if (outputs.empty() || !in.isValid()) return;
 
     gpu::ImageSpec spec{};
     spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -160,25 +187,45 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
     gpu::ImageHandle out = ctx.imagePool->acquire(spec);
 
     gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
 
-    struct {
-        uint32_t inputSlot;
-        uint32_t outputSlot;
-        uint32_t width;
-        uint32_t height;
-    } pc;
-    pc.inputSlot = in.bindlessSlot;
-    pc.outputSlot = out.bindlessSlot;
-    pc.width = ctx.requestedExtent.width;
-    pc.height = ctx.requestedExtent.height;
+    if (in.isValid()) {
+        task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
+        struct {
+            uint32_t inputSlot;
+            uint32_t outputSlot;
+            uint32_t width;
+            uint32_t height;
+        } pc;
+        pc.inputSlot = in.bindlessSlot;
+        pc.outputSlot = out.bindlessSlot;
+        pc.width = ctx.requestedExtent.width;
+        pc.height = ctx.requestedExtent.height;
+        memcpy(task.pushConstants.data(), &pc, sizeof(pc));
+        task.pushConstantSize = sizeof(pc);
+        task.readDependencies.push_back(in);
+    } else {
+        // No input: Dark Gray placeholder
+        task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
+        struct {
+            float color[4];
+            uint32_t outputSlot;
+            uint32_t width;
+            uint32_t height;
+        } pc;
+        pc.color[0] = 0.1f;
+        pc.color[1] = 0.1f;
+        pc.color[2] = 0.1f;
+        pc.color[3] = 1.0f;
+        pc.outputSlot = out.bindlessSlot;
+        pc.width = ctx.requestedExtent.width;
+        pc.height = ctx.requestedExtent.height;
+        memcpy(task.pushConstants.data(), &pc, sizeof(pc));
+        task.pushConstantSize = sizeof(pc);
+    }
 
-    memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-    task.pushConstantSize = sizeof(pc);
     task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
     task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
     task.groupCountZ = 1;
-    task.readDependencies.push_back(in);
     task.writeDependencies.push_back(out);
 
     ctx.tasks.push_back(task);
