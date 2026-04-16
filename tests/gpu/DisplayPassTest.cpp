@@ -67,7 +67,8 @@ class DisplayPassTest : public ::testing::Test {
         VkBuffer stagingBuffer;
         VmaAllocation stagingAlloc;
 
-        VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        VkBufferCreateInfo bufferInfo{};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
         bufferInfo.size = size;
         bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
@@ -79,7 +80,8 @@ class DisplayPassTest : public ::testing::Test {
 
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
 
-        VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
         barrier.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
@@ -89,7 +91,8 @@ class DisplayPassTest : public ::testing::Test {
         barrier.image = image;
         barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
-        VkDependencyInfo depInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         depInfo.imageMemoryBarrierCount = 1;
         depInfo.pImageMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(cmd, &depInfo);
@@ -113,6 +116,26 @@ class DisplayPassTest : public ::testing::Test {
 
         return pixels;
     }
+
+    void transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout,
+                               VkImageLayout newLayout) {
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
+        barrier.image = image;
+        barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        depInfo.imageMemoryBarrierCount = 1;
+        depInfo.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmd, &depInfo);
+    }
 };
 
 std::unique_ptr<platform::Window> DisplayPassTest::window = nullptr;
@@ -124,15 +147,19 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
     uint32_t height = 64;
 
     // 1. Create source HDR image (red)
-    gpu::ImageHandle hdrHandle = imagePool->acquire({width, height}, VK_FORMAT_R32G32B32A32_SFLOAT);
-    VkImage hdrImage = imagePool->getVkImage(hdrHandle);
-    uint32_t hdrSlot = imagePool->getBindlessSlot(hdrHandle);
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT,
+                        {width, height},
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    gpu::ImageHandle hdrHandle = imagePool->acquire(spec);
+    VkImage hdrImage = imagePool->getImage(hdrHandle);
+    uint32_t hdrSlot = hdrHandle.bindlessSlot;
 
     // Fill HDR image with [1.0, 0.0, 0.0, 1.0]
     {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
 
-        VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_NONE;
         barrier.dstStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
@@ -142,7 +169,8 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
         barrier.image = hdrImage;
         barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
-        VkDependencyInfo depInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        VkDependencyInfo depInfo{};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         depInfo.imageMemoryBarrierCount = 1;
         depInfo.pImageMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(cmd, &depInfo);
@@ -159,7 +187,8 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
     VkImageView dstImageView;
     VmaAllocation dstAlloc;
 
-    VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.extent = {width, height, 1};
@@ -174,7 +203,8 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
 
     vmaCreateImage(ctx->getVmaAllocator(), &imageInfo, &allocInfo, &dstImage, &dstAlloc, nullptr);
 
-    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = dstImage;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -194,12 +224,6 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
     std::vector<uint8_t> pixels = readBackImage(dstImage, width, height);
 
     // Linear 1.0 -> Gamma 2.2 -> (1.0 ^ (1/2.2)) -> 1.0 -> 255
-    // Wait, the shader applies pow(color, vec3(1.0/2.2)).
-    // 1.0 ^ (1/2.2) is 1.0.
-    // Let's test with a value that changes.
-    // If I use 0.5 HDR: 0.5 ^ (1/2.2) approx 0.729. 0.729 * 255 approx 186.
-
-    // For 1.0, it should be 255.
     EXPECT_GE(pixels[0], 250);  // R
     EXPECT_LE(pixels[1], 5);    // G
     EXPECT_LE(pixels[2], 5);    // B
@@ -216,9 +240,12 @@ TEST_F(DisplayPassTest, ToneMapModes) {
     uint32_t height = 4;
 
     // Overexposed HDR [4.0, 2.0, 1.0, 1.0]
-    gpu::ImageHandle hdrHandle = imagePool->acquire({width, height}, VK_FORMAT_R32G32B32_SFLOAT);
-    VkImage hdrImage = imagePool->getVkImage(hdrHandle);
-    uint32_t hdrSlot = imagePool->getBindlessSlot(hdrHandle);
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT,
+                        {width, height},
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    gpu::ImageHandle hdrHandle = imagePool->acquire(spec);
+    VkImage hdrImage = imagePool->getImage(hdrHandle);
+    uint32_t hdrSlot = hdrHandle.bindlessSlot;
 
     {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
@@ -233,7 +260,8 @@ TEST_F(DisplayPassTest, ToneMapModes) {
     VkImageView dstImageView;
     VmaAllocation dstAlloc;
 
-    VkImageCreateInfo imageInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
     imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
     imageInfo.extent = {width, height, 1};
@@ -248,7 +276,8 @@ TEST_F(DisplayPassTest, ToneMapModes) {
 
     vmaCreateImage(ctx->getVmaAllocator(), &imageInfo, &allocInfo, &dstImage, &dstAlloc, nullptr);
 
-    VkImageViewCreateInfo viewInfo{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = dstImage;
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
     viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
@@ -286,22 +315,4 @@ TEST_F(DisplayPassTest, ToneMapModes) {
     vkDestroyImageView(ctx->getDevice(), dstImageView, nullptr);
     vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);
     imagePool->release(hdrHandle);
-}
-
-void transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout,
-                           VkImageLayout newLayout) {
-    VkImageMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    barrier.oldLayout = oldLayout;
-    barrier.newLayout = newLayout;
-    barrier.image = image;
-    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-
-    VkDependencyInfo depInfo{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    depInfo.imageMemoryBarrierCount = 1;
-    depInfo.pImageMemoryBarriers = &barrier;
-    vkCmdPipelineBarrier2(cmd, &depInfo);
 }
