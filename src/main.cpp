@@ -27,6 +27,7 @@ int main() {
         pushConstantRange.size = 128;
 
         VkDescriptorSetLayout setLayout = vulkan.getBindlessHeap().getLayout();
+        VkDescriptorSet bindlessSet = vulkan.getBindlessHeap().getDescriptorSet();
 
         VkPipelineLayoutCreateInfo layoutInfo{};
         layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -73,11 +74,13 @@ int main() {
             auto constNodeHandle = graph.addNode(loom::core::NodeType::Constant);
             auto viewerNodeHandle = graph.addNode(loom::core::NodeType::Viewer);
 
-            auto& constNode = graph.getNode(constNodeHandle);
-            auto& viewerNode = graph.getNode(viewerNodeHandle);
+            loom::core::Node* constNode = graph.getNode(constNodeHandle);
+            loom::core::Node* viewerNode = graph.getNode(viewerNodeHandle);
 
-            // Connect Constant output to Viewer input
-            graph.tryAddLink(constNode.outputs[0], viewerNode.inputs[0]);
+            if (constNode && viewerNode) {
+                // Connect Constant output to Viewer input
+                graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0]);
+            }
         }
 
         std::cout << "Loom initialized successfully." << std::endl;
@@ -99,17 +102,24 @@ int main() {
                 evalCtx.pipelineCache = &pipelineCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
-                // Evaluate all viewers
-                graph.evaluate(evalCtx);
+                // Find all viewers and evaluate them
+                loom::gpu::ImageHandle viewerOutput;
+                graph.forEachNode([&](loom::core::NodeHandle h, loom::core::Node& node) {
+                    if (node.type == loom::core::NodeType::Viewer) {
+                        node.evaluate(evalCtx);
+                        viewerOutput = static_cast<loom::core::ViewerNode&>(node).lastOutput;
+                    }
+                });
 
                 // Record compute dispatches
-                dispatchManager.record(cmd, evalCtx.tasks);
+                dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
+                                       pipelineLayout, &imagePool);
 
                 // If we have a viewer output, render it to the viewport
-                if (!evalCtx.viewerOutputs.empty()) {
-                    auto& viewer = evalCtx.viewerOutputs[0];
-                    displayPass.record(cmd, viewer.image, imgui.getViewportImage(),
-                                       imgui.getViewportImageView(), setLayout, viewer.bindlessSlot,
+                if (viewerOutput.isValid()) {
+                    displayPass.record(cmd, imagePool.getImage(viewerOutput),
+                                       imgui.getViewportImage(), imgui.getViewportImageView(),
+                                       bindlessSet, viewerOutput.bindlessSlot,
                                        (uint32_t)imgui.getViewportSize().x,
                                        (uint32_t)imgui.getViewportSize().y, 0);
                 }
