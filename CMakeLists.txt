@@ -211,6 +211,7 @@ add_executable(LoomTests
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
     tests/gpu/ResourcePoolTest.cpp
+    tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
     tests/gpu/WindowResizeTest.cpp
