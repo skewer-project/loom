@@ -58,7 +58,9 @@ class VulkanContext {
 
     void waitIdle() const;  // Called from main() before any destructor runs to ensure the GPU has
                             // finished all in-flight work.
-    void drawFrame(loom::ui::ImGuiRenderer& imgui);
+
+    VkCommandBuffer beginFrame();
+    void endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui);
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
