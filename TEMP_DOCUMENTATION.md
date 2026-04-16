@@ -389,7 +389,8 @@ Bridge the Vulkan Display Pass to the ImGui UI layout and ensure the node graph 
 
 #### Missing Input Handling
 *   **Issue:** `PassthroughNode` and `MergeNode` would return early or skip rendering if inputs were missing, leaving the viewport with stale data from the last successful frame.
-*   **Fix:** Updated evaluation logic to always generate a `ComputeTask`. If inputs are missing, nodes now explicitly fill their output with black (Passthrough) or dark gray (Merge) placeholders.
+*   **Fix:** Updated evaluation logic to always generate a \`ComputeTask\`. If inputs are missing, nodes now explicitly fill their output with dark gray placeholders (matching for both Passthrough and Merge).
+
 
 ### 3. UX & Logic Refinement
 

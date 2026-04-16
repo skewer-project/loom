@@ -204,7 +204,7 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
         task.pushConstantSize = sizeof(pc);
         task.readDependencies.push_back(in);
     } else {
-        // No input: Fill with black
+        // No input: Dark Gray placeholder
         task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
         struct {
             float color[4];
@@ -212,9 +212,9 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
             uint32_t width;
             uint32_t height;
         } pc;
-        pc.color[0] = 0.0f;
-        pc.color[1] = 0.0f;
-        pc.color[2] = 0.0f;
+        pc.color[0] = 0.1f;
+        pc.color[1] = 0.1f;
+        pc.color[2] = 0.1f;
         pc.color[3] = 1.0f;
         pc.outputSlot = out.bindlessSlot;
         pc.width = ctx.requestedExtent.width;
