@@ -125,6 +125,16 @@ int main() {
                 }
 
                 vulkan.endFrame(cmd, imgui);
+
+                // Step 6: Frame Garbage Collection
+                // All images acquired this frame must be released back to the pool
+                // so they can be reused in the next frame.
+                for (auto& [key, handle] : evalCtx.outputCache) {
+                    imagePool.release(handle);
+                }
+                for (auto handle : evalCtx.pendingImageReleases) {
+                    imagePool.release(handle);
+                }
             }
 
             imagePool.flushPendingReleases();
