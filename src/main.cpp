@@ -3,6 +3,7 @@
 
 #include "core/Graph.hpp"
 #include "gpu/DispatchManager.hpp"
+#include "gpu/DisplayPass.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
 #include "gpu/VulkanContext.hpp"
@@ -45,6 +46,9 @@ int main() {
         loom::gpu::TransientImagePool imagePool(vulkan.getDevice(), vulkan.getVmaAllocator(),
                                                 vulkan.getBindlessHeap());
 
+        loom::gpu::DisplayPass displayPass(vulkan.getDevice(), VK_FORMAT_R32G32B32A32_SFLOAT,
+                                           setLayout);
+
         loom::ui::ImGuiRendererCreateInfo imguiInfo{};
         imguiInfo.window = window.getNativeWindow();
         imguiInfo.instance = vulkan.getVkInstance();
@@ -63,6 +67,18 @@ int main() {
 
         loom::core::Graph graph;
         loom::ui::NodeEditorPanel nodeEditor(&graph);
+
+        // Step 5: Initial Testing Graph
+        {
+            auto constNodeHandle = graph.addNode(loom::core::NodeType::Constant);
+            auto viewerNodeHandle = graph.addNode(loom::core::NodeType::Viewer);
+
+            auto& constNode = graph.getNode(constNodeHandle);
+            auto& viewerNode = graph.getNode(viewerNodeHandle);
+
+            // Connect Constant output to Viewer input
+            graph.tryAddLink(constNode.outputs[0], viewerNode.inputs[0]);
+        }
 
         std::cout << "Loom initialized successfully." << std::endl;
 
@@ -83,9 +99,20 @@ int main() {
                 evalCtx.pipelineCache = &pipelineCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
-                // Note: In a real app we'd use the per-frame command buffer from VulkanContext.
-                // For now, let's keep it simple and just do UI rendering.
-                // Phase 6 will likely integrate the compute dispatch into drawFrame.
+                // Evaluate all viewers
+                graph.evaluate(evalCtx);
+
+                // Record compute dispatches
+                dispatchManager.record(cmd, evalCtx.tasks);
+
+                // If we have a viewer output, render it to the viewport
+                if (!evalCtx.viewerOutputs.empty()) {
+                    auto& viewer = evalCtx.viewerOutputs[0];
+                    displayPass.record(cmd, viewer.image, imgui.getViewportImage(),
+                                       imgui.getViewportImageView(), setLayout, viewer.bindlessSlot,
+                                       (uint32_t)imgui.getViewportSize().x,
+                                       (uint32_t)imgui.getViewportSize().y, 0);
+                }
 
                 vulkan.endFrame(cmd, imgui);
             }
