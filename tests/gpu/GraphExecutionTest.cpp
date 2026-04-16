@@ -188,4 +188,10 @@ TEST_F(GraphExecutionTest, SwappingWiringBugReproduction) {
     gpu::ImageHandle directOutput = nV1->lastOutput;
     EXPECT_TRUE(directOutput.isValid());
     EXPECT_EQ(evalCtx.tasks.size(), 1);  // Only C2
+
+    // 4. Persistence Test: Run again without marking dirty.
+    // In a fresh frame, it MUST re-evaluate because EvaluationContext is new.
+    runFrame(evalCtx, nV1);
+    EXPECT_EQ(evalCtx.tasks.size(), 1);
+    EXPECT_FALSE(nC2->isDirty);  // Should be false after runFrame
 }
