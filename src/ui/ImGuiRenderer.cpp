@@ -219,10 +219,10 @@ void ImGuiRenderer::drawDockspace() {
 
         // Step 3: Layout Topology (Top/Bottom Split)
         ImGuiID nodeEditorId, viewportId;
-        // The third parameter (0.3f) is the size ratio of the DIRECTION side.
-        // out_id_at_dir (nodeEditorId) = the bottom node, 30% height
-        // out_id_opposite (viewportId) = the top node, 70% height
-        ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.3f, &nodeEditorId, &viewportId);
+        // The third parameter (0.4f) is the size ratio of the DIRECTION side.
+        // out_id_at_dir (nodeEditorId) = the bottom node, 40% height
+        // out_id_opposite (viewportId) = the top node, 60% height
+        ImGui::DockBuilderSplitNode(dockspace_id, ImGuiDir_Down, 0.4f, &nodeEditorId, &viewportId);
 
         // Dock the windows by their exact string names.
         // These names must remain stable across sessions for ini persistence to function correctly.
