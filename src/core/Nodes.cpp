@@ -32,13 +32,14 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
 
     uint64_t key = pinKey(srcPinHandle);
 
-    // Cache Hit
+    // Cache Hit (Only if node is NOT dirty AND it's in the current frame's cache)
     if (!srcNode->isDirty) {
         auto it = ctx.outputCache.find(key);
         if (it != ctx.outputCache.end()) return it->second;
     }
 
-    // Cache Eviction
+    // If it's a new frame (empty cache) or node is dirty, we must evaluate.
+    // If it WAS in cache but node is dirty, we must evict and re-evaluate.
     for (PinHandle outPinHandle : srcNode->outputs) {
         uint64_t outKey = pinKey(outPinHandle);
         auto it = ctx.outputCache.find(outKey);
