@@ -171,14 +171,15 @@ void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage
                          uint32_t bindlessSlot, uint32_t width, uint32_t height,
                          uint32_t toneMapMode) {
     // Barrier 1: Compute Write -> Fragment Read (Memory Dependency)
+    // hdrImage is transitioned to SHADER_READ_ONLY_OPTIMAL by DispatchManager
     VkImageMemoryBarrier2 hdrBarrier{};
     hdrBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     hdrBarrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     hdrBarrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
     hdrBarrier.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     hdrBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-    hdrBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    hdrBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    hdrBarrier.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    hdrBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     hdrBarrier.image = hdrImage;
     hdrBarrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
