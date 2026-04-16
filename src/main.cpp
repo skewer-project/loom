@@ -68,24 +68,26 @@ int main() {
         while (!window.shouldClose()) {
             window.pollEvents();
 
-            // Build UI
-            imgui.beginFrame();
-            imgui.drawDockspace();
-            nodeEditor.draw("Node Editor");
+            if (VkCommandBuffer cmd = vulkan.beginFrame()) {
+                // Build UI
+                imgui.beginFrame();
+                imgui.drawDockspace();
+                nodeEditor.draw("Node Editor");
 
-            // Evaluate Graph
-            loom::core::EvaluationContext evalCtx{};
-            evalCtx.requestedExtent = {static_cast<uint32_t>(imgui.getViewportSize().x),
-                                       static_cast<uint32_t>(imgui.getViewportSize().y)};
-            evalCtx.imagePool = &imagePool;
-            evalCtx.pipelineCache = &pipelineCache;
-            evalCtx.allocator = vulkan.getVmaAllocator();
+                // Evaluate Graph
+                loom::core::EvaluationContext evalCtx{};
+                evalCtx.requestedExtent = {static_cast<uint32_t>(imgui.getViewportSize().x),
+                                           static_cast<uint32_t>(imgui.getViewportSize().y)};
+                evalCtx.imagePool = &imagePool;
+                evalCtx.pipelineCache = &pipelineCache;
+                evalCtx.allocator = vulkan.getVmaAllocator();
 
-            // Note: In a real app we'd use the per-frame command buffer from VulkanContext.
-            // For now, let's keep it simple and just do UI rendering.
-            // Phase 6 will likely integrate the compute dispatch into drawFrame.
+                // Note: In a real app we'd use the per-frame command buffer from VulkanContext.
+                // For now, let's keep it simple and just do UI rendering.
+                // Phase 6 will likely integrate the compute dispatch into drawFrame.
 
-            vulkan.drawFrame(imgui);
+                vulkan.endFrame(cmd, imgui);
+            }
 
             imagePool.flushPendingReleases();
         }
