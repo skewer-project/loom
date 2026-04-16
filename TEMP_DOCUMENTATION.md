@@ -308,7 +308,7 @@ During the implementation of cycle detection and topological sorting, several `E
 - **Internal API Usage:** Included `imgui_internal.h` to access the  symbols, which are required for programmatic layout setup but are not part of the standard ImGui public API.
 - **Immediate-Mode Resizing:** Chose to update the viewport extent on every frame rather than via a callback. This provides instantaneous visual feedback during panel resizing without the complexity of an event-driven system.
 
-### Phase 6 Engineering Post-Mortem: Docking and Layout Initialization
+### Engineering Post-Mortem: Docking and Layout Initialization
 
 #### 1. The "Vanishing Windows" Bug (Initialization Order)
 *   **The Bug:** Initially,  was called *after* the layout initialization logic. 
