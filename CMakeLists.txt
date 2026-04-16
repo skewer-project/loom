@@ -129,7 +129,11 @@ if(SHADER_COMPILER)
         set(SHADER_COMPILER_FLAGS "-V")
     endif()
 
-    file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
+    file(GLOB_RECURSE SHADER_SOURCES 
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag"
+    )
     set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
     file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
 
