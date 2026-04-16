@@ -56,6 +56,7 @@ int main() {
         imguiInfo.colorFormat = vulkan.getSwapchainImageFormat();
         imguiInfo.imageCount = static_cast<uint32_t>(vulkan.getSwapchainImageCount());
         imguiInfo.minImageCount = 2;
+        imguiInfo.vmaAllocator = vulkan.getVmaAllocator();
 
         loom::ui::ImGuiRenderer imgui;
         imgui.init(imguiInfo);
