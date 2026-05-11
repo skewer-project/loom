@@ -70,6 +70,13 @@ class ComputeDispatchTest : public ::testing::Test {
         pipelineCache = std::make_unique<gpu::PipelineCache>(ctx->getDevice(), pipelineLayout);
         dispatchManager = std::make_unique<gpu::DispatchManager>();
         graph = std::make_unique<core::Graph>();
+
+        evalCtx.requestedExtent = {64, 64};
+        evalCtx.imagePool = imagePool.get();
+        evalCtx.pipelineCache = pipelineCache.get();
+        evalCtx.allocator = ctx->getVmaAllocator();
+
+        testRegion.tiles.push_back({0, 0, 64, 64});
     }
 
     void TearDown() override {
@@ -90,6 +97,8 @@ class ComputeDispatchTest : public ::testing::Test {
     std::unique_ptr<gpu::PipelineCache> pipelineCache;
     std::unique_ptr<gpu::DispatchManager> dispatchManager;
     std::unique_ptr<core::Graph> graph;
+    core::EvaluationContext evalCtx;
+    core::Region testRegion;
 };
 
 std::unique_ptr<platform::Window> ComputeDispatchTest::window = nullptr;
@@ -109,14 +118,8 @@ TEST_F(ComputeDispatchTest, TaskGeneration) {
     graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]);
     graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]);
 
-    core::EvaluationContext evalCtx{};
-    evalCtx.requestedExtent = {64, 64};
-    evalCtx.imagePool = imagePool.get();
-    evalCtx.pipelineCache = pipelineCache.get();
-    evalCtx.allocator = ctx->getVmaAllocator();
-
-    // Evaluation starts from the viewer
-    nViewer->evaluate(evalCtx);
+    // Evaluation starts from the viewer via graph execute
+    graph->execute(evalCtx, testRegion);
 
     // ConstantNode generates 1 task, PassthroughNode generates 1 task.
     // Total 2 tasks.
@@ -146,19 +149,10 @@ TEST_F(ComputeDispatchTest, RAWHazardBarrier) {
     graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]);
     graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]);
 
-    core::EvaluationContext evalCtx{};
-    evalCtx.requestedExtent = {64, 64};
-    evalCtx.imagePool = imagePool.get();
-    evalCtx.pipelineCache = pipelineCache.get();
-    evalCtx.allocator = ctx->getVmaAllocator();
-
-    nViewer->evaluate(evalCtx);
+    graph->execute(evalCtx, testRegion);
 
     VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
 
-    // This submission should include a RAW hazard barrier because task2 reads what task1 writes.
-    // If it doesn't, and validation layers are on, it might fire (though C2C hazards are sometimes
-    // subtle).
     dispatchManager->submit(cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(nViewer)->lastOutput,
                             ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout,
                             imagePool.get());
@@ -175,13 +169,7 @@ TEST_F(ComputeDispatchTest, LayoutReentry) {
 
     graph->tryAddLink(nConst->outputs[0], nViewer->inputs[0]);
 
-    core::EvaluationContext evalCtx{};
-    evalCtx.requestedExtent = {64, 64};
-    evalCtx.imagePool = imagePool.get();
-    evalCtx.pipelineCache = pipelineCache.get();
-    evalCtx.allocator = ctx->getVmaAllocator();
-
-    graph->getNode(hViewer)->evaluate(evalCtx);
+    graph->execute(evalCtx, testRegion);
 
     // Frame 1
     {
@@ -200,11 +188,10 @@ TEST_F(ComputeDispatchTest, LayoutReentry) {
     // Frame 2
     evalCtx.tasks.clear();
     graph->markDirty(hConst);
-    graph->getNode(hViewer)->evaluate(evalCtx);
+    graph->execute(evalCtx, testRegion);
 
     {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
-        // DispatchManager should transition viewerImage back to GENERAL in Pass 1.
         dispatchManager->submit(
             cmd, evalCtx.tasks, static_cast<core::ViewerNode*>(graph->getNode(hViewer))->lastOutput,
             ctx->getBindlessHeap().getDescriptorSet(), pipelineLayout, imagePool.get());

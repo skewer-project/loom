@@ -23,53 +23,28 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
     if (!link) return {};
 
     PinHandle srcPinHandle = link->startPin;
-    Pin* srcPin = graph->getPin(srcPinHandle);
-    if (!srcPin) return {};
-
-    NodeHandle srcNodeHandle = srcPin->node;
-    Node* srcNode = graph->getNode(srcNodeHandle);
-    if (!srcNode) return {};
-
     uint64_t key = pinKey(srcPinHandle);
 
-    // Cache Hit (Only if node is NOT dirty AND it's in the current frame's cache)
-    if (!srcNode->isDirty) {
-        auto it = ctx.outputCache.find(key);
-        if (it != ctx.outputCache.end()) return it->second;
-    }
+    auto it = ctx.outputCache.find(key);
+    if (it != ctx.outputCache.end()) return it->second;
 
-    // If it's a new frame (empty cache) or node is dirty, we must evaluate.
-    // If it WAS in cache but node is dirty, we must evict and re-evaluate.
-    for (PinHandle outPinHandle : srcNode->outputs) {
-        uint64_t outKey = pinKey(outPinHandle);
-        auto it = ctx.outputCache.find(outKey);
-        if (it != ctx.outputCache.end()) {
-            ctx.pendingImageReleases.push_back(it->second);
-            ctx.outputCache.erase(it);
-        }
-    }
-
-    // Re-entrancy Guard
-    if (srcNode->isEvaluating) {
-        std::cerr << "Cycle violation detected!" << std::endl;
-        return {};
-    }
-
-    struct EvalGuard {
-        Node* n;
-        EvalGuard(Node* n) : n(n) { n->isEvaluating = true; }
-        ~EvalGuard() { n->isEvaluating = false; }
-    } guard(srcNode);
-
-    srcNode->evaluate(ctx);
-    srcNode->isDirty = false;
-
-    return ctx.outputCache[key];
+    return {};
 }
 
-void ConstantNode::evaluate(EvaluationContext& ctx) {
+// -----------------------------------------------------------------------------
+// ConstantNode
+// -----------------------------------------------------------------------------
+
+void ConstantNode::markRequiredTiles(const Region& requestedRegion,
+                                     std::unordered_set<NodeHandle>& activeNodes) {
+    activeNodes.insert(id);
+    // No inputs to propagate to.
+}
+
+void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
+    // For now, we still allocate a full image, but eventually this will be tile-based.
     gpu::ImageSpec spec{};
     spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
     spec.extent = ctx.requestedExtent;
@@ -104,14 +79,32 @@ void ConstantNode::evaluate(EvaluationContext& ctx) {
     ctx.outputCache[pinKey(outputs[0])] = handle;
 }
 
-void MergeNode::evaluate(EvaluationContext& ctx) {
+// -----------------------------------------------------------------------------
+// MergeNode
+// -----------------------------------------------------------------------------
+
+void MergeNode::markRequiredTiles(const Region& requestedRegion,
+                                  std::unordered_set<NodeHandle>& activeNodes) {
+    if (activeNodes.count(id)) return;
+    activeNodes.insert(id);
+
+    for (auto inPinHandle : inputs) {
+        Pin* inPin = graph->getPin(inPinHandle);
+        if (inPin && inPin->link.isValid()) {
+            Link* link = graph->getLink(inPin->link);
+            Pin* srcPin = graph->getPin(link->startPin);
+            Node* srcNode = graph->getNode(srcPin->node);
+            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+        }
+    }
+}
+
+void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
     gpu::ImageHandle in1 = pullInput(ctx, 0);
     gpu::ImageHandle in2 = pullInput(ctx, 1);
 
-    // Pass-through Logic for partial connections:
-    // If only one input is connected, we treat the merge as a passthrough.
     if (in1.isValid() && !in2.isValid()) {
         ctx.outputCache[pinKey(outputs[0])] = in1;
         return;
@@ -138,17 +131,13 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     } pc;
 
     if (in1.isValid() && in2.isValid()) {
-        // Both inputs present: Purple (Temporary placeholder for actual merge)
         pc.color[0] = 1.0f;
         pc.color[1] = 0.0f;
         pc.color[2] = 1.0f;
         pc.color[3] = 1.0f;
-        // In a real merge, we'd add both as read dependencies.
-        // For the Fill placeholder, we don't strictly need them, but it's good practice.
         task.readDependencies.push_back(in1);
         task.readDependencies.push_back(in2);
     } else {
-        // Both missing: Dark Gray placeholder
         pc.color[0] = 0.1f;
         pc.color[1] = 0.1f;
         pc.color[2] = 0.1f;
@@ -165,17 +154,57 @@ void MergeNode::evaluate(EvaluationContext& ctx) {
     task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
     task.groupCountZ = 1;
 
-    if (in1.isValid()) task.readDependencies.push_back(in1);
-    if (in2.isValid()) task.readDependencies.push_back(in2);
     task.writeDependencies.push_back(handle);
 
     ctx.tasks.push_back(task);
     ctx.outputCache[pinKey(outputs[0])] = handle;
 }
 
-void ViewerNode::evaluate(EvaluationContext& ctx) { lastOutput = pullInput(ctx, 0); }
+// -----------------------------------------------------------------------------
+// ViewerNode
+// -----------------------------------------------------------------------------
 
-void PassthroughNode::evaluate(EvaluationContext& ctx) {
+void ViewerNode::markRequiredTiles(const Region& requestedRegion,
+                                   std::unordered_set<NodeHandle>& activeNodes) {
+    if (activeNodes.count(id)) return;
+    activeNodes.insert(id);
+
+    if (!inputs.empty()) {
+        Pin* inPin = graph->getPin(inputs[0]);
+        if (inPin && inPin->link.isValid()) {
+            Link* link = graph->getLink(inPin->link);
+            Pin* srcPin = graph->getPin(link->startPin);
+            Node* srcNode = graph->getNode(srcPin->node);
+            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+        }
+    }
+}
+
+void ViewerNode::execute(EvaluationContext& ctx, const Region& region) {
+    lastOutput = pullInput(ctx, 0);
+}
+
+// -----------------------------------------------------------------------------
+// PassthroughNode
+// -----------------------------------------------------------------------------
+
+void PassthroughNode::markRequiredTiles(const Region& requestedRegion,
+                                        std::unordered_set<NodeHandle>& activeNodes) {
+    if (activeNodes.count(id)) return;
+    activeNodes.insert(id);
+
+    if (!inputs.empty()) {
+        Pin* inPin = graph->getPin(inputs[0]);
+        if (inPin && inPin->link.isValid()) {
+            Link* link = graph->getLink(inPin->link);
+            Pin* srcPin = graph->getPin(link->startPin);
+            Node* srcNode = graph->getNode(srcPin->node);
+            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+        }
+    }
+}
+
+void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
     gpu::ImageHandle in = pullInput(ctx, 0);
@@ -204,7 +233,6 @@ void PassthroughNode::evaluate(EvaluationContext& ctx) {
         task.pushConstantSize = sizeof(pc);
         task.readDependencies.push_back(in);
     } else {
-        // No input: Dark Gray placeholder
         task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
         struct {
             float color[4];

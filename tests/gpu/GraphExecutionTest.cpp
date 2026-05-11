@@ -100,7 +100,11 @@ class GraphExecutionTest : public ::testing::Test {
         // For this test, we'll use a fresh cache each frame to match main.cpp.
         evalCtx.outputCache.clear();
 
-        viewerNode->evaluate(evalCtx);
+        core::Region region;
+        region.tiles.push_back(
+            {0, 0, evalCtx.requestedExtent.width, evalCtx.requestedExtent.height});
+
+        graph->execute(evalCtx, region);
 
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         dispatchManager->submit(cmd, evalCtx.tasks, viewerNode->lastOutput,

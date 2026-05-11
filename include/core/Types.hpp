@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "core/Handle.hpp"
@@ -27,6 +28,19 @@ inline uint32_t decodeIndex(uint64_t id) {
 enum class PinDirection { Input, Output };
 enum class PinType { Float, DeepBuffer };
 enum class NodeType { Constant, Merge, Viewer, Passthrough };
+
+struct Tile {
+    uint32_t x, y;
+    uint32_t width, height;
+
+    bool operator==(const Tile& other) const {
+        return x == other.x && y == other.y && width == other.width && height == other.height;
+    }
+};
+
+struct Region {
+    std::vector<Tile> tiles;
+};
 
 struct Pin {
     PinHandle id;
@@ -55,21 +69,19 @@ struct Node {
     std::vector<PinHandle> inputs;
     std::vector<PinHandle> outputs;
     bool isDirty = true;
-    bool isEvaluating = false;
     Graph* graph = nullptr;
 
     Node(NodeHandle h, NodeType t, std::string n)
-        : id(h),
-          type(t),
-          name(std::move(n)),
-          inputs(),
-          outputs(),
-          isDirty(true),
-          isEvaluating(false),
-          graph(nullptr) {}
+        : id(h), type(t), name(std::move(n)), inputs(), outputs(), isDirty(true), graph(nullptr) {}
 
     virtual ~Node() = default;
-    virtual void evaluate(EvaluationContext& ctx) = 0;
+
+    // Pass 1: Mark required tiles and collect active nodes
+    virtual void markRequiredTiles(const Region& requestedRegion,
+                                   std::unordered_set<NodeHandle>& activeNodes) = 0;
+
+    // Pass 2: Record Vulkan compute commands for the specified region
+    virtual void execute(EvaluationContext& ctx, const Region& region) = 0;
 
   protected:
     gpu::ImageHandle pullInput(EvaluationContext& ctx, uint32_t inputIndex);

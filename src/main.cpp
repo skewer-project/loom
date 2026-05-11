@@ -102,11 +102,16 @@ int main() {
                 evalCtx.pipelineCache = &pipelineCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
-                // Find all viewers and evaluate them
+                // 2-Pass Execution: Mark -> Sort -> Execute
+                loom::core::Region region;
+                region.tiles.push_back({0, 0, (uint32_t)imgui.getViewportSize().x,
+                                        (uint32_t)imgui.getViewportSize().y});
+                graph.execute(evalCtx, region);
+
+                // Get viewer output for display
                 loom::gpu::ImageHandle viewerOutput;
                 graph.forEachNode([&](loom::core::NodeHandle h, loom::core::Node& node) {
                     if (node.type == loom::core::NodeType::Viewer) {
-                        node.evaluate(evalCtx);
                         viewerOutput = static_cast<loom::core::ViewerNode&>(node).lastOutput;
                     }
                 });

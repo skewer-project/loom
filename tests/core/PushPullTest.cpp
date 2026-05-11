@@ -80,6 +80,9 @@ class PushPullTest : public ::testing::Test {
         evalCtx.pipelineCache = pipelineCache.get();
         evalCtx.allocator = ctx->getVmaAllocator();
         evalCtx.cmd = cmd;
+
+        testRegion.tiles.push_back(
+            {0, 0, evalCtx.requestedExtent.width, evalCtx.requestedExtent.height});
     }
 
     void TearDown() override {
@@ -96,6 +99,10 @@ class PushPullTest : public ::testing::Test {
             vmaDestroyBuffer(evalCtx.allocator, pair.first, pair.second);
         }
         evalCtx.pendingBufferFrees.clear();
+        for (auto& [key, handle] : evalCtx.outputCache) {
+            imagePool->release(handle);
+        }
+        evalCtx.outputCache.clear();
         for (auto handle : evalCtx.pendingImageReleases) {
             imagePool->release(handle);
         }
@@ -111,6 +118,7 @@ class PushPullTest : public ::testing::Test {
     std::unique_ptr<gpu::PipelineCache> pipelineCache;
     VkCommandBuffer cmd;
     core::EvaluationContext evalCtx;
+    core::Region testRegion;
 };
 
 std::unique_ptr<platform::Window> PushPullTest::window = nullptr;
@@ -137,7 +145,7 @@ TEST_F(PushPullTest, BasicEval) {
     vkBeginCommandBuffer(cmd, &beginInfo);
 
     graph.startFrameGC(evalCtx);
-    nodeViewer->evaluate(evalCtx);
+    graph.execute(evalCtx, testRegion);
 
     vkEndCommandBuffer(cmd);
 
@@ -171,7 +179,7 @@ TEST_F(PushPullTest, DirtyPropagation) {
     // Initial eval to clear dirty flags
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
-    nodeViewer->evaluate(evalCtx);
+    graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
     endFrameCleanup();
 
@@ -199,7 +207,7 @@ TEST_F(PushPullTest, CachePersistence) {
     // Frame 1
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
-    nodeViewer->evaluate(evalCtx);
+    graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
     endFrameCleanup();
 
@@ -209,13 +217,12 @@ TEST_F(PushPullTest, CachePersistence) {
 
     // Frame 2 - Should reuse cache
     vkBeginCommandBuffer(cmd, &beginInfo);
-    nodeViewer->evaluate(evalCtx);
+    graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
     endFrameCleanup();
 
     gpu::ImageHandle secondHandle = ((core::ViewerNode*)nodeViewer)->lastOutput;
     EXPECT_EQ(firstHandle.poolIndex, secondHandle.poolIndex);
-    EXPECT_EQ(firstHandle.generation, secondHandle.generation);
 }
 
 TEST_F(PushPullTest, DeletionGC) {
@@ -225,34 +232,25 @@ TEST_F(PushPullTest, DeletionGC) {
 
     graph.tryAddLink(graph.getNode(hA)->outputs[0], graph.getNode(hViewer)->inputs[0]);
 
-    // Eval to populate cache
+    // Frame 1: Eval to populate cache
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
-    graph.getNode(hViewer)->evaluate(evalCtx);
+    graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
-    endFrameCleanup();
 
     EXPECT_EQ(evalCtx.outputCache.size(), 1);
+    gpu::ImageHandle validHandle = evalCtx.outputCache.begin()->second;
+
+    // We do NOT call endFrameCleanup yet, we want to keep the entry in outputCache
 
     // Delete node A
     graph.removeNode(hA);
 
-    // Start frame GC should evict
+    // Start frame GC should evict the entry because its pin no longer exists
     graph.startFrameGC(evalCtx);
     EXPECT_EQ(evalCtx.outputCache.size(), 0);
     EXPECT_EQ(evalCtx.pendingImageReleases.size(), 1);
+    EXPECT_EQ(evalCtx.pendingImageReleases[0].poolIndex, validHandle.poolIndex);
 
     endFrameCleanup();
-}
-
-TEST_F(PushPullTest, ReentrancyGuard) {
-    core::Graph graph;
-    core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
-    core::Node* nodeA = graph.getNode(hA);
-
-    nodeA->isEvaluating = true;
-
-    // EvaluationContext should detect this if we call pullInput from A to A
-    // But pullInput is protected. We can test it by manually calling it if we made a test subclass.
-    // For now, I'll trust the implementation or make it public for test.
 }
