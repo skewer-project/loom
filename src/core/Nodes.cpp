@@ -6,6 +6,7 @@
 
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
+#include "core/RenderCache.hpp"
 #include "gpu/ComputeTask.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
@@ -23,12 +24,9 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
     if (!link) return {};
 
     PinHandle srcPinHandle = link->startPin;
-    uint64_t key = pinKey(srcPinHandle);
-
-    auto it = ctx.outputCache.find(key);
-    if (it != ctx.outputCache.end()) return it->second;
-
-    return {};
+    // Regions are not fully implemented for tiling yet, so we pass an empty region for now.
+    Region r;
+    return ctx.renderCache->retrieve(srcPinHandle, r);
 }
 
 // -----------------------------------------------------------------------------
@@ -76,7 +74,7 @@ void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
     task.writeDependencies.push_back(handle);
 
     ctx.tasks.push_back(task);
-    ctx.outputCache[pinKey(outputs[0])] = handle;
+    ctx.renderCache->store(outputs[0], region, handle);
 }
 
 // -----------------------------------------------------------------------------
@@ -106,11 +104,11 @@ void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ImageHandle in2 = pullInput(ctx, 1);
 
     if (in1.isValid() && !in2.isValid()) {
-        ctx.outputCache[pinKey(outputs[0])] = in1;
+        ctx.renderCache->store(outputs[0], region, in1);
         return;
     }
     if (!in1.isValid() && in2.isValid()) {
-        ctx.outputCache[pinKey(outputs[0])] = in2;
+        ctx.renderCache->store(outputs[0], region, in2);
         return;
     }
 
@@ -157,7 +155,7 @@ void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     task.writeDependencies.push_back(handle);
 
     ctx.tasks.push_back(task);
-    ctx.outputCache[pinKey(outputs[0])] = handle;
+    ctx.renderCache->store(outputs[0], region, handle);
 }
 
 // -----------------------------------------------------------------------------
@@ -257,7 +255,7 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     task.writeDependencies.push_back(out);
 
     ctx.tasks.push_back(task);
-    ctx.outputCache[pinKey(outputs[0])] = out;
+    ctx.renderCache->store(outputs[0], region, out);
 }
 
 }  // namespace loom::core

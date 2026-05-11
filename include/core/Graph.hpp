@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "core/Nodes.hpp"
+#include "core/RenderCache.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
 
@@ -156,22 +157,6 @@ class Graph {
         }
     }
 
-    void startFrameGC(EvaluationContext& ctx) {
-        for (auto it = ctx.outputCache.begin(); it != ctx.outputCache.end();) {
-            uint64_t key = it->first;
-            PinHandle pinHandle;
-            pinHandle.index = (uint32_t)(key & 0xFFFFFFFF);
-            pinHandle.generation = (uint32_t)(key >> 32);
-
-            if (!pins.isValid(pinHandle)) {
-                ctx.pendingImageReleases.push_back(it->second);
-                it = ctx.outputCache.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
     const std::vector<NodeHandle>& getTopologicalOrder() {
         if (isTopoDirty) {
             std::unordered_set<NodeHandle> allNodes;
@@ -201,6 +186,9 @@ class Graph {
         for (NodeHandle h : topoOrder) {
             Node* node = getNode(h);
             if (node) {
+                if (!node->isDirty && ctx.renderCache->hasValidData(node, region)) {
+                    continue;
+                }
                 node->execute(ctx, region);
                 node->isDirty = false;
             }

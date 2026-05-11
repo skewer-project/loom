@@ -7,6 +7,7 @@
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
 #include "core/Nodes.hpp"
+#include "core/RenderCache.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
 #include "gpu/VulkanContext.hpp"
@@ -78,6 +79,7 @@ class PushPullTest : public ::testing::Test {
         evalCtx.requestedExtent = {100, 100};
         evalCtx.imagePool = imagePool.get();
         evalCtx.pipelineCache = pipelineCache.get();
+        evalCtx.renderCache = &renderCache;
         evalCtx.allocator = ctx->getVmaAllocator();
         evalCtx.cmd = cmd;
 
@@ -90,6 +92,7 @@ class PushPullTest : public ::testing::Test {
             vkFreeCommandBuffers(ctx->getDevice(), ctx->getCommandPool(), 1, &cmd);
             pipelineCache.reset();
             imagePool.reset();
+            renderCache.clear();  // Ensure all images are released
         }
     }
 
@@ -99,14 +102,9 @@ class PushPullTest : public ::testing::Test {
             vmaDestroyBuffer(evalCtx.allocator, pair.first, pair.second);
         }
         evalCtx.pendingBufferFrees.clear();
-        for (auto& [key, handle] : evalCtx.outputCache) {
+        for (auto handle : renderCache.takePendingReleases()) {
             imagePool->release(handle);
         }
-        evalCtx.outputCache.clear();
-        for (auto handle : evalCtx.pendingImageReleases) {
-            imagePool->release(handle);
-        }
-        evalCtx.pendingImageReleases.clear();
         imagePool->flushPendingReleases();
     }
 
@@ -117,6 +115,7 @@ class PushPullTest : public ::testing::Test {
     std::unique_ptr<gpu::TransientImagePool> imagePool;
     std::unique_ptr<gpu::PipelineCache> pipelineCache;
     VkCommandBuffer cmd;
+    core::RenderCache renderCache;
     core::EvaluationContext evalCtx;
     core::Region testRegion;
 };
@@ -144,7 +143,6 @@ TEST_F(PushPullTest, BasicEval) {
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    graph.startFrameGC(evalCtx);
     graph.execute(evalCtx, testRegion);
 
     vkEndCommandBuffer(cmd);
@@ -216,6 +214,7 @@ TEST_F(PushPullTest, CachePersistence) {
     EXPECT_FALSE(nodeA->isDirty);
 
     // Frame 2 - Should reuse cache
+    evalCtx.tasks.clear();
     vkBeginCommandBuffer(cmd, &beginInfo);
     graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
@@ -223,6 +222,8 @@ TEST_F(PushPullTest, CachePersistence) {
 
     gpu::ImageHandle secondHandle = ((core::ViewerNode*)nodeViewer)->lastOutput;
     EXPECT_EQ(firstHandle.poolIndex, secondHandle.poolIndex);
+    EXPECT_EQ(firstHandle.generation, secondHandle.generation);
+    EXPECT_EQ(evalCtx.tasks.size(), 0);  // No compute tasks should be generated
 }
 
 TEST_F(PushPullTest, DeletionGC) {
@@ -230,7 +231,8 @@ TEST_F(PushPullTest, DeletionGC) {
     core::NodeHandle hA = graph.addNode(core::NodeType::Constant, "A");
     core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
-    graph.tryAddLink(graph.getNode(hA)->outputs[0], graph.getNode(hViewer)->inputs[0]);
+    core::PinHandle outA = graph.getNode(hA)->outputs[0];
+    graph.tryAddLink(outA, graph.getNode(hViewer)->inputs[0]);
 
     // Frame 1: Eval to populate cache
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -238,19 +240,13 @@ TEST_F(PushPullTest, DeletionGC) {
     graph.execute(evalCtx, testRegion);
     vkEndCommandBuffer(cmd);
 
-    EXPECT_EQ(evalCtx.outputCache.size(), 1);
-    gpu::ImageHandle validHandle = evalCtx.outputCache.begin()->second;
-
-    // We do NOT call endFrameCleanup yet, we want to keep the entry in outputCache
-
     // Delete node A
     graph.removeNode(hA);
 
-    // Start frame GC should evict the entry because its pin no longer exists
-    graph.startFrameGC(evalCtx);
-    EXPECT_EQ(evalCtx.outputCache.size(), 0);
-    EXPECT_EQ(evalCtx.pendingImageReleases.size(), 1);
-    EXPECT_EQ(evalCtx.pendingImageReleases[0].poolIndex, validHandle.poolIndex);
+    // Manually evict using the saved handle
+    renderCache.evict(outA);
+
+    EXPECT_EQ(renderCache.takePendingReleases().size(), 1);
 
     endFrameCleanup();
 }

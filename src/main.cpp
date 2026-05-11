@@ -2,6 +2,7 @@
 #include <iostream>
 
 #include "core/Graph.hpp"
+#include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
 #include "gpu/DisplayPass.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -67,6 +68,7 @@ int main() {
         imgui.init(imguiInfo);
 
         loom::core::Graph graph;
+        loom::core::RenderCache renderCache;
         loom::ui::NodeEditorPanel nodeEditor(&graph);
 
         // Step 5: Initial Testing Graph
@@ -100,6 +102,7 @@ int main() {
                                            static_cast<uint32_t>(imgui.getViewportSize().y)};
                 evalCtx.imagePool = &imagePool;
                 evalCtx.pipelineCache = &pipelineCache;
+                evalCtx.renderCache = &renderCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
                 // 2-Pass Execution: Mark -> Sort -> Execute
@@ -134,10 +137,7 @@ int main() {
                 // Step 6: Frame Garbage Collection
                 // All images acquired this frame must be released back to the pool
                 // so they can be reused in the next frame.
-                for (auto& [key, handle] : evalCtx.outputCache) {
-                    imagePool.release(handle);
-                }
-                for (auto handle : evalCtx.pendingImageReleases) {
+                for (auto handle : renderCache.takePendingReleases()) {
                     imagePool.release(handle);
                 }
             }

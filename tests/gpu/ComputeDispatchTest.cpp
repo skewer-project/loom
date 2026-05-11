@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "core/Graph.hpp"
+#include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
@@ -74,6 +75,7 @@ class ComputeDispatchTest : public ::testing::Test {
         evalCtx.requestedExtent = {64, 64};
         evalCtx.imagePool = imagePool.get();
         evalCtx.pipelineCache = pipelineCache.get();
+        evalCtx.renderCache = &renderCache;
         evalCtx.allocator = ctx->getVmaAllocator();
 
         testRegion.tiles.push_back({0, 0, 64, 64});
@@ -85,6 +87,7 @@ class ComputeDispatchTest : public ::testing::Test {
             dispatchManager.reset();
             pipelineCache.reset();
             imagePool.reset();
+            renderCache.clear();
         }
     }
 
@@ -97,6 +100,7 @@ class ComputeDispatchTest : public ::testing::Test {
     std::unique_ptr<gpu::PipelineCache> pipelineCache;
     std::unique_ptr<gpu::DispatchManager> dispatchManager;
     std::unique_ptr<core::Graph> graph;
+    core::RenderCache renderCache;
     core::EvaluationContext evalCtx;
     core::Region testRegion;
 };
