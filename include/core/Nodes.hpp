@@ -41,4 +41,23 @@ class PassthroughNode : public Node {
     void execute(EvaluationContext& ctx, const Region& region) override;
 };
 
+class DeepReadNode : public Node {
+  public:
+    DeepReadNode(NodeHandle h, std::string n) : Node(h, NodeType::DeepRead, std::move(n)) {}
+    ~DeepReadNode() override;
+
+    void setFilepath(EvaluationContext& ctx, const std::string& path);
+
+    void markRequiredTiles(const Region& requestedRegion,
+                           std::unordered_set<NodeHandle>& activeNodes) override;
+    void execute(EvaluationContext& ctx, const Region& region) override;
+
+  private:
+    std::string filepath;
+    gpu::DeepGpuBuffer deepBuffer;
+    bool needsUpload = false;
+
+    void releaseGpuResources(EvaluationContext& ctx);
+};
+
 }  // namespace loom::core
