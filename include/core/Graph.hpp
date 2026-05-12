@@ -400,6 +400,8 @@ class Graph {
                 return "Viewer";
             case NodeType::Passthrough:
                 return "Passthrough";
+            case NodeType::DeepRead:
+                return "Deep Read";
             default:
                 return "Unknown";
         }
@@ -420,6 +422,9 @@ class Graph {
                 break;
             case NodeType::Passthrough:
                 createPin(node, PinDirection::Input, PinType::Float);
+                createPin(node, PinDirection::Output, PinType::Float);
+                break;
+            case NodeType::DeepRead:
                 createPin(node, PinDirection::Output, PinType::Float);
                 break;
         }
