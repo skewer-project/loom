@@ -148,6 +148,7 @@ int main() {
             }
 
             imagePool.flushPendingReleases();
+            bufferPool.flushPendingReleases();
         }
 
         vulkan.waitIdle();
