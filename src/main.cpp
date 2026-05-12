@@ -104,7 +104,9 @@ int main() {
                 evalCtx.requestedExtent = {static_cast<uint32_t>(imgui.getViewportSize().x),
                                            static_cast<uint32_t>(imgui.getViewportSize().y)};
                 evalCtx.imagePool = &imagePool;
+                evalCtx.bufferPool = &bufferPool;
                 evalCtx.pipelineCache = &pipelineCache;
+                evalCtx.vkContext = &vulkan;
                 evalCtx.renderCache = &renderCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
