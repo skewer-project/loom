@@ -62,6 +62,7 @@ FetchContent_Declare(
     GIT_TAG v3.2.1
 )
 set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_TOOLS OFF CACHE BOOL "" FORCE)
 set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(OPENEXR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
@@ -181,6 +182,7 @@ add_library(LoomCore STATIC
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
+    src/core/DeepExrLoader.cpp
     src/core/RenderCache.cpp
 )
 if(HAS_SHADER_COMPILER)
