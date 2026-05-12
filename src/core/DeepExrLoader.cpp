@@ -54,15 +54,17 @@ DeepSampleBuffer DeepExrLoader::load(const std::string& filepath) {
 
     // 4. DeepFrameBuffer setup
     Imf::DeepFrameBuffer frameBuffer;
-    std::vector<float*> ptrs(width * height);
+    std::vector<std::vector<float*>> allPtrs(5, std::vector<float*>(width * height));
 
-    auto addChannel = [&](const char* name, int offset) {
+    auto addChannel = [&](const char* name, int channelIdx) {
         if (channels.findChannel(name)) {
             for (int i = 0; i < width * height; ++i) {
-                ptrs[i] = result.sampleData.data() + result.offsets[i] * 5 + offset;
+                allPtrs[channelIdx][i] =
+                    result.sampleData.data() + result.offsets[i] * 5 + channelIdx;
             }
-            frameBuffer.insert(name, Imf::DeepSlice(Imf::FLOAT, (char*)ptrs.data(), sizeof(float*),
-                                                    width * sizeof(float*), 5 * sizeof(float)));
+            frameBuffer.insert(
+                name, Imf::DeepSlice(Imf::FLOAT, (char*)allPtrs[channelIdx].data(), sizeof(float*),
+                                     width * sizeof(float*), 5 * sizeof(float)));
         }
     };
 
