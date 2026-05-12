@@ -56,7 +56,17 @@ FetchContent_Declare(
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(glfw googletest)
+FetchContent_Declare(
+    openexr
+    GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openexr.git
+    GIT_TAG v3.2.1
+)
+set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(glfw googletest openexr)
 
 # --- Vendored Libraries ---
 # Base DearImGui
@@ -190,6 +200,7 @@ target_link_libraries(LoomCore PUBLIC
     vma
     glfw
     Vulkan::Vulkan
+    OpenEXR::OpenEXR
 )
 
 # Apple-specific config for MoltenVK
