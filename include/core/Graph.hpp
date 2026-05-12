@@ -37,6 +37,9 @@ class Graph {
             case NodeType::Passthrough:
                 node = std::make_unique<PassthroughNode>(nodeHandle, name);
                 break;
+            case NodeType::DeepRead:
+                node = std::make_unique<DeepReadNode>(nodeHandle, name);
+                break;
             default:
                 throw std::runtime_error("Unknown node type");
         }
