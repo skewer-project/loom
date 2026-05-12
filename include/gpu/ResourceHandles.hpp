@@ -30,4 +30,11 @@ struct BufferHandle {
     bool isValid() const { return poolIndex != 0xFFFFFFFF; }
 };
 
+struct DeepGpuBuffer {
+    BufferHandle sampleBuffer;  // SSBO holding [R,G,B,A,Z]
+    BufferHandle lookupBuffer;  // SSBO holding interleaved [offset, count]
+    uint32_t width;
+    uint32_t height;
+};
+
 }  // namespace loom::gpu
