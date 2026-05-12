@@ -1,0 +1,52 @@
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform image2D bindlessImages[];
+
+// std430 ensures 5 floats = 20 bytes (no std140 32-byte padding)
+struct DeepSample { float r, g, b, a, z; };
+
+layout(std430, set = 0, binding = 1) readonly buffer SampleBuffer {
+    DeepSample samples[];
+} sampleSSBOs[];
+
+layout(std430, set = 0, binding = 1) readonly buffer LookupBuffer {
+    uvec2 entries[]; // [offset, count] per pixel
+} lookupSSBOs[];
+
+layout(push_constant) uniform PushConstants {
+    uint lookupSSBOSlot;
+    uint sampleSSBOSlot;
+    uint outputImageSlot;
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= pc.width || coord.y >= pc.height) return;
+
+    uint pixelIndex = coord.y * pc.width + coord.x;
+
+    // Push constants are uniform, so nonuniformEXT is NOT required here.
+    uvec2 header = lookupSSBOs[pc.lookupSSBOSlot].entries[pixelIndex];
+    uint offset  = header.x;
+    uint count   = header.y;
+
+    vec4 accumColor = vec4(0.0);
+
+    for (uint i = 0; i < count; ++i) {
+        DeepSample s = sampleSSBOs[pc.sampleSSBOSlot].samples[offset + i];
+        vec3 srgb = vec3(s.r, s.g, s.b);
+        
+        float alphaRemaining = 1.0 - accumColor.a;
+        // Straight alpha over-operation
+        accumColor.rgb += srgb * s.a * alphaRemaining; 
+        accumColor.a   += s.a * alphaRemaining;
+        
+        if (accumColor.a >= 0.999) break; // early-out on full occlusion
+    }
+
+    imageStore(bindlessImages[pc.outputImageSlot], coord, accumColor);
+}
