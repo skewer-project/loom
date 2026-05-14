@@ -227,8 +227,8 @@ Sub-task tracking:
 - 4.1 ✅ — `Region` hashable + canonical. Single-file change in `Types.hpp`. Build green.
 - 4.2 ✅ — `RenderCache` re-keyed by `(pin, region)`. `invalidateIfExtentChanged` and `m_lastExtent` removed. `evict` signature widened. `PushPullTest` and `RenderCacheTest` updated. Build green; ctest 59/59 (1 fewer than baseline, equal to baseline 60 minus the deliberately-removed `InvalidateIfExtentChangedClearsCache` test).
 - 4.3 ✅ — `Node::pullInput` now takes `const Region&` and threads it to `RenderCache::retrieve`. Three call sites (`MergeNode::execute` × 2, `ViewerNode::execute`, `PassthroughNode::execute`) pass the requested region through. The temporary `Region r;` in `Node::pullInput` is gone. Build green.
-- 4.4 — pending. CLAUDE.md §5 already describes the contract; verify the prose matches the post-Phase-4 code.
-- 4.5 — pending. New tests: `RegionMissCausesReeval`, `RegionHitSkipsReeval`, `RegionCanonicalisation`, `RegionPropagatesInPullInput`.
+- 4.4 ✅ — CLAUDE.md §5 extended with the canonicalisation-is-internal note and the `pullInput` threading contract.
+- 4.5 ✅ — Four new tests added: `RegionMissCausesReeval`, `RegionHitSkipsReeval`, `RegionCanonicalisation`, `RegionPropagatesInPullInput`. The fourth uses a `PullInputTestNode` subclass that promotes the protected `pullInput` to public and is wired up manually (not via `Graph::addNode`) — clean because the only Graph state pullInput touches is the linked pin lookup, which we set up with a real Constant→Passthrough link.
 - 4.6 — pending. Final build + ctest pass; close out this section.
 
 ### Files modified (so far)
