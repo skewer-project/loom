@@ -5,9 +5,11 @@
 #include <memory>
 #include <queue>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 #include "core/Nodes.hpp"
+#include "core/RenderCache.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
 
@@ -155,28 +157,42 @@ class Graph {
         }
     }
 
-    void startFrameGC(EvaluationContext& ctx) {
-        for (auto it = ctx.outputCache.begin(); it != ctx.outputCache.end();) {
-            uint64_t key = it->first;
-            PinHandle pinHandle;
-            pinHandle.index = (uint32_t)(key & 0xFFFFFFFF);
-            pinHandle.generation = (uint32_t)(key >> 32);
-
-            if (!pins.isValid(pinHandle)) {
-                ctx.pendingImageReleases.push_back(it->second);
-                it = ctx.outputCache.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    }
-
     const std::vector<NodeHandle>& getTopologicalOrder() {
         if (isTopoDirty) {
-            computeTopologicalOrder();
+            std::unordered_set<NodeHandle> allNodes;
+            forEachNode([&](NodeHandle h, Node&) { allNodes.insert(h); });
+            computeTopologicalOrder(allNodes);
             isTopoDirty = false;
         }
         return topoOrder;
+    }
+
+    void execute(EvaluationContext& ctx, const Region& region) {
+        std::unordered_set<NodeHandle> activeNodes;
+
+        // Pass 1: Mark
+        forEachNode([&](NodeHandle h, Node& node) {
+            if (node.type == NodeType::Viewer) {
+                node.markRequiredTiles(region, activeNodes);
+            }
+        });
+
+        if (activeNodes.empty()) return;
+
+        // Pass 2: Sort
+        computeTopologicalOrder(activeNodes);
+
+        // Pass 3: Execute
+        for (NodeHandle h : topoOrder) {
+            Node* node = getNode(h);
+            if (node) {
+                if (!node->isDirty && ctx.renderCache->hasValidData(node, region)) {
+                    continue;
+                }
+                node->execute(ctx, region);
+                node->isDirty = false;
+            }
+        }
     }
 
     NodeHandle getNodeHandleByIndex(uint32_t index) const { return nodes.getHandleByIndex(index); }
@@ -310,31 +326,32 @@ class Graph {
     }
 
     // Step 3: Topological Sorting (Kahn's Algorithm)
-    void computeTopologicalOrder() {
+    void computeTopologicalOrder(const std::unordered_set<NodeHandle>& activeNodes) {
         topoOrder.clear();
-        uint32_t activeNodeCount = nodes.size();
-        if (activeNodeCount == 0) return;
+        if (activeNodes.empty()) return;
 
-        std::vector<int> inDegree(nodes.capacity(), 0);
+        std::unordered_map<uint32_t, int> inDegree;
+        std::queue<NodeHandle> queue;
 
-        // Populate in-degree
-        forEachNode([&](NodeHandle h, const Node& node) {
+        // Initialize in-degree for active nodes
+        for (auto h : activeNodes) {
+            const Node* node = getNode(h);
             int count = 0;
-            for (PinHandle inPinHandle : node.inputs) {
+            for (PinHandle inPinHandle : node->inputs) {
                 const Pin* pin = pins.get(inPinHandle);
                 if (pin && pin->link.isValid()) {
-                    count++;
+                    Link* link = links.get(pin->link);
+                    Pin* srcPin = pins.get(link->startPin);
+                    if (activeNodes.count(srcPin->node)) {
+                        count++;
+                    }
                 }
             }
             inDegree[h.index] = count;
-        });
-
-        std::queue<NodeHandle> queue;
-        forEachNode([&](NodeHandle h, const Node& node) {
-            if (inDegree[h.index] == 0) {
+            if (count == 0) {
                 queue.push(h);
             }
-        });
+        }
 
         while (!queue.empty()) {
             NodeHandle uHandle = queue.front();
@@ -355,17 +372,19 @@ class Graph {
                     const Pin* vPin = pins.get(link->endPin);
                     if (vPin) {
                         NodeHandle vHandle = vPin->node;
-                        inDegree[vHandle.index]--;
-                        if (inDegree[vHandle.index] == 0) {
-                            queue.push(vHandle);
+                        if (activeNodes.count(vHandle)) {
+                            inDegree[vHandle.index]--;
+                            if (inDegree[vHandle.index] == 0) {
+                                queue.push(vHandle);
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Defensive Invariant
-        assert(topoOrder.size() == activeNodeCount);
+        // Defensive Invariant: All active nodes should be in the order
+        assert(topoOrder.size() == activeNodes.size());
     }
 
     std::string getDefaultNodeName(NodeType type) {

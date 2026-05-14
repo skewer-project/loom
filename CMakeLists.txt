@@ -171,6 +171,7 @@ add_library(LoomCore STATIC
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
+    src/core/RenderCache.cpp
 )
 if(HAS_SHADER_COMPILER)
     add_dependencies(LoomCore CompileShaders)

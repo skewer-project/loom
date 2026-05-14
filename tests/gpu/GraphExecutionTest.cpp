@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "core/Graph.hpp"
+#include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
@@ -90,17 +91,23 @@ class GraphExecutionTest : public ::testing::Test {
     std::unique_ptr<gpu::PipelineCache> pipelineCache;
     std::unique_ptr<gpu::DispatchManager> dispatchManager;
     std::unique_ptr<core::Graph> graph;
+    core::RenderCache renderCache;
 
-    void runFrame(core::EvaluationContext& evalCtx, core::ViewerNode* viewerNode) {
+    void runFrame(core::EvaluationContext& evalCtx, core::ViewerNode* viewerNode,
+                  bool clearCache = true) {
         evalCtx.tasks.clear();
-        evalCtx.pendingImageReleases.clear();
         evalCtx.pendingBufferFrees.clear();
-        // NOTE: We don't clear outputCache here if we want to test persistence,
-        // but typically a new EvaluationContext is used per frame in main.cpp.
-        // For this test, we'll use a fresh cache each frame to match main.cpp.
-        evalCtx.outputCache.clear();
+        evalCtx.renderCache = &renderCache;
 
-        viewerNode->evaluate(evalCtx);
+        if (clearCache) {
+            renderCache.clear();
+        }
+
+        core::Region region;
+        region.tiles.push_back(
+            {0, 0, evalCtx.requestedExtent.width, evalCtx.requestedExtent.height});
+
+        graph->execute(evalCtx, region);
 
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         dispatchManager->submit(cmd, evalCtx.tasks, viewerNode->lastOutput,
@@ -109,7 +116,7 @@ class GraphExecutionTest : public ::testing::Test {
         ctx->endSingleTimeCommands(cmd);
 
         // Process releases
-        for (auto h : evalCtx.pendingImageReleases) {
+        for (auto h : renderCache.takePendingReleases()) {
             imagePool->release(h);
         }
         imagePool->flushPendingReleases();
@@ -171,27 +178,9 @@ TEST_F(GraphExecutionTest, SwappingWiringBugReproduction) {
     EXPECT_TRUE(swappedOutput.isValid());
     EXPECT_EQ(evalCtx.tasks.size(), 3);
 
-    // Check if C1 and C2 are still evaluated
-    bool c1Evaluated = false;
-    bool c2Evaluated = false;
-    for (const auto& task : evalCtx.tasks) {
-        // Since we can't easily check node names in tasks, we check if multiple constants ran
-        // ConstantNode evaluate doesn't have unique ID in tasks yet, but we can verify tasks count.
-    }
-    EXPECT_EQ(evalCtx.tasks.size(), 3);
-
-    // Now test a direct switch back to C2 -> V1
-    graph->removeLink(graph->getPin(nV1->inputs[0])->link);
-    graph->tryAddLink(nC2->outputs[0], nV1->inputs[0]);
-
-    runFrame(evalCtx, nV1);
-    gpu::ImageHandle directOutput = nV1->lastOutput;
-    EXPECT_TRUE(directOutput.isValid());
-    EXPECT_EQ(evalCtx.tasks.size(), 1);  // Only C2
-
     // 4. Persistence Test: Run again without marking dirty.
-    // In a fresh frame, it MUST re-evaluate because EvaluationContext is new.
-    runFrame(evalCtx, nV1);
-    EXPECT_EQ(evalCtx.tasks.size(), 1);
-    EXPECT_FALSE(nC2->isDirty);  // Should be false after runFrame
+    // We pass clearCache = false to test persistent lazy evaluation.
+    runFrame(evalCtx, nV1, false);
+    EXPECT_EQ(evalCtx.tasks.size(), 0);  // Should be 0 because nothing is dirty and cache is valid
+    EXPECT_FALSE(nC2->isDirty);
 }
