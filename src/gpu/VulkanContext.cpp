@@ -48,20 +48,31 @@ VulkanContext::~VulkanContext() {
             m_descriptorPool = VK_NULL_HANDLE;
         }
 
-        vkDestroyDevice(m_device, nullptr);
         m_device = VK_NULL_HANDLE;
     }
 
-    // Instance (owns surface + debug messenger) destructs last; unique_ptr
-    // reset is explicit to make the order obvious.
+    // Device destructs before Instance so that vkDestroyDevice runs before
+    // vkDestroySurfaceKHR / vkDestroyInstance. Explicit resets make the order
+    // obvious.
+    m_deviceObj.reset();
     m_instanceObj.reset();
 }
 
 void VulkanContext::init(const loom::platform::Window& window, const char* appName) {
     m_window = window.getNativeWindow();
     m_instanceObj = std::make_unique<Instance>(window, appName);
-    pickPhysicalDevice();
-    createLogicalDevice();
+    m_deviceObj = std::make_unique<Device>(*m_instanceObj);
+
+    // Mirror handles into the legacy raw members until Phase 5.7 retires them.
+    m_physicalDevice = m_deviceObj->getPhysical();
+    m_device = m_deviceObj->get();
+    m_graphicsQueue = m_deviceObj->getGraphicsQueue();
+    m_computeQueue = m_deviceObj->getComputeQueue();
+    m_presentQueue = m_deviceObj->getPresentQueue();
+    m_graphicsQueueFamily = m_deviceObj->getGraphicsQueueFamily();
+    m_computeQueueFamily = m_deviceObj->getComputeQueueFamily();
+    m_presentQueueFamily = m_deviceObj->getPresentQueueFamily();
+
     createSwapchain();
     createImageViews();
     createCommandPool();
@@ -81,118 +92,6 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     }
 
     m_bindlessHeap = std::make_unique<BindlessHeap>(m_device);
-}
-
-void VulkanContext::pickPhysicalDevice() {
-    VkInstance instance = m_instanceObj->get();
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-
-    if (deviceCount == 0) {
-        throw std::runtime_error("failed to find GPUs with Vulkan support!");
-    }
-
-    std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-
-    DeviceScore bestScore;
-    VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
-
-    // Find the device with the highest score
-    for (const auto& device : devices) {
-        DeviceScore currentScore = rateDeviceSuitability(device);
-
-        if (currentScore.score > bestScore.score) {
-            bestScore = currentScore;
-            bestDevice = device;
-        }
-    }
-
-    if (bestScore.score == 0 || bestDevice == VK_NULL_HANDLE) {
-        throw std::runtime_error("failed to find a suitable GPU!");
-    }
-
-    // Save the device and the queue indices to our class members
-    m_physicalDevice = bestDevice;
-    m_graphicsQueueFamily = bestScore.graphicsFamily;
-    m_computeQueueFamily = bestScore.computeFamily;
-    m_presentQueueFamily = bestScore.presentFamily;
-
-    // Debug logging
-    VkPhysicalDeviceProperties props;
-    vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
-    std::cout << "Selected GPU: " << props.deviceName << " (score: " << bestScore.score << ")"
-              << std::endl;
-}
-
-void VulkanContext::createLogicalDevice() {
-    std::set<uint32_t> uniqueQueueFamilies = {m_graphicsQueueFamily, m_computeQueueFamily,
-                                              m_presentQueueFamily};
-    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
-    const float queuePriority = 1.0f;
-
-    for (uint32_t queueFamily : uniqueQueueFamilies) {
-        VkDeviceQueueCreateInfo queueCreateInfo{};
-        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queueCreateInfo.queueFamilyIndex = queueFamily;
-        queueCreateInfo.queueCount = 1;
-        queueCreateInfo.pQueuePriorities = &queuePriority;
-        queueCreateInfos.push_back(queueCreateInfo);
-    }
-
-    VkPhysicalDeviceFeatures deviceFeatures{};
-
-    VkPhysicalDeviceDynamicRenderingFeatures dynamicRenderingFeature{};
-    dynamicRenderingFeature.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES;
-    dynamicRenderingFeature.dynamicRendering = VK_TRUE;
-
-    VkPhysicalDeviceSynchronization2Features sync2Features{};
-    sync2Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
-    sync2Features.synchronization2 = VK_TRUE;
-
-    VkPhysicalDeviceDescriptorIndexingFeatures descriptorIndexingFeatures{};
-    descriptorIndexingFeatures.sType =
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES;
-    descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
-    descriptorIndexingFeatures.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
-    descriptorIndexingFeatures.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
-    descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
-
-    dynamicRenderingFeature.pNext = &sync2Features;
-    sync2Features.pNext = &descriptorIndexingFeatures;
-
-    VkDeviceCreateInfo createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    createInfo.pNext = &dynamicRenderingFeature;
-    // pNext chain: createInfo -> dynamicRenderingFeature
-    //              -> sync2Features -> nullptr
-    // Both dynamic rendering and synchronization2 must be
-    // explicitly enabled. vkCmdPipelineBarrier2 and
-    // VkImageMemoryBarrier2 require synchronization2.
-    // Using them without enabling this feature produces
-    // validation errors and undefined driver behavior.
-    createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
-    createInfo.pQueueCreateInfos = queueCreateInfos.data();
-    createInfo.pEnabledFeatures = &deviceFeatures;
-
-    createInfo.enabledExtensionCount = static_cast<uint32_t>(m_deviceExtensions.size());
-    createInfo.ppEnabledExtensionNames = m_deviceExtensions.data();
-
-    if (m_instanceObj->validationEnabled()) {
-        const auto& layers = m_instanceObj->validationLayers();
-        createInfo.enabledLayerCount = static_cast<uint32_t>(layers.size());
-        createInfo.ppEnabledLayerNames = layers.data();
-    } else {
-        createInfo.enabledLayerCount = 0;
-    }
-
-    if (vkCreateDevice(m_physicalDevice, &createInfo, nullptr, &m_device) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create logical device!");
-    }
-
-    vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
-    vkGetDeviceQueue(m_device, m_computeQueueFamily, 0, &m_computeQueue);
-    vkGetDeviceQueue(m_device, m_presentQueueFamily, 0, &m_presentQueue);
 }
 
 void VulkanContext::createSwapchain() {
@@ -526,82 +425,6 @@ VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capab
 
         return actualExtent;
     }
-}
-
-bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
-    uint32_t extensionCount;
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
-    std::vector<VkExtensionProperties> available(extensionCount);
-    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, available.data());
-
-    // Check every required extension is in the available list
-    std::set<std::string> required(m_deviceExtensions.begin(), m_deviceExtensions.end());
-    for (const auto& ext : available) {
-        required.erase(ext.extensionName);
-    }
-    return required.empty();
-}
-
-DeviceScore VulkanContext::rateDeviceSuitability(VkPhysicalDevice device) {
-    DeviceScore result;
-
-    if (!checkDeviceExtensionSupport(device)) {
-        return result;
-    }  // fail fast check
-
-    VkPhysicalDeviceProperties deviceProperties;
-    vkGetPhysicalDeviceProperties(device, &deviceProperties);
-
-    uint32_t queueFamilyCount = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
-    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
-
-    // Find the required queue families
-    for (uint32_t i = 0; i < queueFamilyCount; i++) {
-        if (result.graphicsFamily == UINT32_MAX &&
-            queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            result.graphicsFamily = i;
-        }
-        if (result.computeFamily == UINT32_MAX &&
-            queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) {
-            result.computeFamily = i;
-        }
-
-        VkBool32 presentSupport = false;
-        vkGetPhysicalDeviceSurfaceSupportKHR(device, i, m_instanceObj->getSurface(),
-                                             &presentSupport);
-        if (result.presentFamily == UINT32_MAX && presentSupport) {
-            result.presentFamily = i;
-        }
-
-        if (result.isComplete()) {
-            break;
-        }
-    }
-
-    // If it doesn't have the required queues, it's completely unsuitable (score = 0)
-    if (!result.isComplete()) {
-        return result;
-    }
-
-    // Check for swapchain support
-    SwapchainSupportDetails swapchainSupport = querySwapchainSupport(device);
-    if (swapchainSupport.formats.empty() || swapchainSupport.presentModes.empty()) {
-        return result;
-    }
-
-    // Calculate the score
-    result.score = 1;  // Base score for meeting minimum requirements
-
-    if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
-        result.score += 1000;
-    }
-
-    // can continue adding to the score here (max texture size, VRAM size)
-    result.score += deviceProperties.limits.maxImageDimension2D;
-
-    return result;
 }
 
 void VulkanContext::waitIdle() const { vkDeviceWaitIdle(m_device); }

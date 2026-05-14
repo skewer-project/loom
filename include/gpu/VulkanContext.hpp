@@ -10,25 +10,13 @@
 
 #include "core/Constants.hpp"
 #include "gpu/BindlessHeap.hpp"
+#include "gpu/Device.hpp"
 #include "gpu/Instance.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
 #include "vk_mem_alloc.h"
 
 namespace loom::gpu {
-
-struct DeviceScore {
-    int score = 0;
-    uint32_t graphicsFamily = UINT32_MAX;
-    uint32_t computeFamily = UINT32_MAX;
-    uint32_t presentFamily = UINT32_MAX;
-
-    // Helper to easily check if we found all necessary queues
-    bool isComplete() const {
-        return graphicsFamily != UINT32_MAX && computeFamily != UINT32_MAX &&
-               presentFamily != UINT32_MAX;
-    }
-};
 
 struct SwapchainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -42,8 +30,6 @@ class VulkanContext {
     ~VulkanContext();
 
     void init(const loom::platform::Window& window, const char* appName);
-    void pickPhysicalDevice();
-    void createLogicalDevice();
     void createSwapchain();
     void createImageViews();
     void createCommandPool();
@@ -86,6 +72,10 @@ class VulkanContext {
     GLFWwindow* m_window = nullptr;  // Non-owning pointer. The Window object in main() owns the
                                      // GLFW window and outlives VulkanContext.
     std::unique_ptr<Instance> m_instanceObj;
+    std::unique_ptr<Device> m_deviceObj;
+
+    // Shadow handles from m_deviceObj for convenience inside this façade.
+    // Removed in Phase 5.7 when the rest of VulkanContext is slimmed down.
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
@@ -133,26 +123,12 @@ class VulkanContext {
     uint32_t m_currentFrame = 0;
     uint32_t m_currentImageIndex = 0;
 
-    const std::vector<const char*> m_deviceExtensions = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
-        VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME  // Required for vkCmdPipelineBarrier2 and
-                                                 // VkImageMemoryBarrier2 used in image layout
-                                                 // transitions.
-#ifdef __APPLE__
-        ,
-        "VK_KHR_portability_subset"
-#endif
-    };
-
-    DeviceScore rateDeviceSuitability(VkPhysicalDevice device);
     SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice device);
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(
         const std::vector<VkSurfaceFormatKHR>& availableFormats);
     VkPresentModeKHR chooseSwapPresentMode(
         const std::vector<VkPresentModeKHR>& availablePresentModes);
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
-
-    bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 };
 
 }  // namespace loom::gpu
