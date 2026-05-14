@@ -129,7 +129,11 @@ if(SHADER_COMPILER)
         set(SHADER_COMPILER_FLAGS "-V")
     endif()
 
-    file(GLOB_RECURSE SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp")
+    file(GLOB_RECURSE SHADER_SOURCES 
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.comp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.frag"
+    )
     set(SHADER_SPV_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
     file(MAKE_DIRECTORY ${SHADER_SPV_DIR})
 
@@ -163,6 +167,7 @@ add_library(LoomCore STATIC
     src/gpu/TransientBufferPool.cpp
     src/gpu/PipelineCache.cpp
     src/gpu/DispatchManager.cpp
+    src/gpu/DisplayPass.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Nodes.cpp
@@ -206,8 +211,10 @@ add_executable(LoomTests
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
     tests/gpu/ResourcePoolTest.cpp
+    tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
+    tests/gpu/GraphExecutionTest.cpp
     tests/gpu/WindowResizeTest.cpp
 )
 

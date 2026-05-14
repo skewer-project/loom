@@ -98,3 +98,10 @@ Once activated, `git commit` will automatically format your code. If any files a
 
 #### CI/CD
 GitHub Actions run style checks on every push and pull request. Use the pre-commit hooks locally to ensure your code matches the project's formatting standards and passes CI.
+
+---
+
+## Built With
+* **C++20 & Vulkan 1.3** — Core engine and GPU infrastructure.
+* **Dear ImGui** — Node editor and viewport UI.
+* **AI Collaboration** — **Google Gemini** and **Anthropic Claude Sonnet** assisted in architectural review, feature planning, programming, bug fixing, and documentation drafting.

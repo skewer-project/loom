@@ -82,9 +82,25 @@ void NodeEditorPanel::handleUserIntent() {
     if (ed::BeginCreate()) {
         ed::PinId startId, endId;
         if (ed::QueryNewLink(&startId, &endId)) {
-            core::PinHandle startPin =
-                m_graph->getPinHandleByIndex(core::decodeIndex(startId.Get()));
-            core::PinHandle endPin = m_graph->getPinHandleByIndex(core::decodeIndex(endId.Get()));
+            core::PinHandle pinA = m_graph->getPinHandleByIndex(core::decodeIndex(startId.Get()));
+            core::PinHandle pinB = m_graph->getPinHandleByIndex(core::decodeIndex(endId.Get()));
+
+            // Determine which is start (output) and which is end (input)
+            // ImGui Node Editor returns IDs in the order they were clicked/dragged.
+            // We must normalize them to (Output, Input) for the Graph engine.
+            core::PinHandle startPin = pinA;
+            core::PinHandle endPin = pinB;
+
+            const core::Pin* pA = m_graph->getPin(pinA);
+            const core::Pin* pB = m_graph->getPin(pinB);
+
+            if (pA && pB) {
+                if (pA->direction == core::PinDirection::Input &&
+                    pB->direction == core::PinDirection::Output) {
+                    startPin = pinB;
+                    endPin = pinA;
+                }
+            }
 
             if (!m_graph->canAddLink(startPin, endPin)) {
                 ed::RejectNewItem();
@@ -93,6 +109,7 @@ void NodeEditorPanel::handleUserIntent() {
             }
         }
     }
+
     ed::EndCreate();
 
     // Deleting Logic
