@@ -17,6 +17,18 @@ if(NOT MSVC)
     set(CMAKE_EXE_LINKER_FLAGS_SANITIZE "-fsanitize=address,undefined" CACHE STRING "Flags used for linking binaries during Sanitize builds." FORCE)
 endif()
 
+# Define a "Coverage" build type. gcov / llvm-cov instrumentation. Run ctest
+# under this build and post-process with `gcovr` / `llvm-cov export`.
+if(NOT MSVC)
+    set(CMAKE_CXX_FLAGS_COVERAGE "-O0 -g --coverage -fprofile-arcs -ftest-coverage" CACHE STRING "Flags used by the C++ compiler during Coverage builds." FORCE)
+    set(CMAKE_C_FLAGS_COVERAGE "-O0 -g --coverage -fprofile-arcs -ftest-coverage" CACHE STRING "Flags used by the C compiler during Coverage builds." FORCE)
+    set(CMAKE_EXE_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Flags used for linking binaries during Coverage builds." FORCE)
+    set(CMAKE_SHARED_LINKER_FLAGS_COVERAGE "--coverage" CACHE STRING "Flags used for linking shared libraries during Coverage builds." FORCE)
+endif()
+
+# Export compile_commands.json for clang-tidy / scan-build / language servers.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -161,16 +173,28 @@ endif()
 # --- Loom Engine Core ---
 add_library(LoomCore STATIC
     src/platform/Window.cpp
+    src/platform/UserDataDir.cpp
     src/gpu/VulkanContext.cpp
+    src/gpu/Instance.cpp
+    src/gpu/Device.cpp
+    src/gpu/Swapchain.cpp
     src/gpu/BindlessHeap.cpp
+    src/gpu/ResourceFactory.cpp
+    src/gpu/FrameLoop.cpp
     src/gpu/TransientImagePool.cpp
     src/gpu/TransientBufferPool.cpp
     src/gpu/PipelineCache.cpp
     src/gpu/DispatchManager.cpp
     src/gpu/DisplayPass.cpp
+    src/gpu/HazardTracker.cpp
+    src/gpu/LayoutTransitions.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
+    src/core/Assert.cpp
+    src/core/ColorManagement.cpp
+    src/core/Log.cpp
     src/core/Nodes.cpp
+    src/core/NodeTaskBuilders.cpp
     src/core/RenderCache.cpp
 )
 if(HAS_SHADER_COMPILER)
@@ -211,12 +235,19 @@ add_executable(LoomTests
     tests/core/TopoTest.cpp
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
+    tests/core/ColorManagementTest.cpp
+    tests/core/RenderCacheTest.cpp
+    tests/core/ResourceRefTest.cpp
+    tests/core/PinSchemaTest.cpp
     tests/gpu/ResourcePoolTest.cpp
+    tests/gpu/HazardTrackerTest.cpp
     tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
     tests/gpu/GraphExecutionTest.cpp
     tests/gpu/WindowResizeTest.cpp
+    tests/gpu/PushConstantTest.cpp
+    tests/gpu/ShaderCompilationTest.cpp
 )
 
 target_link_libraries(LoomTests PRIVATE
@@ -226,3 +257,20 @@ target_link_libraries(LoomTests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(LoomTests)
+
+# --- Doxygen API docs ---
+find_package(Doxygen QUIET)
+if(DOXYGEN_FOUND)
+    set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/Doxyfile.in)
+    set(DOXYGEN_OUT ${CMAKE_BINARY_DIR}/Doxyfile)
+    configure_file(${DOXYGEN_IN} ${DOXYGEN_OUT} @ONLY)
+
+    add_custom_target(docs
+        COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_OUT}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating Doxygen API documentation"
+        VERBATIM
+    )
+else()
+    message(STATUS "Doxygen not found; `docs` target unavailable.")
+endif()

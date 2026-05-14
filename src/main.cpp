@@ -1,7 +1,9 @@
 #include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
 
+#include "core/ColorManagement.hpp"
 #include "core/Graph.hpp"
+#include "core/Log.hpp"
 #include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
 #include "gpu/DisplayPass.hpp"
@@ -14,7 +16,7 @@
 
 int main() {
     try {
-        std::cout << "Initializing Loom..." << std::endl;
+        loom::log::info("Initializing Loom...");
 
         loom::platform::Window window(1280, 720, "Loom");
 
@@ -81,11 +83,13 @@ int main() {
 
             if (constNode && viewerNode) {
                 // Connect Constant output to Viewer input
-                graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0]);
+                if (!graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0])) {
+                    loom::log::warn("startup: failed to wire Constant -> Viewer");
+                }
             }
         }
 
-        std::cout << "Loom initialized successfully." << std::endl;
+        loom::log::info("Loom initialized successfully.");
 
         while (!window.shouldClose()) {
             window.pollEvents();
@@ -111,13 +115,15 @@ int main() {
                                         (uint32_t)imgui.getViewportSize().y});
                 graph.execute(evalCtx, region);
 
-                // Get viewer output for display
+                // Get viewer output for display. v1 takes the first viewer;
+                // multi-viewer UI selection lands in a future feature branch.
                 loom::gpu::ImageHandle viewerOutput;
-                graph.forEachNode([&](loom::core::NodeHandle h, loom::core::Node& node) {
-                    if (node.type == loom::core::NodeType::Viewer) {
-                        viewerOutput = static_cast<loom::core::ViewerNode&>(node).lastOutput;
+                auto viewers = graph.getViewers();
+                if (!viewers.empty()) {
+                    if (auto* node = graph.getNode(viewers[0])) {
+                        viewerOutput = static_cast<loom::core::ViewerNode*>(node)->lastOutput;
                     }
-                });
+                }
 
                 // Record compute dispatches
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
@@ -125,33 +131,52 @@ int main() {
 
                 // If we have a viewer output, render it to the viewport
                 if (viewerOutput.isValid()) {
-                    displayPass.record(cmd, imagePool.getImage(viewerOutput),
-                                       imgui.getViewportImage(), imgui.getViewportImageView(),
-                                       bindlessSet, viewerOutput.bindlessSlot,
-                                       (uint32_t)imgui.getViewportSize().x,
-                                       (uint32_t)imgui.getViewportSize().y, 0);
+                    // Pick the display transform based on the actual swapchain
+                    // format. *_SRGB formats let the hardware apply the OETF;
+                    // *_UNORM formats need the shader to encode.
+                    const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
+                        static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));
+                    displayPass.record(
+                        cmd, imagePool.getImage(viewerOutput), imgui.getViewportImage(),
+                        imgui.getViewportImageView(), bindlessSet, viewerOutput.bindlessSlot,
+                        (uint32_t)imgui.getViewportSize().x, (uint32_t)imgui.getViewportSize().y,
+                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
+                        /*exposure=*/1.0f);
                 }
 
                 vulkan.endFrame(cmd, imgui);
 
-                // Step 6: Frame Garbage Collection
-                // All images acquired this frame must be released back to the pool
-                // so they can be reused in the next frame.
+                // Step 6: Frame Garbage Collection.
+                // First, drop cache entries whose pins were deleted from the
+                // graph this frame (e.g. by removeNode). Without this they
+                // orphan and the pool slot is never recovered.
+                renderCache.garbageCollect(&graph);
+
+                // Then release every handle the cache enqueued (overwrites,
+                // evictions, the GC pass above) back to the pool, tagged with
+                // the frame at which it is safe to reuse. The handle remains
+                // GPU-valid until the timeline semaphore reaches that value.
+                const uint64_t releaseAtFrame =
+                    vulkan.currentFrameValue() + loom::core::MAX_FRAMES_IN_FLIGHT;
                 for (auto handle : renderCache.takePendingReleases()) {
-                    imagePool.release(handle);
+                    imagePool.release(handle, releaseAtFrame);
                 }
             }
 
-            imagePool.flushPendingReleases();
+            // Once per frame, ask the GPU what's actually retired and free
+            // any pool / bindless entries that have aged out.
+            const uint64_t retired = vulkan.getRetiredFrameValue();
+            imagePool.onFrameRetired(retired);
+            vulkan.getBindlessHeap().onFrameRetired(retired);
         }
 
         vulkan.waitIdle();
         vkDestroyPipelineLayout(vulkan.getDevice(), pipelineLayout, nullptr);
 
-        std::cout << "Shutting down Loom..." << std::endl;
+        loom::log::info("Shutting down Loom...");
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        loom::log::error("Fatal error: ", e.what());
         return EXIT_FAILURE;
     }
 

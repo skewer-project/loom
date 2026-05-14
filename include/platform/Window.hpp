@@ -15,12 +15,12 @@ class Window {
     Window(const Window&) = delete;
     Window& operator=(const Window&) = delete;
 
-    bool shouldClose() const;
+    [[nodiscard]] bool shouldClose() const;
     void pollEvents() const;
 
-    GLFWwindow* getNativeWindow() const { return m_window; }
+    [[nodiscard]] GLFWwindow* getNativeWindow() const { return m_window; }
 
-    bool wasResized() const { return m_framebufferResized; }
+    [[nodiscard]] bool wasResized() const { return m_framebufferResized; }
     void resetResizedFlag() { m_framebufferResized = false; }
 
   private:

@@ -26,16 +26,38 @@ class TransientImagePool {
     TransientImagePool(VkDevice device, VmaAllocator allocator, BindlessHeap& bindlessHeap);
     ~TransientImagePool();
 
-    ImageHandle acquire(ImageSpec spec);
-    void release(ImageHandle handle);
+    [[nodiscard]] ImageHandle acquire(ImageSpec spec);
+
+    // Queue `handle` for release. The pool entry becomes available for
+    // re-acquire only after the timeline-semaphore counter reaches
+    // `releaseAtFrame`. Production callers pass
+    // `frameLoop.currentFrameValue() + MAX_FRAMES_IN_FLIGHT`; tests can pass
+    // `0` and pair with `flushPendingReleases()` for synchronous behaviour.
+    void release(ImageHandle handle, uint64_t releaseAtFrame = 0);
+
+    // Marks free every pending release whose `releaseAtFrame <= retiredValue`
+    // and bumps its generation. Called once per frame by the engine after the
+    // FrameLoop queries the timeline counter.
+    void onFrameRetired(uint64_t retiredValue);
+
+    // Synchronous drain: releases every pending entry regardless of tag. ONLY
+    // safe after vkDeviceWaitIdle. Used by shutdown paths and unit tests;
+    // production code should drive `onFrameRetired` instead.
     void flushPendingReleases();
 
-    VkImageLayout getLayout(ImageHandle handle) const;
+    [[nodiscard]] VkImageLayout getLayout(ImageHandle handle) const;
     void setLayout(ImageHandle handle, VkImageLayout layout);
 
-    VkImageView getView(ImageHandle handle) const;
-    VkImage getImage(ImageHandle handle) const;
-    uint32_t DEBUG_getBindlessSlot(ImageHandle handle) const { return handle.bindlessSlot; }
+    [[nodiscard]] VkImageView getView(ImageHandle handle) const;
+    [[nodiscard]] VkImage getImage(ImageHandle handle) const;
+    [[nodiscard]] uint32_t DEBUG_getBindlessSlot(ImageHandle handle) const {
+        return handle.bindlessSlot;
+    }
+
+    // Diagnostic / test accessors. Not part of the production contract.
+    // Returns the number of pool slots not currently in use. Leak tests assert
+    // this returns to a baseline after a series of acquire/release cycles.
+    [[nodiscard]] uint32_t DEBUG_getFreeSlotCount() const;
 
   private:
     struct ImageEntry {
@@ -49,11 +71,18 @@ class TransientImagePool {
         bool isFree = true;
     };
 
+    struct PendingRelease {
+        ImageHandle handle;
+        uint64_t releaseAtFrame;
+    };
+
+    void retireEntry(ImageHandle handle);
+
     VkDevice m_device;
     VmaAllocator m_allocator;
     BindlessHeap& m_bindlessHeap;
     std::vector<ImageEntry> m_images;
-    std::vector<ImageHandle> m_pendingReleases;
+    std::vector<PendingRelease> m_pendingReleases;
 };
 
 }  // namespace loom::gpu

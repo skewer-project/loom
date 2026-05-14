@@ -93,8 +93,8 @@ TEST_F(NodeBehaviorTest, NodeSwappingImpact) {
     core::NodeHandle n2 = graph.addNode(core::NodeType::Passthrough);
     core::NodeHandle n3 = graph.addNode(core::NodeType::Viewer);
 
-    graph.tryAddLink(graph.getNode(n1)->outputs[0], graph.getNode(n2)->inputs[0]);
-    graph.tryAddLink(graph.getNode(n2)->outputs[0], graph.getNode(n3)->inputs[0]);
+    ASSERT_TRUE(graph.tryAddLink(graph.getNode(n1)->outputs[0], graph.getNode(n2)->inputs[0]));
+    ASSERT_TRUE(graph.tryAddLink(graph.getNode(n2)->outputs[0], graph.getNode(n3)->inputs[0]));
 
     // Chain: 1 -> 2 -> 3
     EXPECT_TRUE(graph.getPin(graph.getNode(n3)->inputs[0])->link.isValid());

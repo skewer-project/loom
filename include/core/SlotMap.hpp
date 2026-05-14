@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -22,12 +21,12 @@ class SlotMap {
   public:
     SlotMap() = default;
 
-    HandleType insert(const T& item) { return emplace(item); }
+    [[nodiscard]] HandleType insert(const T& item) { return emplace(item); }
 
-    HandleType insert(T&& item) { return emplace(std::move(item)); }
+    [[nodiscard]] HandleType insert(T&& item) { return emplace(std::move(item)); }
 
     template <typename... Args>
-    HandleType emplace(Args&&... args) {
+    [[nodiscard]] HandleType emplace(Args&&... args) {
         if (freeListHead != std::numeric_limits<uint32_t>::max()) {
             uint32_t index = freeListHead;
             Slot<T>& slot = slots[index];
@@ -51,20 +50,20 @@ class SlotMap {
         return HandleType(index, 1);
     }
 
-    bool isValid(HandleType handle) const {
+    [[nodiscard]] bool isValid(HandleType handle) const {
         if (!handle.isValid() || handle.index >= slots.size()) return false;
         const Slot<T>& slot = slots[handle.index];
         return slot.isActive && slot.generation == handle.generation;
     }
 
-    T* get(HandleType handle) {
+    [[nodiscard]] T* get(HandleType handle) {
         if (isValid(handle)) {
             return &slots[handle.index].data.value();
         }
         return nullptr;
     }
 
-    const T* get(HandleType handle) const {
+    [[nodiscard]] const T* get(HandleType handle) const {
         if (isValid(handle)) {
             return &slots[handle.index].data.value();
         }
@@ -91,7 +90,10 @@ class SlotMap {
         return true;
     }
 
-    void forEach(std::function<void(HandleType, T&)> callback) {
+    // Templated to avoid a per-call std::function heap allocation. Lambdas
+    // and other callables pass through unchanged at the call site.
+    template <typename F>
+    void forEach(F&& callback) {
         for (uint32_t i = 0; i < slots.size(); ++i) {
             if (slots[i].isActive) {
                 callback(HandleType(i, slots[i].generation), slots[i].data.value());
@@ -99,7 +101,8 @@ class SlotMap {
         }
     }
 
-    void forEach(std::function<void(HandleType, const T&)> callback) const {
+    template <typename F>
+    void forEach(F&& callback) const {
         for (uint32_t i = 0; i < slots.size(); ++i) {
             if (slots[i].isActive) {
                 callback(HandleType(i, slots[i].generation), slots[i].data.value());

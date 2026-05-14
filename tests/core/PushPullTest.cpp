@@ -135,9 +135,9 @@ TEST_F(PushPullTest, BasicEval) {
     core::Node* nodeMerge = graph.getNode(hMerge);
     core::Node* nodeViewer = graph.getNode(hViewer);
 
-    graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]);
-    graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[1]);
-    graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]);
+    ASSERT_TRUE(graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]));
+    ASSERT_TRUE(graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[1]));
+    ASSERT_TRUE(graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]));
 
     // Frame 1
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -171,8 +171,8 @@ TEST_F(PushPullTest, DirtyPropagation) {
     core::Node* nodeMerge = graph.getNode(hMerge);
     core::Node* nodeViewer = graph.getNode(hViewer);
 
-    graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]);
-    graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]);
+    ASSERT_TRUE(graph.tryAddLink(nodeA->outputs[0], nodeMerge->inputs[0]));
+    ASSERT_TRUE(graph.tryAddLink(nodeMerge->outputs[0], nodeViewer->inputs[0]));
 
     // Initial eval to clear dirty flags
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -200,7 +200,7 @@ TEST_F(PushPullTest, CachePersistence) {
     core::Node* nodeA = graph.getNode(hA);
     core::Node* nodeViewer = graph.getNode(hViewer);
 
-    graph.tryAddLink(nodeA->outputs[0], nodeViewer->inputs[0]);
+    ASSERT_TRUE(graph.tryAddLink(nodeA->outputs[0], nodeViewer->inputs[0]));
 
     // Frame 1
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -232,7 +232,7 @@ TEST_F(PushPullTest, DeletionGC) {
     core::NodeHandle hViewer = graph.addNode(core::NodeType::Viewer, "Viewer");
 
     core::PinHandle outA = graph.getNode(hA)->outputs[0];
-    graph.tryAddLink(outA, graph.getNode(hViewer)->inputs[0]);
+    ASSERT_TRUE(graph.tryAddLink(outA, graph.getNode(hViewer)->inputs[0]));
 
     // Frame 1: Eval to populate cache
     VkCommandBufferBeginInfo beginInfo = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -243,8 +243,9 @@ TEST_F(PushPullTest, DeletionGC) {
     // Delete node A
     graph.removeNode(hA);
 
-    // Manually evict using the saved handle
-    renderCache.evict(outA);
+    // Manually evict using the saved handle. evict is keyed on (pin, region)
+    // so we pass the same region the executor used to populate the cache.
+    renderCache.evict(outA, testRegion);
 
     EXPECT_EQ(renderCache.takePendingReleases().size(), 1);
 

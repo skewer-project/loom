@@ -21,7 +21,7 @@ struct Handle {
 
     constexpr bool operator!=(const Handle& other) const noexcept { return !(*this == other); }
 
-    constexpr bool isValid() const noexcept {
+    [[nodiscard]] constexpr bool isValid() const noexcept {
         return index != std::numeric_limits<uint32_t>::max() && generation != 0;
     }
 };

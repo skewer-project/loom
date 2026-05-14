@@ -1,0 +1,60 @@
+# Loom clang-tidy configuration.
+#
+# Philosophy: surface a broad set of correctness, performance, and readability
+# checks on every PR. We don't treat every warning as an error today — the
+# refactor branch still has TODO-class diagnostics to work through — but the
+# warnings are visible in CI and a follow-up PR will tighten `WarningsAsErrors`
+# once the baseline is clean.
+#
+# Excluded rule rationales:
+#   readability-magic-numbers
+#     — graphics code is full of legitimate magic numbers (group sizes,
+#       Vulkan constants, format extents) that hurt readability when forced
+#       into named constants.
+#   cppcoreguidelines-pro-bounds-pointer-arithmetic
+#     — VMA and Vulkan callbacks force pointer arithmetic; tagging every
+#       call site is noise.
+#   modernize-use-trailing-return-type
+#     — `auto f() -> R` is allowed in the codebase but the project style is
+#       leading return types.
+#   cppcoreguidelines-avoid-magic-numbers
+#     — same reason as readability-magic-numbers.
+#   readability-identifier-length
+#     — `i`, `n`, `x`, `y` are fine in tight scopes.
+#   misc-non-private-member-variables-in-classes
+#     — struct-like POD payloads (ComputeTask, ImageHandle, Region) keep
+#       public members on purpose.
+#   modernize-use-nodiscard
+#     — added by hand in Phase 7.9 only where ignoring is a bug; auto-
+#       application is too aggressive.
+
+Checks: >
+  bugprone-*,
+  cert-*,
+  cppcoreguidelines-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  misc-*,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
+  -readability-identifier-length,
+  -misc-non-private-member-variables-in-classes
+
+# Tighten this once the baseline is clean. Today, an empty value means
+# clang-tidy reports diagnostics without breaking the build.
+WarningsAsErrors: ''
+
+HeaderFilterRegex: '^.*/(include|src|tests)/.*\.(h|hpp)$'
+
+# Exclude vendored deps and CMake-generated trees.
+ExtraArgsBefore:
+  - -Wno-unknown-warning-option

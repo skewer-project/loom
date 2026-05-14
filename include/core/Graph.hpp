@@ -1,14 +1,16 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
+#include <cstdint>
+#include <deque>
 #include <memory>
-#include <queue>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
 
+#include "core/Assert.hpp"
 #include "core/Nodes.hpp"
+#include "core/Profile.hpp"
 #include "core/RenderCache.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
@@ -17,7 +19,7 @@ namespace loom::core {
 
 class Graph {
   public:
-    NodeHandle addNode(NodeType type, std::string name = "") {
+    [[nodiscard]] NodeHandle addNode(NodeType type, std::string name = "") {
         if (name.empty()) {
             name = getDefaultNodeName(type);
         }
@@ -77,7 +79,7 @@ class Graph {
         isTopoDirty = true;
     }
 
-    bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
+    [[nodiscard]] bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
         if (!canAddLink(startPinHandle, endPinHandle)) return false;
 
         Pin* endPin = pins.get(endPinHandle);
@@ -124,12 +126,12 @@ class Graph {
         Node* startNode = getNode(startNodeHandle);
         if (!startNode || startNode->isDirty) return;
 
-        std::queue<NodeHandle> q;
-        q.push(startNodeHandle);
+        m_dirtyQueue.clear();
+        m_dirtyQueue.push_back(startNodeHandle);
 
-        while (!q.empty()) {
-            NodeHandle currentHandle = q.front();
-            q.pop();
+        while (!m_dirtyQueue.empty()) {
+            NodeHandle currentHandle = m_dirtyQueue.front();
+            m_dirtyQueue.pop_front();
 
             Node* currentNode = getNode(currentHandle);
             if (!currentNode) continue;
@@ -149,7 +151,7 @@ class Graph {
                         NodeHandle nextNodeHandle = nextPin->node;
                         Node* nextNode = getNode(nextNodeHandle);
                         if (nextNode && !nextNode->isDirty) {
-                            q.push(nextNodeHandle);
+                            m_dirtyQueue.push_back(nextNodeHandle);
                         }
                     }
                 }
@@ -168,6 +170,7 @@ class Graph {
     }
 
     void execute(EvaluationContext& ctx, const Region& region) {
+        LOOM_PROFILE_SCOPE("Graph::execute");
         std::unordered_set<NodeHandle> activeNodes;
 
         // Pass 1: Mark
@@ -199,7 +202,7 @@ class Graph {
     PinHandle getPinHandleByIndex(uint32_t index) const { return pins.getHandleByIndex(index); }
     LinkHandle getLinkHandleByIndex(uint32_t index) const { return links.getHandleByIndex(index); }
 
-    bool canAddLink(PinHandle startPinHandle, PinHandle endPinHandle) const {
+    [[nodiscard]] bool canAddLink(PinHandle startPinHandle, PinHandle endPinHandle) const {
         const Pin* startPin = pins.get(startPinHandle);
         const Pin* endPin = pins.get(endPinHandle);
 
@@ -230,19 +233,37 @@ class Graph {
     Link* getLink(LinkHandle h) { return links.get(h); }
     const Link* getLink(LinkHandle h) const { return links.get(h); }
 
-    void forEachNode(std::function<void(NodeHandle, Node&)> cb) {
+    // Templated to keep the callback inlined; called per-frame for several
+    // graph operations and is hot enough to matter.
+    template <typename F>
+    void forEachNode(F&& cb) {
         nodes.forEach([&](NodeHandle h, std::unique_ptr<Node>& ptr) {
             if (ptr) cb(h, *ptr);
         });
     }
 
-    void forEachNode(std::function<void(NodeHandle, const Node&)> cb) const {
+    template <typename F>
+    void forEachNode(F&& cb) const {
         nodes.forEach([&](NodeHandle h, const std::unique_ptr<Node>& ptr) {
             if (ptr) cb(h, *ptr);
         });
     }
 
-    void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
+    template <typename F>
+    void forEachLink(F&& cb) {
+        links.forEach(std::forward<F>(cb));
+    }
+
+    // Convenience: returns every viewer node currently in the graph. The
+    // engine consumes viewers[0] in v1; document any future per-viewer policy
+    // in docs/CONVENTIONS.md when multi-viewer lands.
+    [[nodiscard]] std::vector<NodeHandle> getViewers() const {
+        std::vector<NodeHandle> result;
+        forEachNode([&](NodeHandle h, const Node& node) {
+            if (node.type == NodeType::Viewer) result.push_back(h);
+        });
+        return result;
+    }
 
     std::string getPinLabel(PinHandle h) const {
         const Pin* pin = pins.get(h);
@@ -275,8 +296,12 @@ class Graph {
     std::vector<NodeHandle> topoOrder;
     bool isTopoDirty = true;
 
-    // Allocation pressure fix: reusable scratch buffer
-    mutable std::vector<uint8_t> m_visitedScratch;
+    // Reusable scratch buffers — clear()ed at the top of each method that
+    // uses them. The vector / deque capacity is retained between calls.
+    mutable std::vector<uint8_t> m_visitedScratch;  // isReachable DFS
+    std::deque<NodeHandle> m_dirtyQueue;            // markDirty BFS
+    std::deque<NodeHandle> m_topoQueue;             // computeTopologicalOrder Kahn
+    std::vector<int> m_inDegree;                    // computeTopologicalOrder Kahn
 
     // Step 1: Cycle Detection (DFS)
     bool isReachable(NodeHandle startNode, NodeHandle targetNode) const {
@@ -330,8 +355,9 @@ class Graph {
         topoOrder.clear();
         if (activeNodes.empty()) return;
 
-        std::unordered_map<uint32_t, int> inDegree;
-        std::queue<NodeHandle> queue;
+        const uint32_t cap = nodes.capacity();
+        m_inDegree.assign(cap, -1);
+        m_topoQueue.clear();
 
         // Initialize in-degree for active nodes
         for (auto h : activeNodes) {
@@ -347,15 +373,15 @@ class Graph {
                     }
                 }
             }
-            inDegree[h.index] = count;
+            m_inDegree[h.index] = count;
             if (count == 0) {
-                queue.push(h);
+                m_topoQueue.push_back(h);
             }
         }
 
-        while (!queue.empty()) {
-            NodeHandle uHandle = queue.front();
-            queue.pop();
+        while (!m_topoQueue.empty()) {
+            NodeHandle uHandle = m_topoQueue.front();
+            m_topoQueue.pop_front();
             topoOrder.push_back(uHandle);
 
             const Node* uNode = getNode(uHandle);
@@ -373,9 +399,8 @@ class Graph {
                     if (vPin) {
                         NodeHandle vHandle = vPin->node;
                         if (activeNodes.count(vHandle)) {
-                            inDegree[vHandle.index]--;
-                            if (inDegree[vHandle.index] == 0) {
-                                queue.push(vHandle);
+                            if (--m_inDegree[vHandle.index] == 0) {
+                                m_topoQueue.push_back(vHandle);
                             }
                         }
                     }
@@ -383,8 +408,12 @@ class Graph {
             }
         }
 
-        // Defensive Invariant: All active nodes should be in the order
-        assert(topoOrder.size() == activeNodes.size());
+        // Defensive Invariant: All active nodes should be in the order. A
+        // mismatch indicates a cycle slipped past canAddLink (corruption) or
+        // an active node was concurrently removed. Either is a programming
+        // bug, not user error — LOOM_ASSERT survives NDEBUG.
+        LOOM_ASSERT(topoOrder.size() == activeNodes.size(),
+                    "Topological sort missed active nodes — cycle or concurrent mutation?");
     }
 
     std::string getDefaultNodeName(NodeType type) {
@@ -403,22 +432,11 @@ class Graph {
     }
 
     void setupNodePins(Node* node) {
-        switch (node->type) {
-            case NodeType::Constant:
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
-            case NodeType::Merge:
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
-            case NodeType::Viewer:
-                createPin(node, PinDirection::Input, PinType::Float);
-                break;
-            case NodeType::Passthrough:
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
+        // The schema is per-node-class — `Node::getPinSchema()` is virtual.
+        // Adding a new node type is now a single subclass edit; no central
+        // switch to maintain.
+        for (const auto& spec : node->getPinSchema()) {
+            createPin(node, spec.direction, spec.type);
         }
     }
 

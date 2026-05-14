@@ -17,8 +17,10 @@ TEST_F(TopoTest, LinearSort) {
     core::NodeHandle nodeB = graph.addNode(core::NodeType::Passthrough, "B");
     core::NodeHandle nodeC = graph.addNode(core::NodeType::Viewer, "C");
 
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]));
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]));
 
     const auto& order = graph.getTopologicalOrder();
     ASSERT_EQ(order.size(), 3);
@@ -32,8 +34,10 @@ TEST_F(TopoTest, CycleRejection) {
     core::NodeHandle nodeB = graph.addNode(core::NodeType::Passthrough, "B");
     core::NodeHandle nodeC = graph.addNode(core::NodeType::Passthrough, "C");
 
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]);
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]));
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeC)->inputs[0]));
 
     // Attempt C -> A (Cycle)
     EXPECT_FALSE(
@@ -47,10 +51,14 @@ TEST_F(TopoTest, ComplexRejection) {
     core::NodeHandle nodeC = graph.addNode(core::NodeType::Passthrough, "C");
     core::NodeHandle nodeD = graph.addNode(core::NodeType::Merge, "D");
 
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeC)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeD)->inputs[0]);
-    graph.tryAddLink(graph.getNode(nodeC)->outputs[0], graph.getNode(nodeD)->inputs[1]);
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeB)->inputs[0]));
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeA)->outputs[0], graph.getNode(nodeC)->inputs[0]));
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeB)->outputs[0], graph.getNode(nodeD)->inputs[0]));
+    ASSERT_TRUE(
+        graph.tryAddLink(graph.getNode(nodeC)->outputs[0], graph.getNode(nodeD)->inputs[1]));
 
     // Attempt D -> B (Cycle)
     EXPECT_FALSE(

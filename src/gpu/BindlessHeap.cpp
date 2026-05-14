@@ -3,6 +3,8 @@
 #include <cassert>
 #include <stdexcept>
 
+#include "core/Log.hpp"
+
 namespace loom::gpu {
 
 BindlessHeap::BindlessHeap(VkDevice device) : m_device(device) {
@@ -78,7 +80,17 @@ BindlessHeap::~BindlessHeap() {
 
 uint32_t BindlessHeap::registerImage(VkImageView view) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_freeImageSlots.empty()) return 0xFFFFFFFF;
+    if (m_freeImageSlots.empty()) {
+        // The bindless image heap is exhausted. The contract is to return the
+        // 0xFFFFFFFF sentinel so callers (TransientImagePool, downstream
+        // dispatch code) can recover; a stale sentinel propagating into a
+        // shader is a hard-to-diagnose GPU hang, so log loudly first to make
+        // the root cause visible. Tests that deliberately exhaust the heap
+        // (ResourcePoolTest::FreeListExhaustion) rely on the sentinel return.
+        loom::log::error("BindlessHeap::registerImage: heap exhausted (max ", MAX_RESOURCES,
+                         " image slots)");
+        return 0xFFFFFFFF;
+    }
 
     uint32_t slot = m_freeImageSlots.front();
     m_freeImageSlots.pop();
@@ -102,7 +114,11 @@ uint32_t BindlessHeap::registerImage(VkImageView view) {
 
 uint32_t BindlessHeap::registerBuffer(VkBuffer buffer, VkDeviceSize size) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_freeBufferSlots.empty()) return 0xFFFFFFFF;
+    if (m_freeBufferSlots.empty()) {
+        loom::log::error("BindlessHeap::registerBuffer: heap exhausted (max ", MAX_RESOURCES,
+                         " buffer slots)");
+        return 0xFFFFFFFF;
+    }
 
     uint32_t slot = m_freeBufferSlots.front();
     m_freeBufferSlots.pop();
@@ -125,14 +141,33 @@ uint32_t BindlessHeap::registerBuffer(VkBuffer buffer, VkDeviceSize size) {
     return slot;
 }
 
-void BindlessHeap::unregisterImage(uint32_t slot) {
+void BindlessHeap::unregisterImage(uint32_t slot, uint64_t releaseAtFrame) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_freeImageSlots.push(slot);
+    m_pendingImageSlots.push_back({slot, releaseAtFrame});
 }
 
-void BindlessHeap::unregisterBuffer(uint32_t slot) {
+void BindlessHeap::unregisterBuffer(uint32_t slot, uint64_t releaseAtFrame) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_freeBufferSlots.push(slot);
+    m_pendingBufferSlots.push_back({slot, releaseAtFrame});
+}
+
+void BindlessHeap::onFrameRetired(uint64_t retiredValue) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto drain = [&](std::vector<PendingSlot>& pending, std::queue<uint32_t>& freeQueue) {
+        auto keep = pending.begin();
+        for (auto it = pending.begin(); it != pending.end(); ++it) {
+            if (it->releaseAtFrame <= retiredValue) {
+                freeQueue.push(it->slot);
+            } else {
+                if (keep != it) *keep = *it;
+                ++keep;
+            }
+        }
+        pending.erase(keep, pending.end());
+    };
+    drain(m_pendingImageSlots, m_freeImageSlots);
+    drain(m_pendingBufferSlots, m_freeBufferSlots);
 }
 
 }  // namespace loom::gpu

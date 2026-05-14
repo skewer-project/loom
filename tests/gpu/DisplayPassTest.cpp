@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "core/ColorManagement.hpp"
 #include "gpu/BindlessHeap.hpp"
 #include "gpu/DisplayPass.hpp"
 #include "gpu/TransientImagePool.hpp"
@@ -8,6 +9,15 @@
 
 namespace gpu = loom::gpu;
 namespace platform = loom::platform;
+
+// Tests render into an R8G8B8A8_UNORM destination; the production codepath
+// would apply DisplayTransform::sRGB for such a target (the swapchain hardware
+// does not encode for UNORM). The existing tolerances (EXPECT_NEAR with ±5)
+// accommodate the slight difference between sRGB OETF and the legacy
+// pow(v, 1/2.2) approximation that the test math was originally written for.
+static constexpr uint32_t kDisplayTransformSRGB =
+    static_cast<uint32_t>(loom::color::DisplayTransform::sRGB);
+static constexpr float kExposure = 1.0f;
 
 class DisplayPassTest : public ::testing::Test {
   protected:
@@ -216,14 +226,14 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
-                            0);  // 0 = Linear
+                            /*toneMapMode=*/0, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
     }
 
     // 4. Read back and verify
     std::vector<uint8_t> pixels = readBackImage(dstImage, width, height);
 
-    // Linear 1.0 -> Gamma 2.2 -> (1.0 ^ (1/2.2)) -> 1.0 -> 255
+    // Linear 1.0 -> sRGB OETF (saturates at 1.0) -> 1.0 -> 255
     EXPECT_GE(pixels[0], 250);  // R
     EXPECT_LE(pixels[1], 5);    // G
     EXPECT_LE(pixels[2], 5);    // B
@@ -289,12 +299,13 @@ TEST_F(DisplayPassTest, ToneMapModes) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
-                            1);  // 1 = Reinhard
+                            /*toneMapMode=*/1, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
 
         std::vector<uint8_t> pixels = readBackImage(dstImage, width, height);
         // Reinhard: 4.0 / (4.0 + 1.0) = 0.8.
-        // Gamma: 0.8 ^ (1/2.2) approx 0.903. 0.903 * 255 approx 230.
+        // sRGB OETF of 0.8 ≈ 0.906 (close to the legacy pow(0.8, 1/2.2) ≈ 0.903).
+        // 0.906 * 255 ≈ 231; tolerance ±5 covers both encodings.
         EXPECT_NEAR(pixels[0], 230, 5);
     }
 
@@ -303,7 +314,7 @@ TEST_F(DisplayPassTest, ToneMapModes) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
-                            2);  // 2 = ACES
+                            /*toneMapMode=*/2, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
 
         std::vector<uint8_t> pixels = readBackImage(dstImage, width, height);

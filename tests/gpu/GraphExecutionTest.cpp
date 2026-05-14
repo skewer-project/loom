@@ -135,7 +135,7 @@ TEST_F(GraphExecutionTest, SwappingWiringBugReproduction) {
     core::Node* nC1 = graph->getNode(hC1);
     core::ViewerNode* nV1 = static_cast<core::ViewerNode*>(graph->getNode(hV1));
 
-    graph->tryAddLink(nC1->outputs[0], nV1->inputs[0]);
+    ASSERT_TRUE(graph->tryAddLink(nC1->outputs[0], nV1->inputs[0]));
 
     core::EvaluationContext evalCtx{};
     evalCtx.requestedExtent = {64, 64};
@@ -155,9 +155,9 @@ TEST_F(GraphExecutionTest, SwappingWiringBugReproduction) {
 
     // Initial Merge Setup: C1 -> M1.in1, C2 -> M1.in2, M1 -> V1
     graph->removeLink(graph->getPin(nV1->inputs[0])->link);
-    graph->tryAddLink(nC1->outputs[0], nM1->inputs[0]);
-    graph->tryAddLink(nC2->outputs[0], nM1->inputs[1]);
-    graph->tryAddLink(nM1->outputs[0], nV1->inputs[0]);
+    ASSERT_TRUE(graph->tryAddLink(nC1->outputs[0], nM1->inputs[0]));
+    ASSERT_TRUE(graph->tryAddLink(nC2->outputs[0], nM1->inputs[1]));
+    ASSERT_TRUE(graph->tryAddLink(nM1->outputs[0], nV1->inputs[0]));
 
     runFrame(evalCtx, nV1);
     gpu::ImageHandle mergeOutput = nV1->lastOutput;
@@ -170,8 +170,8 @@ TEST_F(GraphExecutionTest, SwappingWiringBugReproduction) {
     graph->removeLink(graph->getPin(nM1->inputs[1])->link);
 
     // Re-link swapped
-    graph->tryAddLink(nC2->outputs[0], nM1->inputs[0]);
-    graph->tryAddLink(nC1->outputs[0], nM1->inputs[1]);
+    ASSERT_TRUE(graph->tryAddLink(nC2->outputs[0], nM1->inputs[0]));
+    ASSERT_TRUE(graph->tryAddLink(nC1->outputs[0], nM1->inputs[1]));
 
     runFrame(evalCtx, nV1);
     gpu::ImageHandle swappedOutput = nV1->lastOutput;

@@ -1,8 +1,8 @@
 #include "ui/ImGuiRenderer.hpp"
 
-#include <iostream>
 #include <stdexcept>
 
+#include "core/Log.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_vulkan.h"
@@ -69,7 +69,7 @@ void ImGuiRenderer::init(const ImGuiRendererCreateInfo& info) {
 
     m_initialized = true;
 
-    std::cout << "ImGui fonts uploaded to GPU successfully." << std::endl;
+    loom::log::info("ImGui fonts uploaded to GPU successfully.");
 }
 
 void ImGuiRenderer::createSampler() {
