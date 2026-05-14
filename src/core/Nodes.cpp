@@ -50,6 +50,7 @@ void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
 
     gpu::ComputeTask task{};
+    task.label = "ConstantNode.fill";
     task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
 
     struct {
@@ -119,6 +120,7 @@ void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
 
     gpu::ComputeTask task{};
+    task.label = "MergeNode.fill";
     task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
 
     struct {
@@ -216,6 +218,7 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ComputeTask task{};
 
     if (in.isValid()) {
+        task.label = "PassthroughNode.copy";
         task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
         struct {
             uint32_t inputSlot;
@@ -231,6 +234,7 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
         task.pushConstantSize = sizeof(pc);
         task.readDependencies.push_back(in);
     } else {
+        task.label = "PassthroughNode.fill";
         task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
         struct {
             float color[4];

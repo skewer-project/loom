@@ -23,6 +23,13 @@ struct ComputeTask {
     // ImageHandles this task writes to. Used by DispatchManager to track
     // which images have been written during this submit call.
     std::vector<ImageHandle> writeDependencies;
+
+    // Optional human-readable label for RenderDoc / NSight / GPU validation
+    // layer output. Wrapped in vkCmdBeginDebugUtilsLabelEXT /
+    // vkCmdEndDebugUtilsLabelEXT in debug builds when set; ignored in release.
+    // Storage is borrowed (not owned) — pass a string literal or a buffer
+    // whose lifetime exceeds the dispatch.
+    const char* label = nullptr;
 };
 
 }  // namespace loom::gpu
