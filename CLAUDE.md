@@ -68,7 +68,8 @@ A barrier clears the tracker's sets — the barrier subsumes all prior accesses.
 - A node's required region defaults to **equal** to the region requested of it. Pure pointwise / passthrough nodes inherit this without override.
 - Nodes with non-identity spatial mappings (future `Blur`, `Transform`, `Reformat`) must override `markRequiredTiles` to widen or narrow the upstream requirement.
 - Industry vocabulary alignment: Loom's "required region" maps to Nuke's **RoI** (region of interest); the node's natural output extent maps to **RoD** (region of definition). Use these terms in node-author documentation.
-- `Region` is canonicalised (tiles sorted by `(y, x)`) before use as a cache key — two regions with the same tile set in different order hash and compare equal.
+- `Region` is canonicalised (tiles sorted by `(y, x)`) before use as a cache key — two regions with the same tile set in different order hash and compare equal. `RenderCache` canonicalises internally; callers do not have to.
+- `Node::pullInput(ctx, region, inputIndex)` threads the requested region to `RenderCache::retrieve`. A miss at a different region produces a fresh evaluation rather than a stale hit — there is no separate "extent-changed" invalidation pass.
 
 ---
 
