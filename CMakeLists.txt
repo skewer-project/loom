@@ -161,6 +161,7 @@ endif()
 # --- Loom Engine Core ---
 add_library(LoomCore STATIC
     src/platform/Window.cpp
+    src/platform/UserDataDir.cpp
     src/gpu/VulkanContext.cpp
     src/gpu/Instance.cpp
     src/gpu/Device.cpp

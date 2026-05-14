@@ -280,8 +280,8 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - 5.3 ✅ — `Swapchain` carved out (swapchain + images + image views + recreate logic). Public `acquire / present / recreate / get* / getImage / getImageView`. Eliminates the `m_oldSwapchain` member.
 - 5.5 ✅ — `ResourceFactory` carved out (command pool, descriptor pool, VMA allocator, `BindlessHeap`, single-time-commands). VulkanContext getters delegate to it; the per-frame command-buffer allocation pulls the pool from the factory rather than from a member. Net deletion of ~98 lines in `VulkanContext.cpp` for the same behaviour. Destructor order: `m_resourceFactory.reset()` before the device is torn down, matching the existing swapchain-then-device pattern.
 - 5.4 ✅ — `FrameLoop` carved out with timeline-semaphore switch. Replaces the binary-fence + per-image-fence pattern with a single monotonic timeline semaphore: each submit signals `m_frameValue+1`; the start of frame N waits for value `(m_frameValue+1) - MAX_FRAMES_IN_FLIGHT` on the timeline before reusing the slot. Binary semaphores remain only where the Vulkan API requires them (`vkAcquireNextImageKHR`'s signal and `vkQueuePresentKHR`'s wait). `currentFrameValue()` exposes the monotonic counter for Phase 6's bindless / pool retirement gates. Submit chains `VkTimelineSemaphoreSubmitInfo` via `pNext` to provide the signal value; the wait-value count must equal the wait-semaphore count, so a dummy `0` covers the binary image-available wait. The `m_imagesInFlight` per-image fence tracker is gone — the timeline wait subsumes it, and so does the per-image binary present-wait that the swapchain already needed. Header comment in `FrameLoop.hpp` explains why each binary semaphore is still indexed the way it is.
-- 5.6 — pending. Disk-backed `VkPipelineCache` + `platform/UserDataDir` helper.
-- 5.7 — pending. Slim `VulkanContext` to a true façade once 5.6 is in.
+- 5.6 ✅ — Disk-backed `VkPipelineCache`. New `platform::userDataDir()` resolves `~/Library/Caches/loom` on macOS, `$XDG_DATA_HOME/loom` (or `$HOME/.local/share/loom`) on Linux, `%LOCALAPPDATA%/loom` on Windows, and lazy-creates the directory. `PipelineCache` constructs a `VkPipelineCache` seeded from `pipeline_cache.bin` if present and passes the handle to `vkCreateComputePipelines` instead of the previous `VK_NULL_HANDLE`. Destructor calls `vkGetPipelineCacheData` and writes to a `.tmp` sibling + rename so a crash mid-write leaves the prior cache intact. Driver/GPU mismatch on load (returns `VK_ERROR_INCOMPATIBLE_DRIVER` or otherwise fails) falls back to an empty cache with a stderr note — the engine boots, just slower until it re-warms. Path resolution can throw if `$HOME` is unset; we catch and degrade to an in-memory cache rather than failing engine startup.
+- 5.7 — pending. Slim `VulkanContext` to a true façade.
 
 ### Files created
 
@@ -291,6 +291,7 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - `include/gpu/Swapchain.hpp`, `src/gpu/Swapchain.cpp`
 - `include/gpu/ResourceFactory.hpp`, `src/gpu/ResourceFactory.cpp`
 - `include/gpu/FrameLoop.hpp`, `src/gpu/FrameLoop.cpp`
+- `include/platform/UserDataDir.hpp`, `src/platform/UserDataDir.cpp`
 
 ### Files modified
 
