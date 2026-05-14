@@ -254,3 +254,70 @@ Phases 1, 2.
 - The `Region` propagation contract is documented for `markRequiredTiles` overrides; no production node currently exercises a non-identity mapping. The first one (likely `Blur` in a future feature branch) will validate the contract end-to-end.
 - `CacheKey` is intentionally exposed in `RenderCache.hpp`. If the hash specialisation ever needs to grow (e.g. to include node generation), it stays a one-file change.
 - `Region::canonicalize()` is a public mutator. Future code that builds regions in many places could lean on this — or we could harden the contract by making `Region`'s constructor accept tiles and canonicalise on construction. Deferred until needed.
+
+---
+
+## Phase 5 — VulkanContext Decomposition & Vulkan 1.3 Modernisation (Part 1 of 2)
+
+### Goal
+Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance`, `Device`, `Swapchain`, `FrameLoop`, `ResourceFactory`) and modernise to Vulkan 1.3 idioms (timeline semaphores, persistent on-disk `VkPipelineCache`, validation-layer feature requests). The plan splits this phase into eight sub-tasks; this session lands four — the rest are deferred to a fresh session because the timeline-semaphore switch is behavioural and deserves end-to-end testing on a GPU machine that this session doesn't have, and the system-reminder echoes from the carve-out work consumed context faster than expected.
+
+### Decisions
+
+- **Shadow members pattern during decomposition.** `VulkanContext` keeps its raw `VkDevice m_device` / `VkPhysicalDevice m_physicalDevice` / `VkQueue` members as *aliases* of the newly-extracted subsystem objects. After each carve-out, `init()` copies handles from the new owner (`Device`, `Swapchain`) into the legacy raw members so the ~50 internal call sites that touch `m_device` etc. don't need a tree-wide rewrite mid-phase. The shadows are flagged as removed in Phase 5.7 (the façade slim). Cost: an extra 8 lines in `init`; benefit: every intermediate commit compiles and ctest is 63/63.
+- **`Instance`, `Device`, `Swapchain` constructed eagerly via `std::unique_ptr<T>`.** Reasoning: they need to live for the lifetime of `VulkanContext`, but `VulkanContext` is default-constructible and initialised lazily via `init(window, appName)`. Holding by `unique_ptr` defers construction to `init` without changing the public API. Destructor order is explicit: `m_swapchainObj.reset(); m_deviceObj.reset(); m_instanceObj.reset();` — surface lives until after the device is gone.
+- **`Device` requests Vulkan 1.3 features through the umbrella structs.** `VkPhysicalDeviceVulkan12Features` + `VkPhysicalDeviceVulkan13Features` cover `timelineSemaphore`, `descriptorIndexing`, `descriptorBindingPartiallyBound`, `runtimeDescriptorArray`, `synchronization2`, `dynamicRendering` in two structs instead of chaining four separate feature structs. Also gates physical-device selection on feature support — a device missing any required feature is rejected with a contextual error rather than failing later with validation noise.
+- **`Swapchain::acquire` returns `bool` rather than `VkResult`.** The caller only cares whether the surface is out-of-date (recreate + retry) vs successful. Other failures still throw via `LOOM_VK_CHECK` internally. `present` does return `VkResult` because the caller wants to distinguish `SUBOPTIMAL` from `SUCCESS`.
+- **`Swapchain` owns `recreate()`.** The fence-tracker resize that Phase 1.4 added (`m_imagesInFlight.assign(...)`) stays in `VulkanContext::recreateSwapchain` because it's about the fence array, not the swapchain. The `Swapchain::recreate()` body uses the old swapchain handle as `oldSwapchain` for the new `vkCreateSwapchainKHR` call, then destroys the old swapchain — eliminating the previous awkward `m_oldSwapchain` member.
+- **Validation-layer messenger drops `VERBOSE_BIT_EXT`.** Per plan §5.1: WARNING + ERROR only. The previous setup flooded logs in debug builds.
+- **`transitionImageLayout` is now a free function in `gpu/LayoutTransitions.hpp` (Phase 5.8).** Same `sourceMasks` / `destMasks` switch tables; same `LOOM_ASSERT` on unknown layouts. The function call sites switched from `transitionImageLayout(cmd, ...)` (member) to `loom::gpu::transitionImageLayout(cmd, ...)` (free function) — but ADL resolves them inside `loom::gpu` so the apparent call site is unchanged.
+
+### Sub-task tracking
+
+- 5.8 ✅ — `transitionImageLayout` moved to `gpu/LayoutTransitions.{hpp,cpp}`. Same masks / table / asserts. `VulkanContext` includes it where the helper was previously called.
+- 5.1 ✅ — `Instance` carved out (instance + debug messenger + surface). Validation severity drops `VERBOSE_BIT_EXT`.
+- 5.2 ✅ — `Device` carved out (physical + logical device + queues + queue families). Requests VK 1.3 features explicitly; rejects unsuitable devices at construction with a contextual error.
+- 5.3 ✅ — `Swapchain` carved out (swapchain + images + image views + recreate logic). Public `acquire / present / recreate / get* / getImage / getImageView`. Eliminates the `m_oldSwapchain` member.
+- 5.5 — pending. `ResourceFactory` (command pool, descriptor pool, VMA, `BindlessHeap`, single-time-commands).
+- 5.4 — pending. `FrameLoop` carve-out with timeline-semaphore switch. **Behavioural change** — replaces binary-fence + per-image-fence pattern with `vkWaitSemaphores(timeline, N)`.
+- 5.6 — pending. Disk-backed `VkPipelineCache` + `platform/UserDataDir` helper.
+- 5.7 — pending. Slim `VulkanContext` to a true façade once 5.4 + 5.5 + 5.6 are in.
+
+### Files created
+
+- `include/gpu/LayoutTransitions.hpp`, `src/gpu/LayoutTransitions.cpp`
+- `include/gpu/Instance.hpp`, `src/gpu/Instance.cpp`
+- `include/gpu/Device.hpp`, `src/gpu/Device.cpp`
+- `include/gpu/Swapchain.hpp`, `src/gpu/Swapchain.cpp`
+
+### Files modified
+
+- `include/gpu/VulkanContext.hpp` — adds `Instance`, `Device`, `Swapchain` member unique_ptrs; removes the standalone create*/cleanup*/choose* declarations and the validation-layers / device-extensions arrays (those live on the subsystems now). `getVkInstance` / `getSwapchainImageFormat` / `getSwapchainImageCount` getters delegate to the subsystem objects.
+- `src/gpu/VulkanContext.cpp` — `init()` constructs the three subsystems in order, copies handles into the legacy shadow members. `recreateSwapchain` delegates to `Swapchain::recreate()` and resizes `m_imagesInFlight` to match the new image count. `beginFrame` / `endFrame` use `m_swapchainObj` for image, view, format, and present.
+- `CMakeLists.txt` — `LoomCore` gains the four new `.cpp` files.
+
+### Verification
+
+- Build: clean across all four sub-task commits.
+- `ctest --test-dir build` — 63/63 pass headless after each sub-task. Same set of GPU-skip tests as before.
+- Public API unchanged from `main.cpp`'s perspective — `getDevice`, `getPhysicalDevice`, `getGraphicsQueue`, `getGraphicsQueueFamily`, `getDescriptorPool`, `getSwapchainImageFormat`, `getSwapchainImageCount`, `getVmaAllocator`, `getBindlessHeap`, `getVkInstance`, `beginFrame`, `endFrame`, `waitIdle` all behave identically.
+
+### Why this session stops mid-phase
+
+Phase 5 is the plan's largest single phase (3.5 days, high risk, the "load-bearing modernisation"). Sub-task 5.4 (timeline semaphores) is a behavioural change that wants:
+1. A GPU machine to validate the new sync pattern end-to-end (this dev machine is headless — GPU tests `GTEST_SKIP`).
+2. A clean session to focus on it without the carve-out scaffolding consuming attention.
+
+5.5 (ResourceFactory) and 5.6 (persistent pipeline cache) are mechanically similar to the four already-landed carve-outs but were skipped to keep the boundary clean — the next session can do them as one logical unit alongside 5.4. 5.7 (façade slim) is the final cleanup pass that depends on 5.4–5.6 being done.
+
+### Resume instructions for the next session
+
+> Continue Phase 5 from sub-task 5.5. Start by reading `REFACTOR_LOG.md` and the existing carve-out commits (`git log --oneline | head -10`). Then: `ResourceFactory` → `FrameLoop` with timeline semaphores → persistent `VkPipelineCache` → slim `VulkanContext` to a façade. Build green at 63/63.
+
+### Dependencies
+Phase 1 (`LOOM_ASSERT`, `LOOM_VK_CHECK`, `transitionImageLayout` derived-mask rewrite). Phase 4 only incidentally (no overlap in files).
+
+### Known follow-ups
+- 5.7 will retire the shadow members (`m_device`, `m_physicalDevice`, queue handles, `m_imagesInFlight`, `m_commandBuffers`, `m_imageAvailable/renderFinishedSemaphores`, `m_inFlightFences`, etc.) once `FrameLoop` and `ResourceFactory` own them.
+- `Device::checkDeviceExtensionSupport` is currently unused at the public level — the suitability check inlines its logic. Keep it as a debug/test hook; remove later if it stays unused.
+- `Swapchain` always picks `B8G8R8A8_SRGB` if available, else the first format. Once a settings system lands, this becomes user-configurable.
