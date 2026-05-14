@@ -125,4 +125,12 @@ VkImage TransientImagePool::getImage(ImageHandle handle) const {
     return m_images[handle.poolIndex].image;
 }
 
+uint32_t TransientImagePool::DEBUG_getFreeSlotCount() const {
+    uint32_t count = 0;
+    for (const auto& entry : m_images) {
+        if (entry.isFree) ++count;
+    }
+    return count;
+}
+
 }  // namespace loom::gpu

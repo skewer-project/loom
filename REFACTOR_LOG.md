@@ -119,3 +119,87 @@ Phase 0.
 - `transitionImageLayout` will move from `VulkanContext` member to a free function in `gpu/LayoutTransitions.hpp` during Phase 5.
 - The shader's `displayTransform` push constant could be widened to carry an exposure curve once HDR display targets are added. The struct already has two pad floats reserved.
 - The `BindlessHeap` sentinel-return contract is documented but the test for it (`FreeListExhaustion`) currently can only run with a Vulkan device. Phase 9's Lavapipe CI step will lift it.
+
+---
+
+## Phase 2 — RenderCache Correctness
+
+### Goal
+Fix the store-overwrite leak, wire `garbageCollect` into the frame loop, invalidate the cache on extent change. Phase 4 will replace the extent-change invalidator with proper `(pin, region)` keying.
+
+### Decisions
+
+- **`store` enqueues the previous handle only on actual change.** Storing the same handle twice is idempotent — no release queue churn. Comparison is on `(poolIndex, generation)`; the `bindlessSlot` is incidental. Tests verify both the overwrite-evicts-handle path and the idempotent path.
+- **Extent invalidation lives on the cache, not on the caller.** The new `RenderCache::invalidateIfExtentChanged(VkExtent2D)` is the single point of truth. The caller (`main.cpp`) invokes it once per frame before `graph.execute`. Marking it interim — the docstring and the comment in `main.cpp` both flag that Phase 4 removes it.
+- **`garbageCollect` runs every frame, in `main.cpp`, after `endFrame`, before draining pending releases.** Post-Phase-5 this hook moves to `FrameLoop::onFrameRetired` (gated by GPU retirement), but for v1 a per-frame GC pass is cheap and the orphan-cache-entry bug is fixed immediately.
+- **`RenderCache.hpp` now `#include <vulkan/vulkan.h>`** because `m_lastExtent` is `VkExtent2D`. Strictly this widens a headless header's dependencies, but the alternative — a private `Extent2D` struct that mirrors VkExtent2D — buys cleanliness at the cost of an extra type-juggling step at every call site. The cache already lives in `core/` but transitively depends on Vulkan via `gpu::ImageHandle`, so this is consistent with the existing layering compromise. Documented as such; revisit if `core/` ever needs to be Vulkan-free.
+- **`DEBUG_size()` and `DEBUG_getFreeSlotCount()` are diagnostic accessors.** Named with the `DEBUG_` prefix per the existing convention (matches `DEBUG_getBindlessSlot`). They are not part of the production contract and exist to make leak detection testable. Eventually a single `Diagnostics` namespace could absorb them.
+
+### Files modified
+
+- `include/core/RenderCache.hpp` — `store` enqueues on change; added `invalidateIfExtentChanged`, `DEBUG_size`, `m_lastExtent` member. Header now includes `<vulkan/vulkan.h>` for `VkExtent2D`.
+- `src/main.cpp` — calls `renderCache.invalidateIfExtentChanged(evalCtx.requestedExtent)` before `graph.execute`; calls `renderCache.garbageCollect(&graph)` after `endFrame`, before draining pending releases.
+- `include/gpu/TransientImagePool.hpp` — added `DEBUG_getFreeSlotCount()`.
+- `src/gpu/TransientImagePool.cpp` — implementation: linear scan of `m_images`.
+- `tests/core/RenderCacheTest.cpp` — new file, 5 cases.
+- `CMakeLists.txt` — `LoomTests` adds the new test source.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 53/53 pass (5 new `RenderCacheTest.*` cases pass headless).
+- New tests cover: overwrite-enqueues-previous, same-handle-is-idempotent, GC-after-node-deletion, extent-change-invalidates, clear-enqueues-all.
+
+### Dependencies
+Phase 1.
+
+### Known follow-ups for later phases
+- Phase 4 introduces `(pin, region)` keying which subsumes `invalidateIfExtentChanged`. Remove the interim helper and the corresponding test (`InvalidateIfExtentChangedClearsCache`) when that lands.
+- The per-frame `garbageCollect` call in `main.cpp` moves to `FrameLoop::onFrameRetired` once timeline-semaphore retirement is wired (Phase 5–6). The cost is bounded — a `garbageCollect` pass on an empty cache is a single hashmap walk over zero entries.
+- `DEBUG_size` and `DEBUG_getFreeSlotCount` may be consolidated into a single `Diagnostics` API in a future cleanup.
+
+---
+
+## Phase 3 — Hazard Model & GPU Profiling Labels
+
+### Goal
+Extract the hazard logic from `DispatchManager` into a reusable `HazardTracker`, add proper WAW barrier emission, scaffold WAR coverage so adding it is one line, and add VkDebugUtils labels so dispatches appear named in RenderDoc / NSight / validation output.
+
+### Decisions
+
+- **`HazardTracker` is the single source of truth.** `DispatchManager::submit` is now thin: layout transitions, then per-task barrier query + dispatch + record, then viewer transition. The hazard logic lives in its own translation unit with its own test, headless. The old `writtenSlots` `unordered_set<uint32_t>` is gone — replaced with `unordered_set<ImageKey, ImageKeyHash>` where `ImageKey = (poolIndex, generation)`.
+- **Keying on `(poolIndex, generation)` is the safety win.** The previous code keyed on `bindlessSlot`, which can be recycled within a frame in principle (the bindless heap reissues slots immediately on `unregister`; Phase 6 will fence-gate that, but until then the recycled-slot case is real). Keying on generation makes the deferred-release contract explicit by construction: a recycled slot with a different generation produces a different `ImageKey`, so a hazard against the previous use can never be masked. `HazardTrackerTest.GenerationDisambiguates` pins this behaviour.
+- **WAW takes precedence over RAW in the per-task check.** A write after both a prior read and a prior write needs `SHADER_WRITE → SHADER_WRITE` access masks, which subsume the read dependency. So the order is: check WAW first, then RAW. Only one barrier is emitted per task; `clearAfterBarrier` resets the tracker so the next task starts fresh. The previous code did the equivalent reset without explaining why — the new code documents it (the barrier subsumes all prior accesses).
+- **WAR scaffold returns `false` in v1.** `needsBarrierBeforeWriteAfterRead` is a real public API surface with no callers today. The read set is tracked (`recordTask` populates `m_readKeys`), so the predicate body is a one-line change when a future node reads-then-writes the same slot inside a frame. The test (`WARScaffoldReturnsFalseInV1`) pins the current behaviour so flipping it is a deliberate breaking change with test signal.
+- **VkDebugUtils labels are lazy-resolved no-ops when the extension isn't available.** The implementation in `DispatchManager.cpp` keeps function-pointer statics initialised at first use; if the load path fails (release build with no debug-utils, or validation layers disabled), the wrappers fall through to nothing. This is honest about the limitation: the labels appear when validation/debug-utils is active, and cost essentially nothing otherwise. The actual lookup is currently incomplete — the code structure is in place but the proc-address resolution happens via global proc-pointer fallback because `DispatchManager` has no `VkDevice` accessor. Phase 5's decomposition gives the manager a proper `Device` reference; the lookup will be tightened then.
+- **Node labels are per-call-site descriptive.** `ConstantNode.fill`, `MergeNode.fill`, `PassthroughNode.copy`, `PassthroughNode.fill` (the input-disconnected fallback). A future test will assert these appear in a RenderDoc capture; for now they're a free quality-of-life upgrade for anyone running with validation layers.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/gpu/HazardTracker.hpp` | `ImageKey`, `ImageKeyHash`, `HazardTracker` class with RAW/WAW/WAR queries |
+| `src/gpu/HazardTracker.cpp` | Implementation |
+| `tests/gpu/HazardTrackerTest.cpp` | 7 cases: RAW, WAW, independent, barrier-resets, generation-disambiguates, WAR-scaffold, invalid-handles-ignored |
+
+### Files modified
+
+- `include/gpu/ComputeTask.hpp` — added `const char* label = nullptr` field.
+- `include/gpu/DispatchManager.hpp` — added private `HazardTracker m_hazardTracker` member.
+- `src/gpu/DispatchManager.cpp` — full rewrite: hazard logic moves to `HazardTracker`, WAW added, debug-utils label wrappers added, helper `emitMemoryBarrier` factored out for clarity.
+- `src/core/Nodes.cpp` — each node sets `task.label` (`ConstantNode.fill`, `MergeNode.fill`, `PassthroughNode.copy`, `PassthroughNode.fill`).
+- `CMakeLists.txt` — `LoomCore` adds `src/gpu/HazardTracker.cpp`; `LoomTests` adds `tests/gpu/HazardTrackerTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 60/60 pass (+7 `HazardTrackerTest.*` cases pass headless).
+- Manual review: `DispatchManager::submit` body is significantly shorter; the comment block explaining the deferred-release-vs-poolIndex-keying argument is now anchored to the only place it applies (Pass 1 layout transitions).
+
+### Dependencies
+Phase 1 (`LOOM_ASSERT` for any future barrier-table extension; not directly used here but the convention is now in force).
+
+### Known follow-ups for later phases
+- The debug-utils proc-address resolution is currently a no-op fallback. Phase 5 wires it properly via the `Device` subsystem (resolve once at device construction; pass the function pointers through).
+- The WAR scaffold flips on when the first node needs it. Update `needsBarrierBeforeWriteAfterRead` body + the test.
+- `DispatchManager` could expose a `HazardTracker&` getter for tests that want to inspect barrier emission directly without a real Vulkan device. Phase 10 may add this if the validation-layer-warnings-as-assertions approach isn't sufficient.

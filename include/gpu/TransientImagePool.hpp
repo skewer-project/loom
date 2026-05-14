@@ -37,6 +37,11 @@ class TransientImagePool {
     VkImage getImage(ImageHandle handle) const;
     uint32_t DEBUG_getBindlessSlot(ImageHandle handle) const { return handle.bindlessSlot; }
 
+    // Diagnostic / test accessors. Not part of the production contract.
+    // Returns the number of pool slots not currently in use. Leak tests assert
+    // this returns to a baseline after a series of acquire/release cycles.
+    uint32_t DEBUG_getFreeSlotCount() const;
+
   private:
     struct ImageEntry {
         VkImage image = VK_NULL_HANDLE;
