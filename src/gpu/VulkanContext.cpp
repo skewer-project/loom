@@ -24,12 +24,7 @@ VulkanContext::~VulkanContext() {
     if (m_device != VK_NULL_HANDLE) {
         vkDeviceWaitIdle(m_device);
 
-        cleanupSwapchain();
-        if (m_swapchain != VK_NULL_HANDLE) {
-            vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
-            m_swapchain = VK_NULL_HANDLE;
-        }
-
+        m_swapchainObj.reset();
         cleanupSyncObjects();
 
         m_bindlessHeap.reset();
@@ -73,8 +68,7 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     m_computeQueueFamily = m_deviceObj->getComputeQueueFamily();
     m_presentQueueFamily = m_deviceObj->getPresentQueueFamily();
 
-    createSwapchain();
-    createImageViews();
+    m_swapchainObj = std::make_unique<Swapchain>(*m_instanceObj, *m_deviceObj, m_window);
     createCommandPool();
     allocateCommandBuffers();
     createSyncObjects();
@@ -92,88 +86,6 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     }
 
     m_bindlessHeap = std::make_unique<BindlessHeap>(m_device);
-}
-
-void VulkanContext::createSwapchain() {
-    SwapchainSupportDetails swapchainSupport = querySwapchainSupport(m_physicalDevice);
-
-    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapchainSupport.formats);
-    VkPresentModeKHR presentMode = chooseSwapPresentMode(swapchainSupport.presentModes);
-    VkExtent2D extent = chooseSwapExtent(swapchainSupport.capabilities);
-
-    uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
-    if (swapchainSupport.capabilities.maxImageCount > 0 &&
-        imageCount > swapchainSupport.capabilities.maxImageCount) {
-        imageCount = swapchainSupport.capabilities.maxImageCount;
-    }
-
-    VkSwapchainCreateInfoKHR createInfo{};
-    createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-    createInfo.surface = m_instanceObj->getSurface();
-
-    createInfo.minImageCount = imageCount;
-    createInfo.imageFormat = surfaceFormat.format;
-    createInfo.imageColorSpace = surfaceFormat.colorSpace;
-    createInfo.imageExtent = extent;
-    createInfo.imageArrayLayers = 1;
-    createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-    uint32_t queueFamilyIndices[] = {m_graphicsQueueFamily, m_presentQueueFamily};
-
-    if (m_graphicsQueueFamily != m_presentQueueFamily) {
-        createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
-        createInfo.queueFamilyIndexCount = 2;
-        createInfo.pQueueFamilyIndices = queueFamilyIndices;
-    } else {
-        createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    }
-
-    createInfo.preTransform = swapchainSupport.capabilities.currentTransform;
-    createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    createInfo.presentMode = presentMode;
-    createInfo.clipped = VK_TRUE;
-
-    createInfo.oldSwapchain = m_oldSwapchain;
-
-    if (vkCreateSwapchainKHR(m_device, &createInfo, nullptr, &m_swapchain) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create swapchain!");
-    }
-
-    LOOM_VK_CHECK(vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, nullptr));
-    m_swapchainImages.resize(imageCount);
-    LOOM_VK_CHECK(
-        vkGetSwapchainImagesKHR(m_device, m_swapchain, &imageCount, m_swapchainImages.data()));
-
-    m_swapchainImageFormat = surfaceFormat.format;
-    m_swapchainExtent = extent;
-}
-
-void VulkanContext::createImageViews() {
-    m_swapchainImageViews.resize(m_swapchainImages.size());
-
-    for (size_t i = 0; i < m_swapchainImages.size(); i++) {
-        VkImageViewCreateInfo createInfo{};
-        createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        createInfo.image = m_swapchainImages[i];
-        createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        createInfo.format = m_swapchainImageFormat;
-        createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        createInfo.subresourceRange.baseMipLevel = 0;
-        createInfo.subresourceRange.levelCount = 1;
-        createInfo.subresourceRange.baseArrayLayer = 0;
-        createInfo.subresourceRange.layerCount =
-            1;  // >1 is used for stereoscopic 3D — not needed here.
-
-        if (vkCreateImageView(m_device, &createInfo, nullptr, &m_swapchainImageViews[i]) !=
-            VK_SUCCESS) {
-            throw std::runtime_error("failed to create image views for swapchain image " +
-                                     std::to_string(i) + "!");
-        }
-    }
 }
 
 void VulkanContext::createCommandPool() {
@@ -274,7 +186,7 @@ void VulkanContext::allocateCommandBuffers() {
 void VulkanContext::createSyncObjects() {
     m_imageAvailableSemaphores.resize(core::MAX_FRAMES_IN_FLIGHT);
     m_inFlightFences.resize(core::MAX_FRAMES_IN_FLIGHT);
-    m_imagesInFlight.resize(m_swapchainImages.size(), VK_NULL_HANDLE);
+    m_imagesInFlight.resize(m_swapchainObj->getImageCount(), VK_NULL_HANDLE);
 
     // Size this one to our safe maximum
     m_renderFinishedSemaphores.resize(core::MAX_SWAPCHAIN_IMAGES);
@@ -322,109 +234,10 @@ void VulkanContext::cleanupSyncObjects() {
     m_imagesInFlight.clear();
 }
 
-void VulkanContext::cleanupSwapchain() {
-    for (auto imageView : m_swapchainImageViews) {
-        vkDestroyImageView(m_device, imageView, nullptr);
-    }
-    m_swapchainImageViews.clear();
-}
-
 void VulkanContext::recreateSwapchain() {
-    int width = 0, height = 0;
-    glfwGetFramebufferSize(m_window, &width, &height);
-    while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(m_window, &width, &height);
-        glfwWaitEvents();
-    }
-
-    vkDeviceWaitIdle(m_device);
-
-    m_oldSwapchain = m_swapchain;
-    cleanupSwapchain();
-
-    createSwapchain();
-    createImageViews();
-    // Called when VK_ERROR_OUT_OF_DATE_KHR is returned from the render loop.
-
-    // The number of swapchain images may differ from the original creation;
-    // m_imagesInFlight is sized to match. Without this, indexing in beginFrame
-    // can address out-of-bounds when the driver returns a different image
-    // count on recreate.
-    m_imagesInFlight.assign(m_swapchainImages.size(), VK_NULL_HANDLE);
-
-    vkDestroySwapchainKHR(m_device, m_oldSwapchain, nullptr);  // safe to destroy now
-    m_oldSwapchain = VK_NULL_HANDLE;
-}
-
-SwapchainSupportDetails VulkanContext::querySwapchainSupport(VkPhysicalDevice device) {
-    SwapchainSupportDetails details;
-
-    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, m_instanceObj->getSurface(),
-                                              &details.capabilities);
-
-    uint32_t formatCount;
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_instanceObj->getSurface(), &formatCount,
-                                         nullptr);
-
-    if (formatCount != 0) {
-        details.formats.resize(formatCount);
-        vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_instanceObj->getSurface(), &formatCount,
-                                             details.formats.data());
-    }
-
-    uint32_t presentModeCount;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_instanceObj->getSurface(),
-                                              &presentModeCount, nullptr);
-
-    if (presentModeCount != 0) {
-        details.presentModes.resize(presentModeCount);
-        vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_instanceObj->getSurface(),
-                                                  &presentModeCount, details.presentModes.data());
-    }
-
-    return details;
-}
-
-VkSurfaceFormatKHR VulkanContext::chooseSwapSurfaceFormat(
-    const std::vector<VkSurfaceFormatKHR>& availableFormats) {
-    for (const auto& availableFormat : availableFormats) {
-        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB &&
-            availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-            return availableFormat;
-        }
-    }
-
-    // TODO: Evaluate VK_FORMAT_B8G8R8A8_UNORM for linear compositing pipeline.
-    return availableFormats[0];
-}
-
-VkPresentModeKHR VulkanContext::chooseSwapPresentMode(
-    const std::vector<VkPresentModeKHR>& availablePresentModes) {
-    for (const auto& availablePresentMode : availablePresentModes) {
-        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR) {
-            return availablePresentMode;
-        }
-    }
-
-    return VK_PRESENT_MODE_FIFO_KHR;
-}
-
-VkExtent2D VulkanContext::chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
-    if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
-        return capabilities.currentExtent;
-    } else {
-        int width, height;
-        glfwGetFramebufferSize(m_window, &width, &height);
-
-        VkExtent2D actualExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height)};
-
-        actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width,
-                                        capabilities.maxImageExtent.width);
-        actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height,
-                                         capabilities.maxImageExtent.height);
-
-        return actualExtent;
-    }
+    m_swapchainObj->recreate();
+    // Image count may have changed; resize the per-image fence tracker.
+    m_imagesInFlight.assign(m_swapchainObj->getImageCount(), VK_NULL_HANDLE);
 }
 
 void VulkanContext::waitIdle() const { vkDeviceWaitIdle(m_device); }
@@ -455,17 +268,10 @@ VkCommandBuffer VulkanContext::beginFrame() {
     vkWaitForFences(m_device, 1, &m_inFlightFences[m_currentFrame], VK_TRUE, UINT64_MAX);
 
     // Step B — Acquire next swapchain image:
-    VkResult result = vkAcquireNextImageKHR(m_device, m_swapchain, UINT64_MAX,
-                                            m_imageAvailableSemaphores[m_currentFrame],
-                                            VK_NULL_HANDLE, &m_currentImageIndex);
-
-    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
-        // Swapchain is no longer compatible with the surface — typically caused by a window resize.
-        // Recreate and skip this frame.
+    if (!m_swapchainObj->acquire(m_imageAvailableSemaphores[m_currentFrame], m_currentImageIndex)) {
+        // Surface out-of-date — typically caused by a window resize.
         recreateSwapchain();
         return VK_NULL_HANDLE;
-    } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
-        throw std::runtime_error("failed to acquire swapchain image!");
     }
 
     // Check if a previous frame is using this image (i.e. there is its fence to wait on)
@@ -500,13 +306,13 @@ void VulkanContext::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui
     // The swapchain image starts in an undefined
     // state each frame. Transition it to the layout required
     // for color writes before vkCmdBeginRendering.
-    transitionImageLayout(cmd, m_swapchainImages[m_currentImageIndex], VK_IMAGE_LAYOUT_UNDEFINED,
-                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    transitionImageLayout(cmd, m_swapchainObj->getImage(m_currentImageIndex),
+                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
     // Step G — Begin dynamic rendering:
     VkRenderingAttachmentInfo colorAttachment{};
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.imageView = m_swapchainImageViews[m_currentImageIndex];
+    colorAttachment.imageView = m_swapchainObj->getImageView(m_currentImageIndex);
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -516,7 +322,7 @@ void VulkanContext::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui
     VkRenderingInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
     renderingInfo.renderArea.offset = {0, 0};
-    renderingInfo.renderArea.extent = m_swapchainExtent;
+    renderingInfo.renderArea.extent = m_swapchainObj->getExtent();
     renderingInfo.layerCount = 1;
     renderingInfo.colorAttachmentCount = 1;
     renderingInfo.pColorAttachments = &colorAttachment;
@@ -532,7 +338,7 @@ void VulkanContext::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui
     vkCmdEndRendering(cmd);
 
     // Step J — Transition image to PRESENT_SRC_KHR:
-    transitionImageLayout(cmd, m_swapchainImages[m_currentImageIndex],
+    transitionImageLayout(cmd, m_swapchainObj->getImage(m_currentImageIndex),
                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                           VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
@@ -562,16 +368,8 @@ void VulkanContext::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui
     }
 
     // Step M — Present:
-    VkSwapchainKHR swapchains[] = {m_swapchain};
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = swapchains;
-    presentInfo.pImageIndices = &m_currentImageIndex;
-
-    VkResult presentResult = vkQueuePresentKHR(m_presentQueue, &presentInfo);
+    VkResult presentResult =
+        m_swapchainObj->present(m_presentQueue, signalSemaphores[0], m_currentImageIndex);
 
     if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR) {
         auto loomWindow =

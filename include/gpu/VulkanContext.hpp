@@ -12,17 +12,12 @@
 #include "gpu/BindlessHeap.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/Instance.hpp"
+#include "gpu/Swapchain.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
 #include "vk_mem_alloc.h"
 
 namespace loom::gpu {
-
-struct SwapchainSupportDetails {
-    VkSurfaceCapabilitiesKHR capabilities;
-    std::vector<VkSurfaceFormatKHR> formats;
-    std::vector<VkPresentModeKHR> presentModes;
-};
 
 class VulkanContext {
   public:
@@ -30,13 +25,10 @@ class VulkanContext {
     ~VulkanContext();
 
     void init(const loom::platform::Window& window, const char* appName);
-    void createSwapchain();
-    void createImageViews();
     void createCommandPool();
     void allocateCommandBuffers();
     void createSyncObjects();
     void createDescriptorPool();
-    void cleanupSwapchain();
     void recreateSwapchain();
     void cleanupSyncObjects();
 
@@ -57,12 +49,14 @@ class VulkanContext {
     VkDescriptorPool getDescriptorPool() const {
         return m_descriptorPool;
     }  // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
-    VkFormat getSwapchainImageFormat() const { return m_swapchainImageFormat; }
+    VkFormat getSwapchainImageFormat() const {
+        return m_swapchainObj ? m_swapchainObj->getFormat() : VK_FORMAT_UNDEFINED;
+    }
     uint32_t getGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
     VkCommandPool getCommandPool() const { return m_commandPool; }
     uint32_t getSwapchainImageCount() const {
-        return static_cast<uint32_t>(m_swapchainImages.size());
+        return m_swapchainObj ? m_swapchainObj->getImageCount() : 0;
     }
 
     VmaAllocator getVmaAllocator() const { return m_vmaAllocator; }
@@ -73,6 +67,7 @@ class VulkanContext {
                                      // GLFW window and outlives VulkanContext.
     std::unique_ptr<Instance> m_instanceObj;
     std::unique_ptr<Device> m_deviceObj;
+    std::unique_ptr<Swapchain> m_swapchainObj;
 
     // Shadow handles from m_deviceObj for convenience inside this façade.
     // Removed in Phase 5.7 when the rest of VulkanContext is slimmed down.
@@ -90,13 +85,6 @@ class VulkanContext {
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
     uint32_t m_computeQueueFamily = UINT32_MAX;
     uint32_t m_presentQueueFamily = UINT32_MAX;
-
-    VkSwapchainKHR m_swapchain = VK_NULL_HANDLE;
-    VkSwapchainKHR m_oldSwapchain = VK_NULL_HANDLE;
-    std::vector<VkImage> m_swapchainImages;
-    VkFormat m_swapchainImageFormat;
-    VkExtent2D m_swapchainExtent;
-    std::vector<VkImageView> m_swapchainImageViews;
 
     // One command buffer per frame in flight. Allocated from m_commandPool and is
     // destroyed implicitly when the pool is destroyed.
@@ -122,13 +110,6 @@ class VulkanContext {
     // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
     uint32_t m_currentFrame = 0;
     uint32_t m_currentImageIndex = 0;
-
-    SwapchainSupportDetails querySwapchainSupport(VkPhysicalDevice device);
-    VkSurfaceFormatKHR chooseSwapSurfaceFormat(
-        const std::vector<VkSurfaceFormatKHR>& availableFormats);
-    VkPresentModeKHR chooseSwapPresentMode(
-        const std::vector<VkPresentModeKHR>& availablePresentModes);
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 };
 
 }  // namespace loom::gpu
