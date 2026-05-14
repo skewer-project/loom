@@ -11,6 +11,7 @@
 #include "core/Constants.hpp"
 #include "gpu/BindlessHeap.hpp"
 #include "gpu/Device.hpp"
+#include "gpu/FrameLoop.hpp"
 #include "gpu/Instance.hpp"
 #include "gpu/ResourceFactory.hpp"
 #include "gpu/Swapchain.hpp"
@@ -26,16 +27,19 @@ class VulkanContext {
     ~VulkanContext();
 
     void init(const loom::platform::Window& window, const char* appName);
-    void allocateCommandBuffers();
-    void createSyncObjects();
-    void recreateSwapchain();
-    void cleanupSyncObjects();
 
     void waitIdle() const;  // Called from main() before any destructor runs to ensure the GPU has
                             // finished all in-flight work.
 
-    VkCommandBuffer beginFrame();
-    void endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui);
+    VkCommandBuffer beginFrame() { return m_frameLoop->beginFrame(); }
+    void endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui) {
+        m_frameLoop->endFrame(cmd, imgui);
+    }
+
+    // Monotonically increasing value of the frame-loop timeline semaphore
+    // after the last submit. Exposed for deferred-retirement consumers
+    // (BindlessHeap, TransientImagePool) in Phase 6.
+    [[nodiscard]] uint64_t currentFrameValue() const { return m_frameLoop->currentFrameValue(); }
 
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
@@ -72,6 +76,7 @@ class VulkanContext {
     std::unique_ptr<Device> m_deviceObj;
     std::unique_ptr<Swapchain> m_swapchainObj;
     std::unique_ptr<ResourceFactory> m_resourceFactory;
+    std::unique_ptr<FrameLoop> m_frameLoop;
 
     // Shadow handles from m_deviceObj for convenience inside this façade.
     // Removed in Phase 5.7 when the rest of VulkanContext is slimmed down.
@@ -85,30 +90,6 @@ class VulkanContext {
     uint32_t m_graphicsQueueFamily = UINT32_MAX;
     uint32_t m_computeQueueFamily = UINT32_MAX;
     uint32_t m_presentQueueFamily = UINT32_MAX;
-
-    // One command buffer per frame in flight. Allocated from
-    // m_resourceFactory's command pool and destroyed implicitly with it.
-    std::vector<VkCommandBuffer> m_commandBuffers;
-
-    // Signaled when the swapchain image is ready to be rendered into
-    // GPU-to-GPU signal.
-    std::vector<VkSemaphore> m_imageAvailableSemaphores;
-
-    // Signaled when rendering is complete and the image
-    // is ready to be presented. GPU-to-GPU signal.
-    std::vector<VkSemaphore> m_renderFinishedSemaphores;
-
-    // Blocks the CPU from recording the next frame until
-    // the GPU has finished the previous use of this frame's resources.
-    // CPU-to-GPU signal.
-    std::vector<VkFence> m_inFlightFences;
-
-    // Keeps track of which in-flight fence is using which swapchain image
-    std::vector<VkFence> m_imagesInFlight;
-
-    // Cycles 0..MAX_FRAMES_IN_FLIGHT-1 each frame.
-    uint32_t m_currentFrame = 0;
-    uint32_t m_currentImageIndex = 0;
 };
 
 }  // namespace loom::gpu
