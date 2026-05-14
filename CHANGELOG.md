@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [0.2.0] — Cleanup branch (in progress)
 
-The `refactor/claudes-review` branch lands a comprehensive cleanup of code quality, correctness, and project infrastructure ahead of feature work. See `REFACTOR_LOG.md` for the per-phase log.
+The `refactor/claudes-review` branch lands a comprehensive cleanup of code quality, correctness, and project infrastructure ahead of feature work. See [docs/archive/refactor-cleanup-2026.md](docs/archive/refactor-cleanup-2026.md) for the per-phase log.
 
 ### Highlights (planned)
 - Color management subsystem replaces hardcoded gamma in the display chain.

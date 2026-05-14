@@ -188,12 +188,13 @@ The full gate matrix is wired in Phase 9 of the cleanup. Pre-Phase-9 PRs are rev
 
 ## 17. Documentation policy
 
-- This file (`CLAUDE.md`) is the conventions document. Cite it in PRs.
+- This file (`docs/CONVENTIONS.md`) is the conventions / plan-of-record document. Cite it in PRs.
 - `docs/architecture.md` is the one-page system overview.
-- `CHANGELOG.md` is the user-visible-change ledger.
-- `REFACTOR_LOG.md` is the developer archive for the cleanup branch's per-phase log.
-- `TEMP_DOCUMENTATION.md` is a private dev archive of the original implementation phases. **Do not modify.** It is consulted, not edited.
-- Public API additions are documented in Doxygen comments on the header declaration. The Doxygen build is wired in Phase 9; public-API additions before then still write the comments, they are simply not yet rendered.
+- `docs/README.md` is the index of everything under `docs/`.
+- `CHANGELOG.md` (repo root) is the user-visible-change ledger.
+- `CONTRIBUTING.md` (repo root) covers dev setup, branch naming, commit style, and the PR checklist.
+- `docs/archive/` holds historical per-phase dev logs. They are read-only — consulted for context, never edited. Current entries: `refactor-cleanup-2026.md` (the cleanup-branch log) and `build-out-phases-1-6.md` (the original implementation log).
+- Public API additions are documented in Doxygen comments on the header declaration. The Doxygen build is wired in Phase 9 (`cmake --build build --target docs` once Doxygen is installed); public-API additions before then still write the comments, they are simply not yet rendered.
 
 ---
 

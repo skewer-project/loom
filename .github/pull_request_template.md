@@ -22,9 +22,9 @@
 - [ ] `CHANGELOG.md` updated under `[Unreleased]` (if user-visible).
 
 ## Conformance
-<!-- Confirm the PR follows the relevant CLAUDE.md sections. Cite the section if you intentionally deviate. -->
+<!-- Confirm the PR follows the relevant CONVENTIONS.md sections. Cite the section if you intentionally deviate. -->
 
-- [ ] Conforms to [CLAUDE.md](../CLAUDE.md): resource ownership, layout invariants, hazard model, color management, push-constant budget, logging, assertions, profiling.
+- [ ] Conforms to [docs/CONVENTIONS.md](../docs/CONVENTIONS.md): resource ownership, layout invariants, hazard model, color management, push-constant budget, logging, assertions, profiling.
 
 ## Screenshots / captures
 <!-- Optional. Before/after images, RenderDoc captures, etc. -->

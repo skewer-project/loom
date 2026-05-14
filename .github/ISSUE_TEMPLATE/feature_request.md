@@ -27,7 +27,7 @@ assignees: ''
 
 ## Out of scope reminder
 
-The following are explicitly deferred — see [CLAUDE.md §18](../../CLAUDE.md#18-out-of-scope-this-cleanup-branch). Mark with `[x]` if your feature is one of these and link the rationale:
+The following are explicitly deferred — see [docs/CONVENTIONS.md §18](../../docs/CONVENTIONS.md#18-out-of-scope-this-cleanup-branch). Mark with `[x]` if your feature is one of these and link the rationale:
 
 - [ ] Deep compositing / OpenEXR
 - [ ] Full OCIO integration

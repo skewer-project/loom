@@ -1,6 +1,6 @@
 # Loom — Architecture
 
-This document is a one-page overview of the Loom system. For per-subsystem conventions, see [CLAUDE.md](../CLAUDE.md). For the per-phase log of the active refactor, see [REFACTOR_LOG.md](../REFACTOR_LOG.md).
+This document is a one-page overview of the Loom system. For per-subsystem conventions, see [CONVENTIONS.md](CONVENTIONS.md). For the per-phase log of the active refactor, see [archive/refactor-cleanup-2026.md](archive/refactor-cleanup-2026.md).
 
 ---
 
@@ -118,4 +118,4 @@ platform → (GLFW only)
 
 ## Out-of-scope as of this document
 
-See [CLAUDE.md §18](../CLAUDE.md#18-out-of-scope-this-cleanup-branch) for the full list. Highlights: no deep compositing, no OCIO, no parameter system, no animation, no project save/load, no per-tile streaming dispatch, no async queues.
+See [CONVENTIONS.md §18](CONVENTIONS.md#18-out-of-scope-this-cleanup-branch) for the full list. Highlights: no deep compositing, no OCIO, no parameter system, no animation, no project save/load, no per-tile streaming dispatch, no async queues.

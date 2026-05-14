@@ -255,7 +255,7 @@ class Graph {
 
     // Convenience: returns every viewer node currently in the graph. The
     // engine consumes viewers[0] in v1; document any future per-viewer policy
-    // in CLAUDE.md when multi-viewer lands.
+    // in docs/CONVENTIONS.md when multi-viewer lands.
     [[nodiscard]] std::vector<NodeHandle> getViewers() const {
         std::vector<NodeHandle> result;
         forEachNode([&](NodeHandle h, const Node& node) {

@@ -53,7 +53,7 @@ WARN_NO_PARAMDOC       = NO
 WARN_AS_ERROR          = NO
 WARN_FORMAT            = "$file:$line: $text"
 
-INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include @CMAKE_CURRENT_SOURCE_DIR@/src @CMAKE_CURRENT_SOURCE_DIR@/README.md @CMAKE_CURRENT_SOURCE_DIR@/CLAUDE.md @CMAKE_CURRENT_SOURCE_DIR@/docs/architecture.md
+INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/include @CMAKE_CURRENT_SOURCE_DIR@/src @CMAKE_CURRENT_SOURCE_DIR@/README.md @CMAKE_CURRENT_SOURCE_DIR@/docs/CONVENTIONS.md @CMAKE_CURRENT_SOURCE_DIR@/docs/architecture.md
 FILE_PATTERNS          = *.hpp *.cpp *.md
 RECURSIVE              = YES
 EXCLUDE_PATTERNS       = */external/* */build/*

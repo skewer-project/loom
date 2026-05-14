@@ -126,7 +126,7 @@ struct Node {
     // upstream node's output type. Image-only nodes should use
     // `pullImageInput` which asserts Kind::Image and returns the inner
     // handle. Default node behaviour propagates the requested region
-    // unchanged to upstream nodes — see CLAUDE.md §5 (Region semantics).
+    // unchanged to upstream nodes — see docs/CONVENTIONS.md §5 (Region semantics).
     // Nodes with non-identity spatial mappings override markRequiredTiles.
     gpu::ResourceRef pullInput(EvaluationContext& ctx, const Region& region, uint32_t inputIndex);
 

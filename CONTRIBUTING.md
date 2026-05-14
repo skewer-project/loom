@@ -48,13 +48,13 @@ Before opening a PR:
 The PR description should explain *why* the change is needed and *how* it was tested. Reviewers will look for:
 
 1. Correctness — does it solve the stated problem?
-2. Conformance with [CLAUDE.md](CLAUDE.md) — does it follow the project conventions (resource ownership, layout invariants, hazard model, color management, etc.)?
+2. Conformance with [docs/CONVENTIONS.md](docs/CONVENTIONS.md) — does it follow the project conventions (resource ownership, layout invariants, hazard model, color management, etc.)?
 3. Test coverage — does the change add or extend tests appropriately?
 4. Scope — is the diff focused, or has unrelated cleanup been bundled in?
 
 ## Coding conventions
 
-The authoritative source is [CLAUDE.md](CLAUDE.md). Highlights:
+The authoritative source is [docs/CONVENTIONS.md](docs/CONVENTIONS.md). Highlights:
 
 - **C++20.** Use modern idioms: `std::span` for read-only ranges, structured bindings, `if constexpr`, designated initialisers, `[[nodiscard]]` on return values whose discard would be a bug.
 - **No raw `std::cout` / `std::cerr`.** Use `loom::log::info/warn/error`.

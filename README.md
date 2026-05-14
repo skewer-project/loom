@@ -105,12 +105,12 @@ GitHub Actions run style checks on every push and pull request. Use the pre-comm
 
 | Document | Purpose |
 |----------|---------|
-| [CLAUDE.md](CLAUDE.md) | Engineering conventions and invariants. PRs cite this. |
+| [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Engineering conventions and invariants — the project's plan of record. PRs cite this. |
 | [docs/architecture.md](docs/architecture.md) | One-page system overview. |
+| [docs/README.md](docs/README.md) | Index of everything under `docs/`. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, branch naming, commit style, PR checklist. |
 | [CHANGELOG.md](CHANGELOG.md) | User-visible change ledger (Keep-a-Changelog format). |
-| `REFACTOR_LOG.md` | Per-phase dev log for the active cleanup branch (not committed to `main`). |
-| `TEMP_DOCUMENTATION.md` | Private dev archive of the original implementation phases (not modified). |
+| [docs/archive/](docs/archive/) | Historical per-phase dev logs (read-only). |
 
 `LICENSE`, `NOTICE`, `CODE_OF_CONDUCT.md`, and `SECURITY.md` will be added by the project owner.
 
