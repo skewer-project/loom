@@ -92,34 +92,6 @@ TEST(RenderCacheTest, GarbageCollectDropsHandlesForDeletedPins) {
     EXPECT_TRUE(handleEqual(pending[0], h));
 }
 
-TEST(RenderCacheTest, InvalidateIfExtentChangedClearsCache) {
-    core::RenderCache cache;
-    core::Graph graph;
-
-    auto nodeH = graph.addNode(core::NodeType::Passthrough);
-    auto outPin = graph.getNode(nodeH)->outputs[0];
-
-    const core::Region emptyRegion;
-    cache.store(outPin, emptyRegion, makeHandle(0, 100, 1));
-    EXPECT_EQ(cache.DEBUG_size(), 1u);
-
-    // First call records the extent and reports no invalidation (cache was
-    // populated under unset extent {0,0} initially; transition from {0,0} to
-    // 800×600 is a change and the cache is cleared).
-    EXPECT_TRUE(cache.invalidateIfExtentChanged({800, 600}));
-    EXPECT_EQ(cache.DEBUG_size(), 0u);
-
-    // Re-populate, then a same-extent call is a no-op.
-    cache.store(outPin, emptyRegion, makeHandle(0, 100, 2));
-    EXPECT_FALSE(cache.invalidateIfExtentChanged({800, 600}));
-    EXPECT_EQ(cache.DEBUG_size(), 1u);
-
-    // Different extent invalidates again and enqueues the handle.
-    EXPECT_TRUE(cache.invalidateIfExtentChanged({1280, 720}));
-    EXPECT_EQ(cache.DEBUG_size(), 0u);
-    EXPECT_EQ(cache.takePendingReleases().size(), 2u);  // both previous entries enqueued total
-}
-
 TEST(RenderCacheTest, ClearEnqueuesAllHandles) {
     core::RenderCache cache;
     core::Graph graph;

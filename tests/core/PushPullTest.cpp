@@ -243,8 +243,9 @@ TEST_F(PushPullTest, DeletionGC) {
     // Delete node A
     graph.removeNode(hA);
 
-    // Manually evict using the saved handle
-    renderCache.evict(outA);
+    // Manually evict using the saved handle. evict is keyed on (pin, region)
+    // so we pass the same region the executor used to populate the cache.
+    renderCache.evict(outA, testRegion);
 
     EXPECT_EQ(renderCache.takePendingReleases().size(), 1);
 

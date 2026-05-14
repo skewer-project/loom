@@ -106,10 +106,6 @@ int main() {
                 evalCtx.renderCache = &renderCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
-                // Drop cached images at the wrong extent (interim until Phase
-                // 4 makes Region part of the cache key).
-                renderCache.invalidateIfExtentChanged(evalCtx.requestedExtent);
-
                 // 2-Pass Execution: Mark -> Sort -> Execute
                 loom::core::Region region;
                 region.tiles.push_back({0, 0, (uint32_t)imgui.getViewportSize().x,

@@ -203,3 +203,39 @@ Phase 1 (`LOOM_ASSERT` for any future barrier-table extension; not directly used
 - The debug-utils proc-address resolution is currently a no-op fallback. Phase 5 wires it properly via the `Device` subsystem (resolve once at device construction; pass the function pointers through).
 - The WAR scaffold flips on when the first node needs it. Update `needsBarrierBeforeWriteAfterRead` body + the test.
 - `DispatchManager` could expose a `HazardTracker&` getter for tests that want to inspect barrier emission directly without a real Vulkan device. Phase 10 may add this if the validation-layer-warnings-as-assertions approach isn't sufficient.
+
+---
+
+## Phase 4 — Region / Tile Foundation
+
+### Goal
+Make `Region` actually participate in caching and evaluation. The contract this phase establishes: two cache lookups for the same pin at the same canonicalised region hit; at different regions, miss. This unblocks future tiled dispatch without committing to it in this branch.
+
+### Decisions
+
+- **`Region` operator==, `canonicalize()`, `std::hash<Region>` and `std::hash<Tile>` live in `Types.hpp` rather than `Handle.hpp`.** The plan literally said "next to `std::hash<Handle<Tag>>` in `Handle.hpp`" but `Handle.hpp` doesn't include `Types.hpp` (`Types.hpp` includes `Handle.hpp`), so wiring it that way would force a forward declaration or a circular include. Co-locating with the type definition is the architecturally clean choice and trivially discoverable for anyone reading `Region`.
+- **`canonicalize()` sorts by `(y, x, height, width)`.** The plan asked for `(y, x)`; I extended the sort to break ties on dimensions so degenerate cases (two tiles at the same origin with different sizes) still produce a deterministic ordering. The four-uint comparison is one branch per element — no observable cost.
+- **`RenderCache` canonicalises internally on every `store`, `retrieve`, `hasValidData`, and `evict`.** The plan said callers canonicalise, but the cache enforcing it eliminates a class of "I forgot to canonicalise" bugs that wouldn't surface until a tile-order regression. The cost is one `std::sort` per cache touch on a `tiles` vector whose typical size is 1; effectively free.
+- **`evict` now takes a `Region`.** The previous signature was `evict(PinHandle)` which has no meaning under (pin, region) keying — there could be many cache entries for the same pin at different regions. Updated the one caller in `PushPullTest`.
+- **`invalidateIfExtentChanged` removed.** Phase 2.3 introduced it as an interim solution; Phase 4 was explicitly tasked with replacing it. Under region keying, a viewport resize produces a different `Region` (different tile dimensions) and naturally misses. The `m_lastExtent` member is gone with it; `RenderCache.hpp` no longer needs `<vulkan/vulkan.h>`. (Net win for headless `core/` Vulkan-cleanliness, partially restoring §1 of the layering rule.)
+- **`CacheKey { PinHandle pin; Region region }` is the public key type.** It's exposed in `RenderCache.hpp` rather than buried in the `.cpp` because the hash specialisation has to be visible at every call site that instantiates `unordered_map<CacheKey, ...>`. Tests do not need to construct `CacheKey` directly — they call `store` / `retrieve` / `evict` with the `(pin, region)` pair.
+- **`hasValidData` builds a single probe key and mutates `pin` per output pin.** A small optimisation over constructing a fresh `CacheKey` (and re-canonicalising the region) on every iteration. Trivial for two-pin nodes; matters for nodes with many outputs.
+
+### Status (in-progress: 4.1 + 4.2 landed; 4.3, 4.5 pending)
+
+Sub-task tracking:
+- 4.1 ✅ — `Region` hashable + canonical. Single-file change in `Types.hpp`. Build green.
+- 4.2 ✅ — `RenderCache` re-keyed by `(pin, region)`. `invalidateIfExtentChanged` and `m_lastExtent` removed. `evict` signature widened. `PushPullTest` and `RenderCacheTest` updated. Build green; ctest 59/59 (1 fewer than baseline, equal to baseline 60 minus the deliberately-removed `InvalidateIfExtentChangedClearsCache` test).
+- 4.3 — pending. `Node::pullInput` to take `const Region&` and thread it to `RenderCache::retrieve`. Three node `execute` bodies updated.
+- 4.4 — pending. CLAUDE.md §5 already describes the contract; verify the prose matches the post-Phase-4 code.
+- 4.5 — pending. New tests: `RegionMissCausesReeval`, `RegionHitSkipsReeval`, `RegionCanonicalisation`, `RegionPropagatesInPullInput`.
+- 4.6 — pending. Final build + ctest pass; close out this section.
+
+### Files modified (so far)
+
+- `include/core/Types.hpp` — added `Tile::operator!=`, `Region::operator==/!=`, `Region::canonicalize()`, `std::hash<Tile>`, `std::hash<Region>`.
+- `include/core/RenderCache.hpp` — new `CacheKey` + `CacheKeyHash`; map re-keyed; `invalidateIfExtentChanged` and `m_lastExtent` removed; `evict` widened; no longer includes `<vulkan/vulkan.h>`.
+- `src/core/RenderCache.cpp` — `garbageCollect` walks the new map and tests `it->first.pin` directly.
+- `src/main.cpp` — removed `renderCache.invalidateIfExtentChanged(...)` call.
+- `tests/core/RenderCacheTest.cpp` — removed `InvalidateIfExtentChangedClearsCache`.
+- `tests/core/PushPullTest.cpp` — `evict(pin)` → `evict(pin, testRegion)`.

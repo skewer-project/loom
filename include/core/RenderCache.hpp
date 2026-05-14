@@ -1,7 +1,5 @@
 #pragma once
 
-#include <vulkan/vulkan.h>
-
 #include <unordered_map>
 #include <vector>
 
@@ -11,6 +9,28 @@
 
 namespace loom::core {
 
+// Key for the RenderCache: (pin, region). Two entries for the same pin at
+// different regions are distinct cache lines — a viewport resize naturally
+// produces a miss without a separate extent-invalidation pass. Region is
+// canonicalised on the way in (RenderCache::store / retrieve) so callers do
+// not have to remember the sort order.
+struct CacheKey {
+    PinHandle pin;
+    Region region;
+
+    bool operator==(const CacheKey& other) const {
+        return pin == other.pin && region == other.region;
+    }
+};
+
+struct CacheKeyHash {
+    size_t operator()(const CacheKey& k) const noexcept {
+        size_t h = std::hash<PinHandle>{}(k.pin);
+        h ^= std::hash<Region>{}(k.region) + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+
 class RenderCache {
   public:
     // Stores image for (pin, region). If a previous entry exists for the same
@@ -18,7 +38,8 @@ class RenderCache {
     // Without this, a dirty re-eval would leak the previous pool slot every
     // frame.
     void store(PinHandle pin, const Region& region, gpu::ImageHandle image) {
-        const uint64_t key = pinKey(pin);
+        CacheKey key{pin, region};
+        key.region.canonicalize();
         auto it = m_cache.find(key);
         if (it != m_cache.end()) {
             if (it->second.poolIndex != image.poolIndex ||
@@ -27,25 +48,33 @@ class RenderCache {
             }
             it->second = image;
         } else {
-            m_cache.emplace(key, image);
+            m_cache.emplace(std::move(key), image);
         }
     }
 
     gpu::ImageHandle retrieve(PinHandle pin, const Region& region) {
-        auto it = m_cache.find(pinKey(pin));
+        CacheKey key{pin, region};
+        key.region.canonicalize();
+        auto it = m_cache.find(key);
         if (it != m_cache.end()) return it->second;
         return {};
     }
 
     bool hasValidData(Node* node, const Region& region) {
+        CacheKey probe{};
+        probe.region = region;
+        probe.region.canonicalize();
         for (auto outPinHandle : node->outputs) {
-            if (m_cache.find(pinKey(outPinHandle)) == m_cache.end()) return false;
+            probe.pin = outPinHandle;
+            if (m_cache.find(probe) == m_cache.end()) return false;
         }
         return true;
     }
 
-    void evict(PinHandle pin) {
-        auto it = m_cache.find(pinKey(pin));
+    void evict(PinHandle pin, const Region& region) {
+        CacheKey key{pin, region};
+        key.region.canonicalize();
+        auto it = m_cache.find(key);
         if (it != m_cache.end()) {
             m_pendingImageReleases.push_back(it->second);
             m_cache.erase(it);
@@ -57,23 +86,6 @@ class RenderCache {
             m_pendingImageReleases.push_back(pair.second);
         }
         m_cache.clear();
-    }
-
-    // Interim solution before region keying lands (Phase 4): when the
-    // evaluator's requested extent changes, every cached entry is at the wrong
-    // resolution and must be released. Returns true if an invalidation was
-    // performed. Once Phase 4 introduces (pin, region) keying, the region
-    // change naturally produces a cache miss and this helper is removed.
-    bool invalidateIfExtentChanged(VkExtent2D extent) {
-        if (extent.width == m_lastExtent.width && extent.height == m_lastExtent.height) {
-            return false;
-        }
-        m_lastExtent = extent;
-        if (!m_cache.empty()) {
-            clear();
-            return true;
-        }
-        return false;
     }
 
     std::vector<gpu::ImageHandle> takePendingReleases() {
@@ -88,11 +100,8 @@ class RenderCache {
     uint32_t DEBUG_size() const { return static_cast<uint32_t>(m_cache.size()); }
 
   private:
-    uint64_t pinKey(PinHandle h) const { return ((uint64_t)h.generation << 32) | h.index; }
-
-    std::unordered_map<uint64_t, gpu::ImageHandle> m_cache;
+    std::unordered_map<CacheKey, gpu::ImageHandle, CacheKeyHash> m_cache;
     std::vector<gpu::ImageHandle> m_pendingImageReleases;
-    VkExtent2D m_lastExtent{0, 0};
 };
 
 }  // namespace loom::core
