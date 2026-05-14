@@ -1,6 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -36,10 +38,28 @@ struct Tile {
     bool operator==(const Tile& other) const {
         return x == other.x && y == other.y && width == other.width && height == other.height;
     }
+
+    bool operator!=(const Tile& other) const { return !(*this == other); }
 };
 
 struct Region {
     std::vector<Tile> tiles;
+
+    bool operator==(const Region& other) const { return tiles == other.tiles; }
+    bool operator!=(const Region& other) const { return !(*this == other); }
+
+    // Sort tiles by (y, x) so that two regions with the same tile set in
+    // different insertion order hash and compare equal. The cache canonicalises
+    // on the way in (see RenderCache), so callers that build regions tile-by-
+    // tile do not need to remember to sort.
+    void canonicalize() {
+        std::sort(tiles.begin(), tiles.end(), [](const Tile& a, const Tile& b) {
+            if (a.y != b.y) return a.y < b.y;
+            if (a.x != b.x) return a.x < b.x;
+            if (a.height != b.height) return a.height < b.height;
+            return a.width < b.width;
+        });
+    }
 };
 
 struct Pin {
@@ -88,3 +108,34 @@ struct Node {
 };
 
 }  // namespace loom::core
+
+namespace std {
+template <>
+struct hash<loom::core::Tile> {
+    size_t operator()(const loom::core::Tile& t) const noexcept {
+        // Mix the four uint32 fields. The constants are arbitrary primes —
+        // the goal is to scramble lattice patterns (axis-aligned tile grids
+        // are the common case) rather than maximise crypto-strength entropy.
+        uint64_t h = (uint64_t)t.x;
+        h = h * 0x9E3779B97F4A7C15ULL + (uint64_t)t.y;
+        h = h * 0x9E3779B97F4A7C15ULL + (uint64_t)t.width;
+        h = h * 0x9E3779B97F4A7C15ULL + (uint64_t)t.height;
+        return hash<uint64_t>{}(h);
+    }
+};
+
+template <>
+struct hash<loom::core::Region> {
+    size_t operator()(const loom::core::Region& r) const noexcept {
+        // Order-dependent: callers must canonicalize() before hashing if two
+        // regions with the same tile set in different orders must collide.
+        // RenderCache canonicalises internally before keying.
+        size_t h = 0;
+        hash<loom::core::Tile> tileHash;
+        for (const auto& t : r.tiles) {
+            h ^= tileHash(t) + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
+        }
+        return h;
+    }
+};
+}  // namespace std
