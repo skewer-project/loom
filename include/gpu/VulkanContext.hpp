@@ -162,9 +162,6 @@ class VulkanContext {
         const std::vector<VkPresentModeKHR>& availablePresentModes);
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
-    void transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout,
-                               VkImageLayout newLayout);
-
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
     bool checkValidationLayerSupport();
     std::vector<const char*> getRequiredExtensions();

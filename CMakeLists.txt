@@ -169,6 +169,7 @@ add_library(LoomCore STATIC
     src/gpu/DispatchManager.cpp
     src/gpu/DisplayPass.cpp
     src/gpu/HazardTracker.cpp
+    src/gpu/LayoutTransitions.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp
