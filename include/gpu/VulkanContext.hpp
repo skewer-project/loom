@@ -4,9 +4,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include <iostream>
 #include <memory>
-#include <vector>
 
 #include "core/Constants.hpp"
 #include "gpu/BindlessHeap.hpp"
@@ -21,17 +19,23 @@
 
 namespace loom::gpu {
 
+// Composition root for the Vulkan stack. Owns the subsystems and forwards
+// the public API; carries no Vulkan state of its own.
 class VulkanContext {
   public:
     VulkanContext();
     ~VulkanContext();
 
+    VulkanContext(const VulkanContext&) = delete;
+    VulkanContext& operator=(const VulkanContext&) = delete;
+
     void init(const loom::platform::Window& window, const char* appName);
 
-    void waitIdle() const;  // Called from main() before any destructor runs to ensure the GPU has
-                            // finished all in-flight work.
+    // Called from main() before any destructor runs to ensure the GPU has
+    // finished all in-flight work.
+    void waitIdle() const;
 
-    VkCommandBuffer beginFrame() { return m_frameLoop->beginFrame(); }
+    [[nodiscard]] VkCommandBuffer beginFrame() { return m_frameLoop->beginFrame(); }
     void endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui) {
         m_frameLoop->endFrame(cmd, imgui);
     }
@@ -41,55 +45,42 @@ class VulkanContext {
     // (BindlessHeap, TransientImagePool) in Phase 6.
     [[nodiscard]] uint64_t currentFrameValue() const { return m_frameLoop->currentFrameValue(); }
 
-    VkCommandBuffer beginSingleTimeCommands();
-    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-
-    VkInstance getVkInstance() const {
-        return m_instanceObj ? m_instanceObj->get() : VK_NULL_HANDLE;
+    [[nodiscard]] VkCommandBuffer beginSingleTimeCommands() {
+        return m_resourceFactory->beginSingleTimeCommands();
     }
-    VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
-    VkDevice getDevice() const { return m_device; }
-    VkDescriptorPool getDescriptorPool() const {
-        return m_resourceFactory ? m_resourceFactory->getDescriptorPool() : VK_NULL_HANDLE;
-    }  // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
-    VkFormat getSwapchainImageFormat() const {
-        return m_swapchainObj ? m_swapchainObj->getFormat() : VK_FORMAT_UNDEFINED;
-    }
-    uint32_t getGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
-    VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
-    VkCommandPool getCommandPool() const {
-        return m_resourceFactory ? m_resourceFactory->getCommandPool() : VK_NULL_HANDLE;
-    }
-    uint32_t getSwapchainImageCount() const {
-        return m_swapchainObj ? m_swapchainObj->getImageCount() : 0;
+    void endSingleTimeCommands(VkCommandBuffer cmd) {
+        m_resourceFactory->endSingleTimeCommands(cmd);
     }
 
-    VmaAllocator getVmaAllocator() const {
-        return m_resourceFactory ? m_resourceFactory->getVmaAllocator() : VK_NULL_HANDLE;
+    [[nodiscard]] VkInstance getVkInstance() const { return m_instance->get(); }
+    [[nodiscard]] VkPhysicalDevice getPhysicalDevice() const { return m_device->getPhysical(); }
+    [[nodiscard]] VkDevice getDevice() const { return m_device->get(); }
+
+    [[nodiscard]] VkQueue getGraphicsQueue() const { return m_device->getGraphicsQueue(); }
+    [[nodiscard]] uint32_t getGraphicsQueueFamily() const {
+        return m_device->getGraphicsQueueFamily();
     }
-    BindlessHeap& getBindlessHeap() { return m_resourceFactory->getBindlessHeap(); }
+
+    [[nodiscard]] VkDescriptorPool getDescriptorPool() const {
+        return m_resourceFactory->getDescriptorPool();
+    }
+    [[nodiscard]] VkCommandPool getCommandPool() const {
+        return m_resourceFactory->getCommandPool();
+    }
+    [[nodiscard]] VmaAllocator getVmaAllocator() const {
+        return m_resourceFactory->getVmaAllocator();
+    }
+    [[nodiscard]] BindlessHeap& getBindlessHeap() { return m_resourceFactory->getBindlessHeap(); }
+
+    [[nodiscard]] VkFormat getSwapchainImageFormat() const { return m_swapchain->getFormat(); }
+    [[nodiscard]] uint32_t getSwapchainImageCount() const { return m_swapchain->getImageCount(); }
 
   private:
-    GLFWwindow* m_window = nullptr;  // Non-owning pointer. The Window object in main() owns the
-                                     // GLFW window and outlives VulkanContext.
-    std::unique_ptr<Instance> m_instanceObj;
-    std::unique_ptr<Device> m_deviceObj;
-    std::unique_ptr<Swapchain> m_swapchainObj;
+    std::unique_ptr<Instance> m_instance;
+    std::unique_ptr<Device> m_device;
+    std::unique_ptr<Swapchain> m_swapchain;
     std::unique_ptr<ResourceFactory> m_resourceFactory;
     std::unique_ptr<FrameLoop> m_frameLoop;
-
-    // Shadow handles from m_deviceObj for convenience inside this façade.
-    // Removed in Phase 5.7 when the rest of VulkanContext is slimmed down.
-    VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
-    VkDevice m_device = VK_NULL_HANDLE;
-
-    VkQueue m_graphicsQueue = VK_NULL_HANDLE;
-    VkQueue m_computeQueue = VK_NULL_HANDLE;
-    VkQueue m_presentQueue = VK_NULL_HANDLE;
-
-    uint32_t m_graphicsQueueFamily = UINT32_MAX;
-    uint32_t m_computeQueueFamily = UINT32_MAX;
-    uint32_t m_presentQueueFamily = UINT32_MAX;
 };
 
 }  // namespace loom::gpu

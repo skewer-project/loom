@@ -257,10 +257,10 @@ Phases 1, 2.
 
 ---
 
-## Phase 5 — VulkanContext Decomposition & Vulkan 1.3 Modernisation (Part 1 of 2)
+## Phase 5 — VulkanContext Decomposition & Vulkan 1.3 Modernisation
 
 ### Goal
-Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance`, `Device`, `Swapchain`, `FrameLoop`, `ResourceFactory`) and modernise to Vulkan 1.3 idioms (timeline semaphores, persistent on-disk `VkPipelineCache`, validation-layer feature requests). The plan splits this phase into eight sub-tasks; this session lands four — the rest are deferred to a fresh session because the timeline-semaphore switch is behavioural and deserves end-to-end testing on a GPU machine that this session doesn't have, and the system-reminder echoes from the carve-out work consumed context faster than expected.
+Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance`, `Device`, `Swapchain`, `FrameLoop`, `ResourceFactory`) and modernise to Vulkan 1.3 idioms (timeline semaphores, persistent on-disk `VkPipelineCache`, validation-layer feature requests). Eight sub-tasks across two sessions: the first session landed 5.8 / 5.1 / 5.2 / 5.3 (the mechanical carve-outs); this session lands 5.5 / 5.4 / 5.6 / 5.7 (the resource subsystem, the timeline-semaphore behavioural switch, the persistent pipeline cache, and the final façade slim).
 
 ### Decisions
 
@@ -281,7 +281,7 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - 5.5 ✅ — `ResourceFactory` carved out (command pool, descriptor pool, VMA allocator, `BindlessHeap`, single-time-commands). VulkanContext getters delegate to it; the per-frame command-buffer allocation pulls the pool from the factory rather than from a member. Net deletion of ~98 lines in `VulkanContext.cpp` for the same behaviour. Destructor order: `m_resourceFactory.reset()` before the device is torn down, matching the existing swapchain-then-device pattern.
 - 5.4 ✅ — `FrameLoop` carved out with timeline-semaphore switch. Replaces the binary-fence + per-image-fence pattern with a single monotonic timeline semaphore: each submit signals `m_frameValue+1`; the start of frame N waits for value `(m_frameValue+1) - MAX_FRAMES_IN_FLIGHT` on the timeline before reusing the slot. Binary semaphores remain only where the Vulkan API requires them (`vkAcquireNextImageKHR`'s signal and `vkQueuePresentKHR`'s wait). `currentFrameValue()` exposes the monotonic counter for Phase 6's bindless / pool retirement gates. Submit chains `VkTimelineSemaphoreSubmitInfo` via `pNext` to provide the signal value; the wait-value count must equal the wait-semaphore count, so a dummy `0` covers the binary image-available wait. The `m_imagesInFlight` per-image fence tracker is gone — the timeline wait subsumes it, and so does the per-image binary present-wait that the swapchain already needed. Header comment in `FrameLoop.hpp` explains why each binary semaphore is still indexed the way it is.
 - 5.6 ✅ — Disk-backed `VkPipelineCache`. New `platform::userDataDir()` resolves `~/Library/Caches/loom` on macOS, `$XDG_DATA_HOME/loom` (or `$HOME/.local/share/loom`) on Linux, `%LOCALAPPDATA%/loom` on Windows, and lazy-creates the directory. `PipelineCache` constructs a `VkPipelineCache` seeded from `pipeline_cache.bin` if present and passes the handle to `vkCreateComputePipelines` instead of the previous `VK_NULL_HANDLE`. Destructor calls `vkGetPipelineCacheData` and writes to a `.tmp` sibling + rename so a crash mid-write leaves the prior cache intact. Driver/GPU mismatch on load (returns `VK_ERROR_INCOMPATIBLE_DRIVER` or otherwise fails) falls back to an empty cache with a stderr note — the engine boots, just slower until it re-warms. Path resolution can throw if `$HOME` is unset; we catch and degrade to an in-memory cache rather than failing engine startup.
-- 5.7 — pending. Slim `VulkanContext` to a true façade.
+- 5.7 ✅ — `VulkanContext` slimmed to a pure composition root. All shadow members are gone: `m_physicalDevice`, `m_device`, `m_graphicsQueue` / `m_computeQueue` / `m_presentQueue`, the three queue-family indices, and the per-frame command-buffer / semaphore / fence vectors. Every getter now delegates to a subsystem object. The body of `VulkanContext.cpp` is ~30 lines (constructor, destructor with explicit reset order, `init` composition, `waitIdle`). Public API is unchanged from `main.cpp` and the tests' perspective; the file went from ~290 lines to ~35.
 
 ### Files created
 
@@ -305,22 +305,18 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - `ctest --test-dir build` — 63/63 pass headless after each sub-task. Same set of GPU-skip tests as before.
 - Public API unchanged from `main.cpp`'s perspective — `getDevice`, `getPhysicalDevice`, `getGraphicsQueue`, `getGraphicsQueueFamily`, `getDescriptorPool`, `getSwapchainImageFormat`, `getSwapchainImageCount`, `getVmaAllocator`, `getBindlessHeap`, `getVkInstance`, `beginFrame`, `endFrame`, `waitIdle` all behave identically.
 
-### Why this session stops mid-phase
+### Verification
 
-Phase 5 is the plan's largest single phase (3.5 days, high risk, the "load-bearing modernisation"). Sub-task 5.4 (timeline semaphores) is a behavioural change that wants:
-1. A GPU machine to validate the new sync pattern end-to-end (this dev machine is headless — GPU tests `GTEST_SKIP`).
-2. A clean session to focus on it without the carve-out scaffolding consuming attention.
-
-5.5 (ResourceFactory) and 5.6 (persistent pipeline cache) are mechanically similar to the four already-landed carve-outs but were skipped to keep the boundary clean — the next session can do them as one logical unit alongside 5.4. 5.7 (façade slim) is the final cleanup pass that depends on 5.4–5.6 being done.
-
-### Resume instructions for the next session
-
-> Continue Phase 5 from sub-task 5.5. Start by reading `REFACTOR_LOG.md` and the existing carve-out commits (`git log --oneline | head -10`). Then: `ResourceFactory` → `FrameLoop` with timeline semaphores → persistent `VkPipelineCache` → slim `VulkanContext` to a façade. Build green at 63/63.
+- Build: clean after each of the eight sub-task commits across both sessions.
+- `ctest --test-dir build` — 63/63 pass headless after every sub-task. GPU-dependent tests `GTEST_SKIP` on this dev machine; the timeline-semaphore path is not exercised by the test suite. The end-to-end check (Loom runs, frames render correctly, no validation warnings) wants a Vulkan-capable host and is deferred to a manual smoke pass.
+- Public API surface of `VulkanContext` after the slim: `init`, `waitIdle`, `beginFrame`, `endFrame`, `currentFrameValue`, `beginSingleTimeCommands`, `endSingleTimeCommands`, plus passthrough getters. Identical (modulo the new `currentFrameValue`) to the pre-decomposition surface; `main.cpp` and all tests build unchanged.
 
 ### Dependencies
 Phase 1 (`LOOM_ASSERT`, `LOOM_VK_CHECK`, `transitionImageLayout` derived-mask rewrite). Phase 4 only incidentally (no overlap in files).
 
 ### Known follow-ups
-- 5.7 will retire the shadow members (`m_device`, `m_physicalDevice`, queue handles, `m_imagesInFlight`, `m_commandBuffers`, `m_imageAvailable/renderFinishedSemaphores`, `m_inFlightFences`, etc.) once `FrameLoop` and `ResourceFactory` own them.
-- `Device::checkDeviceExtensionSupport` is currently unused at the public level — the suitability check inlines its logic. Keep it as a debug/test hook; remove later if it stays unused.
+- Phase 6 wires `BindlessHeap` and `TransientImagePool` retirement to the timeline value via `VulkanContext::currentFrameValue()` (or, more directly, `FrameLoop::currentFrameValue()` once the pools are passed a reference).
+- The persistent pipeline cache writes `pipeline_cache.bin` on every shutdown. A future test (Phase 10) should round-trip create → destroy → re-load and assert `vkGetPipelineCacheData` size > the empty-cache header size. Until then the file is verified by manual inspection.
+- `Device::checkDeviceExtensionSupport` is currently unused at the public level — the suitability check inlines its logic. Keep as a debug/test hook; remove later if it stays unused.
 - `Swapchain` always picks `B8G8R8A8_SRGB` if available, else the first format. Once a settings system lands, this becomes user-configurable.
+- The `MAX_SWAPCHAIN_IMAGES = 8` ceiling for renderFinished semaphores avoids semaphore recreation on swapchain resize; an `LOOM_ASSERT(swapchain.getImageCount() <= MAX_SWAPCHAIN_IMAGES)` at swapchain construction would harden this if a future driver ever exceeds it.
