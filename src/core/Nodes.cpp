@@ -1,17 +1,22 @@
 #include "core/Nodes.hpp"
 
-#include <cassert>
-#include <cstring>
-#include <iostream>
-
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
+#include "core/NodeTaskBuilders.hpp"
 #include "core/RenderCache.hpp"
-#include "gpu/ComputeTask.hpp"
 #include "gpu/PipelineCache.hpp"
 #include "gpu/TransientImagePool.hpp"
 
 namespace loom::core {
+
+namespace {
+
+gpu::ImageSpec defaultColorSpec(VkExtent2D extent) {
+    return gpu::ImageSpec{VK_FORMAT_R32G32B32A32_SFLOAT, extent,
+                          VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT};
+}
+
+}  // namespace
 
 gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, const Region& region,
                                  uint32_t inputIndex) {
@@ -32,48 +37,17 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, const Region& region,
 // ConstantNode
 // -----------------------------------------------------------------------------
 
-void ConstantNode::markRequiredTiles(const Region& requestedRegion,
+void ConstantNode::markRequiredTiles(const Region& /*requestedRegion*/,
                                      std::unordered_set<NodeHandle>& activeNodes) {
     activeNodes.insert(id);
-    // No inputs to propagate to.
 }
 
 void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
-    // For now, we still allocate a full image, but eventually this will be tile-based.
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
-
-    gpu::ComputeTask task{};
-    task.label = "ConstantNode.fill";
-    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
-
-    struct {
-        float color[4];
-        uint32_t outputSlot;
-        uint32_t width;
-        uint32_t height;
-    } pc;
-    pc.color[0] = 1.0f;
-    pc.color[1] = 0.0f;
-    pc.color[2] = 0.0f;
-    pc.color[3] = 1.0f;
-    pc.outputSlot = handle.bindlessSlot;
-    pc.width = ctx.requestedExtent.width;
-    pc.height = ctx.requestedExtent.height;
-
-    memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-    task.pushConstantSize = sizeof(pc);
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-    task.writeDependencies.push_back(handle);
-
-    ctx.tasks.push_back(task);
+    gpu::ImageHandle handle = ctx.imagePool->acquire(defaultColorSpec(ctx.requestedExtent));
+    const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
+    ctx.tasks.push_back(buildFillTask(ctx, handle, red, "ConstantNode.fill"));
     ctx.renderCache->store(outputs[0], region, handle);
 }
 
@@ -112,50 +86,18 @@ void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
         return;
     }
 
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
-
-    gpu::ComputeTask task{};
-    task.label = "MergeNode.fill";
-    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
-
-    struct {
-        float color[4];
-        uint32_t outputSlot;
-        uint32_t width;
-        uint32_t height;
-    } pc;
+    gpu::ImageHandle handle = ctx.imagePool->acquire(defaultColorSpec(ctx.requestedExtent));
 
     if (in1.isValid() && in2.isValid()) {
-        pc.color[0] = 1.0f;
-        pc.color[1] = 0.0f;
-        pc.color[2] = 1.0f;
-        pc.color[3] = 1.0f;
+        const float magenta[4] = {1.0f, 0.0f, 1.0f, 1.0f};
+        gpu::ComputeTask task = buildFillTask(ctx, handle, magenta, "MergeNode.fill");
         task.readDependencies.push_back(in1);
         task.readDependencies.push_back(in2);
+        ctx.tasks.push_back(std::move(task));
     } else {
-        pc.color[0] = 0.1f;
-        pc.color[1] = 0.1f;
-        pc.color[2] = 0.1f;
-        pc.color[3] = 1.0f;
+        const float grey[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+        ctx.tasks.push_back(buildFillTask(ctx, handle, grey, "MergeNode.fill"));
     }
-
-    pc.outputSlot = handle.bindlessSlot;
-    pc.width = ctx.requestedExtent.width;
-    pc.height = ctx.requestedExtent.height;
-
-    memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-    task.pushConstantSize = sizeof(pc);
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-
-    task.writeDependencies.push_back(handle);
-
-    ctx.tasks.push_back(task);
     ctx.renderCache->store(outputs[0], region, handle);
 }
 
@@ -207,57 +149,14 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
     gpu::ImageHandle in = pullInput(ctx, region, 0);
-
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle out = ctx.imagePool->acquire(spec);
-
-    gpu::ComputeTask task{};
+    gpu::ImageHandle out = ctx.imagePool->acquire(defaultColorSpec(ctx.requestedExtent));
 
     if (in.isValid()) {
-        task.label = "PassthroughNode.copy";
-        task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
-        struct {
-            uint32_t inputSlot;
-            uint32_t outputSlot;
-            uint32_t width;
-            uint32_t height;
-        } pc;
-        pc.inputSlot = in.bindlessSlot;
-        pc.outputSlot = out.bindlessSlot;
-        pc.width = ctx.requestedExtent.width;
-        pc.height = ctx.requestedExtent.height;
-        memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-        task.pushConstantSize = sizeof(pc);
-        task.readDependencies.push_back(in);
+        ctx.tasks.push_back(buildPassthroughTask(ctx, in, out, "PassthroughNode.copy"));
     } else {
-        task.label = "PassthroughNode.fill";
-        task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
-        struct {
-            float color[4];
-            uint32_t outputSlot;
-            uint32_t width;
-            uint32_t height;
-        } pc;
-        pc.color[0] = 0.1f;
-        pc.color[1] = 0.1f;
-        pc.color[2] = 0.1f;
-        pc.color[3] = 1.0f;
-        pc.outputSlot = out.bindlessSlot;
-        pc.width = ctx.requestedExtent.width;
-        pc.height = ctx.requestedExtent.height;
-        memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-        task.pushConstantSize = sizeof(pc);
+        const float grey[4] = {0.1f, 0.1f, 0.1f, 1.0f};
+        ctx.tasks.push_back(buildFillTask(ctx, out, grey, "PassthroughNode.fill"));
     }
-
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-    task.writeDependencies.push_back(out);
-
-    ctx.tasks.push_back(task);
     ctx.renderCache->store(outputs[0], region, out);
 }
 

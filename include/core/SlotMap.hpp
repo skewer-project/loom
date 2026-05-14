@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <limits>
 #include <optional>
 #include <utility>
@@ -91,7 +90,10 @@ class SlotMap {
         return true;
     }
 
-    void forEach(std::function<void(HandleType, T&)> callback) {
+    // Templated to avoid a per-call std::function heap allocation. Lambdas
+    // and other callables pass through unchanged at the call site.
+    template <typename F>
+    void forEach(F&& callback) {
         for (uint32_t i = 0; i < slots.size(); ++i) {
             if (slots[i].isActive) {
                 callback(HandleType(i, slots[i].generation), slots[i].data.value());
@@ -99,7 +101,8 @@ class SlotMap {
         }
     }
 
-    void forEach(std::function<void(HandleType, const T&)> callback) const {
+    template <typename F>
+    void forEach(F&& callback) const {
         for (uint32_t i = 0; i < slots.size(); ++i) {
             if (slots[i].isActive) {
                 callback(HandleType(i, slots[i].generation), slots[i].data.value());

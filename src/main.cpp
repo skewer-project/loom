@@ -112,13 +112,15 @@ int main() {
                                         (uint32_t)imgui.getViewportSize().y});
                 graph.execute(evalCtx, region);
 
-                // Get viewer output for display
+                // Get viewer output for display. v1 takes the first viewer;
+                // multi-viewer UI selection lands in a future feature branch.
                 loom::gpu::ImageHandle viewerOutput;
-                graph.forEachNode([&](loom::core::NodeHandle h, loom::core::Node& node) {
-                    if (node.type == loom::core::NodeType::Viewer) {
-                        viewerOutput = static_cast<loom::core::ViewerNode&>(node).lastOutput;
+                auto viewers = graph.getViewers();
+                if (!viewers.empty()) {
+                    if (auto* node = graph.getNode(viewers[0])) {
+                        viewerOutput = static_cast<loom::core::ViewerNode*>(node)->lastOutput;
                     }
-                });
+                }
 
                 // Record compute dispatches
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,

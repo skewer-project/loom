@@ -1,8 +1,8 @@
 #pragma once
 
 #include <algorithm>
+#include <deque>
 #include <memory>
-#include <queue>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
@@ -124,12 +124,12 @@ class Graph {
         Node* startNode = getNode(startNodeHandle);
         if (!startNode || startNode->isDirty) return;
 
-        std::queue<NodeHandle> q;
-        q.push(startNodeHandle);
+        m_dirtyQueue.clear();
+        m_dirtyQueue.push_back(startNodeHandle);
 
-        while (!q.empty()) {
-            NodeHandle currentHandle = q.front();
-            q.pop();
+        while (!m_dirtyQueue.empty()) {
+            NodeHandle currentHandle = m_dirtyQueue.front();
+            m_dirtyQueue.pop_front();
 
             Node* currentNode = getNode(currentHandle);
             if (!currentNode) continue;
@@ -149,7 +149,7 @@ class Graph {
                         NodeHandle nextNodeHandle = nextPin->node;
                         Node* nextNode = getNode(nextNodeHandle);
                         if (nextNode && !nextNode->isDirty) {
-                            q.push(nextNodeHandle);
+                            m_dirtyQueue.push_back(nextNodeHandle);
                         }
                     }
                 }
@@ -230,19 +230,37 @@ class Graph {
     Link* getLink(LinkHandle h) { return links.get(h); }
     const Link* getLink(LinkHandle h) const { return links.get(h); }
 
-    void forEachNode(std::function<void(NodeHandle, Node&)> cb) {
+    // Templated to keep the callback inlined; called per-frame for several
+    // graph operations and is hot enough to matter.
+    template <typename F>
+    void forEachNode(F&& cb) {
         nodes.forEach([&](NodeHandle h, std::unique_ptr<Node>& ptr) {
             if (ptr) cb(h, *ptr);
         });
     }
 
-    void forEachNode(std::function<void(NodeHandle, const Node&)> cb) const {
+    template <typename F>
+    void forEachNode(F&& cb) const {
         nodes.forEach([&](NodeHandle h, const std::unique_ptr<Node>& ptr) {
             if (ptr) cb(h, *ptr);
         });
     }
 
-    void forEachLink(std::function<void(LinkHandle, Link&)> cb) { links.forEach(cb); }
+    template <typename F>
+    void forEachLink(F&& cb) {
+        links.forEach(std::forward<F>(cb));
+    }
+
+    // Convenience: returns every viewer node currently in the graph. The
+    // engine consumes viewers[0] in v1; document any future per-viewer policy
+    // in CLAUDE.md when multi-viewer lands.
+    [[nodiscard]] std::vector<NodeHandle> getViewers() const {
+        std::vector<NodeHandle> result;
+        forEachNode([&](NodeHandle h, const Node& node) {
+            if (node.type == NodeType::Viewer) result.push_back(h);
+        });
+        return result;
+    }
 
     std::string getPinLabel(PinHandle h) const {
         const Pin* pin = pins.get(h);
@@ -275,8 +293,12 @@ class Graph {
     std::vector<NodeHandle> topoOrder;
     bool isTopoDirty = true;
 
-    // Allocation pressure fix: reusable scratch buffer
-    mutable std::vector<uint8_t> m_visitedScratch;
+    // Reusable scratch buffers — clear()ed at the top of each method that
+    // uses them. The vector / deque capacity is retained between calls.
+    mutable std::vector<uint8_t> m_visitedScratch;  // isReachable DFS
+    std::deque<NodeHandle> m_dirtyQueue;            // markDirty BFS
+    std::deque<NodeHandle> m_topoQueue;             // computeTopologicalOrder Kahn
+    std::vector<int> m_inDegree;                    // computeTopologicalOrder Kahn
 
     // Step 1: Cycle Detection (DFS)
     bool isReachable(NodeHandle startNode, NodeHandle targetNode) const {
@@ -330,8 +352,9 @@ class Graph {
         topoOrder.clear();
         if (activeNodes.empty()) return;
 
-        std::unordered_map<uint32_t, int> inDegree;
-        std::queue<NodeHandle> queue;
+        const uint32_t cap = nodes.capacity();
+        m_inDegree.assign(cap, -1);
+        m_topoQueue.clear();
 
         // Initialize in-degree for active nodes
         for (auto h : activeNodes) {
@@ -347,15 +370,15 @@ class Graph {
                     }
                 }
             }
-            inDegree[h.index] = count;
+            m_inDegree[h.index] = count;
             if (count == 0) {
-                queue.push(h);
+                m_topoQueue.push_back(h);
             }
         }
 
-        while (!queue.empty()) {
-            NodeHandle uHandle = queue.front();
-            queue.pop();
+        while (!m_topoQueue.empty()) {
+            NodeHandle uHandle = m_topoQueue.front();
+            m_topoQueue.pop_front();
             topoOrder.push_back(uHandle);
 
             const Node* uNode = getNode(uHandle);
@@ -373,9 +396,8 @@ class Graph {
                     if (vPin) {
                         NodeHandle vHandle = vPin->node;
                         if (activeNodes.count(vHandle)) {
-                            inDegree[vHandle.index]--;
-                            if (inDegree[vHandle.index] == 0) {
-                                queue.push(vHandle);
+                            if (--m_inDegree[vHandle.index] == 0) {
+                                m_topoQueue.push_back(vHandle);
                             }
                         }
                     }

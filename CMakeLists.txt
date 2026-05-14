@@ -181,6 +181,7 @@ add_library(LoomCore STATIC
     src/core/Assert.cpp
     src/core/ColorManagement.cpp
     src/core/Nodes.cpp
+    src/core/NodeTaskBuilders.cpp
     src/core/RenderCache.cpp
 )
 if(HAS_SHADER_COMPILER)
