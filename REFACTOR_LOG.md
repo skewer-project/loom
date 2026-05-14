@@ -226,16 +226,17 @@ Make `Region` actually participate in caching and evaluation. The contract this 
 Sub-task tracking:
 - 4.1 ✅ — `Region` hashable + canonical. Single-file change in `Types.hpp`. Build green.
 - 4.2 ✅ — `RenderCache` re-keyed by `(pin, region)`. `invalidateIfExtentChanged` and `m_lastExtent` removed. `evict` signature widened. `PushPullTest` and `RenderCacheTest` updated. Build green; ctest 59/59 (1 fewer than baseline, equal to baseline 60 minus the deliberately-removed `InvalidateIfExtentChangedClearsCache` test).
-- 4.3 — pending. `Node::pullInput` to take `const Region&` and thread it to `RenderCache::retrieve`. Three node `execute` bodies updated.
+- 4.3 ✅ — `Node::pullInput` now takes `const Region&` and threads it to `RenderCache::retrieve`. Three call sites (`MergeNode::execute` × 2, `ViewerNode::execute`, `PassthroughNode::execute`) pass the requested region through. The temporary `Region r;` in `Node::pullInput` is gone. Build green.
 - 4.4 — pending. CLAUDE.md §5 already describes the contract; verify the prose matches the post-Phase-4 code.
 - 4.5 — pending. New tests: `RegionMissCausesReeval`, `RegionHitSkipsReeval`, `RegionCanonicalisation`, `RegionPropagatesInPullInput`.
 - 4.6 — pending. Final build + ctest pass; close out this section.
 
 ### Files modified (so far)
 
-- `include/core/Types.hpp` — added `Tile::operator!=`, `Region::operator==/!=`, `Region::canonicalize()`, `std::hash<Tile>`, `std::hash<Region>`.
+- `include/core/Types.hpp` — added `Tile::operator!=`, `Region::operator==/!=`, `Region::canonicalize()`, `std::hash<Tile>`, `std::hash<Region>`; `Node::pullInput` signature gains `const Region&`.
 - `include/core/RenderCache.hpp` — new `CacheKey` + `CacheKeyHash`; map re-keyed; `invalidateIfExtentChanged` and `m_lastExtent` removed; `evict` widened; no longer includes `<vulkan/vulkan.h>`.
 - `src/core/RenderCache.cpp` — `garbageCollect` walks the new map and tests `it->first.pin` directly.
+- `src/core/Nodes.cpp` — `Node::pullInput` implementation forwards the region to `RenderCache::retrieve`; all four `execute` bodies pass their requested region to `pullInput`.
 - `src/main.cpp` — removed `renderCache.invalidateIfExtentChanged(...)` call.
 - `tests/core/RenderCacheTest.cpp` — removed `InvalidateIfExtentChangedClearsCache`.
 - `tests/core/PushPullTest.cpp` — `evict(pin)` → `evict(pin, testRegion)`.

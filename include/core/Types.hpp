@@ -104,7 +104,13 @@ struct Node {
     virtual void execute(EvaluationContext& ctx, const Region& region) = 0;
 
   protected:
-    gpu::ImageHandle pullInput(EvaluationContext& ctx, uint32_t inputIndex);
+    // Pulls the upstream output for input `inputIndex` at the given region.
+    // The region threads through to RenderCache::retrieve so a miss at a
+    // different region produces a fresh evaluation rather than a stale hit.
+    // Default node behaviour propagates the requested region unchanged to
+    // upstream nodes — see CLAUDE.md §5 (Region semantics). Nodes with
+    // non-identity spatial mappings override markRequiredTiles instead.
+    gpu::ImageHandle pullInput(EvaluationContext& ctx, const Region& region, uint32_t inputIndex);
 };
 
 }  // namespace loom::core

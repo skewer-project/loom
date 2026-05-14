@@ -13,7 +13,8 @@
 
 namespace loom::core {
 
-gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
+gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, const Region& region,
+                                 uint32_t inputIndex) {
     if (!graph || inputIndex >= inputs.size()) return {};
 
     PinHandle inPinHandle = inputs[inputIndex];
@@ -24,9 +25,7 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
     if (!link) return {};
 
     PinHandle srcPinHandle = link->startPin;
-    // Regions are not fully implemented for tiling yet, so we pass an empty region for now.
-    Region r;
-    return ctx.renderCache->retrieve(srcPinHandle, r);
+    return ctx.renderCache->retrieve(srcPinHandle, region);
 }
 
 // -----------------------------------------------------------------------------
@@ -101,8 +100,8 @@ void MergeNode::markRequiredTiles(const Region& requestedRegion,
 void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
-    gpu::ImageHandle in1 = pullInput(ctx, 0);
-    gpu::ImageHandle in2 = pullInput(ctx, 1);
+    gpu::ImageHandle in1 = pullInput(ctx, region, 0);
+    gpu::ImageHandle in2 = pullInput(ctx, region, 1);
 
     if (in1.isValid() && !in2.isValid()) {
         ctx.renderCache->store(outputs[0], region, in1);
@@ -181,7 +180,7 @@ void ViewerNode::markRequiredTiles(const Region& requestedRegion,
 }
 
 void ViewerNode::execute(EvaluationContext& ctx, const Region& region) {
-    lastOutput = pullInput(ctx, 0);
+    lastOutput = pullInput(ctx, region, 0);
 }
 
 // -----------------------------------------------------------------------------
@@ -207,7 +206,7 @@ void PassthroughNode::markRequiredTiles(const Region& requestedRegion,
 void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
-    gpu::ImageHandle in = pullInput(ctx, 0);
+    gpu::ImageHandle in = pullInput(ctx, region, 0);
 
     gpu::ImageSpec spec{};
     spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
