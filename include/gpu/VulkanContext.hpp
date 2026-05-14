@@ -10,6 +10,7 @@
 
 #include "core/Constants.hpp"
 #include "gpu/BindlessHeap.hpp"
+#include "gpu/Instance.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
 #include "vk_mem_alloc.h"
@@ -41,9 +42,6 @@ class VulkanContext {
     ~VulkanContext();
 
     void init(const loom::platform::Window& window, const char* appName);
-    void createInstance(const char* appName);
-    void setupDebugMessenger();
-    void createSurface(GLFWwindow* window);
     void pickPhysicalDevice();
     void createLogicalDevice();
     void createSwapchain();
@@ -65,7 +63,9 @@ class VulkanContext {
     VkCommandBuffer beginSingleTimeCommands();
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 
-    VkInstance getVkInstance() const { return m_instance; }
+    VkInstance getVkInstance() const {
+        return m_instanceObj ? m_instanceObj->get() : VK_NULL_HANDLE;
+    }
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     VkDevice getDevice() const { return m_device; }
     VkDescriptorPool getDescriptorPool() const {
@@ -85,9 +85,7 @@ class VulkanContext {
   private:
     GLFWwindow* m_window = nullptr;  // Non-owning pointer. The Window object in main() owns the
                                      // GLFW window and outlives VulkanContext.
-    VkInstance m_instance = VK_NULL_HANDLE;
-    VkDebugUtilsMessengerEXT m_debugMessenger = VK_NULL_HANDLE;
-    VkSurfaceKHR m_surface = VK_NULL_HANDLE;
+    std::unique_ptr<Instance> m_instanceObj;
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
     VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
@@ -135,14 +133,6 @@ class VulkanContext {
     uint32_t m_currentFrame = 0;
     uint32_t m_currentImageIndex = 0;
 
-#ifndef NDEBUG
-    const bool m_enableValidationLayers = true;
-#else
-    const bool m_enableValidationLayers = false;
-#endif
-
-    const std::vector<const char*> m_validationLayers = {"VK_LAYER_KHRONOS_validation"};
-
     const std::vector<const char*> m_deviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME  // Required for vkCmdPipelineBarrier2 and
@@ -163,8 +153,6 @@ class VulkanContext {
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities);
 
     bool checkDeviceExtensionSupport(VkPhysicalDevice device);
-    bool checkValidationLayerSupport();
-    std::vector<const char*> getRequiredExtensions();
 };
 
 }  // namespace loom::gpu

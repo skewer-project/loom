@@ -162,6 +162,7 @@ endif()
 add_library(LoomCore STATIC
     src/platform/Window.cpp
     src/gpu/VulkanContext.cpp
+    src/gpu/Instance.cpp
     src/gpu/BindlessHeap.cpp
     src/gpu/TransientImagePool.cpp
     src/gpu/TransientBufferPool.cpp
