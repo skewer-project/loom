@@ -221,22 +221,36 @@ Make `Region` actually participate in caching and evaluation. The contract this 
 - **`CacheKey { PinHandle pin; Region region }` is the public key type.** It's exposed in `RenderCache.hpp` rather than buried in the `.cpp` because the hash specialisation has to be visible at every call site that instantiates `unordered_map<CacheKey, ...>`. Tests do not need to construct `CacheKey` directly — they call `store` / `retrieve` / `evict` with the `(pin, region)` pair.
 - **`hasValidData` builds a single probe key and mutates `pin` per output pin.** A small optimisation over constructing a fresh `CacheKey` (and re-canonicalising the region) on every iteration. Trivial for two-pin nodes; matters for nodes with many outputs.
 
-### Status (in-progress: 4.1 + 4.2 landed; 4.3, 4.5 pending)
+### Sub-task tracking
 
-Sub-task tracking:
 - 4.1 ✅ — `Region` hashable + canonical. Single-file change in `Types.hpp`. Build green.
-- 4.2 ✅ — `RenderCache` re-keyed by `(pin, region)`. `invalidateIfExtentChanged` and `m_lastExtent` removed. `evict` signature widened. `PushPullTest` and `RenderCacheTest` updated. Build green; ctest 59/59 (1 fewer than baseline, equal to baseline 60 minus the deliberately-removed `InvalidateIfExtentChangedClearsCache` test).
-- 4.3 ✅ — `Node::pullInput` now takes `const Region&` and threads it to `RenderCache::retrieve`. Three call sites (`MergeNode::execute` × 2, `ViewerNode::execute`, `PassthroughNode::execute`) pass the requested region through. The temporary `Region r;` in `Node::pullInput` is gone. Build green.
+- 4.2 ✅ — `RenderCache` re-keyed by `(pin, region)`. `invalidateIfExtentChanged` and `m_lastExtent` removed. `evict` signature widened. `PushPullTest` and `RenderCacheTest` updated.
+- 4.3 ✅ — `Node::pullInput` now takes `const Region&` and threads it to `RenderCache::retrieve`. Three call sites (`MergeNode::execute` × 2, `ViewerNode::execute`, `PassthroughNode::execute`) pass the requested region through. The temporary `Region r;` in `Node::pullInput` is gone.
 - 4.4 ✅ — CLAUDE.md §5 extended with the canonicalisation-is-internal note and the `pullInput` threading contract.
 - 4.5 ✅ — Four new tests added: `RegionMissCausesReeval`, `RegionHitSkipsReeval`, `RegionCanonicalisation`, `RegionPropagatesInPullInput`. The fourth uses a `PullInputTestNode` subclass that promotes the protected `pullInput` to public and is wired up manually (not via `Graph::addNode`) — clean because the only Graph state pullInput touches is the linked pin lookup, which we set up with a real Constant→Passthrough link.
-- 4.6 — pending. Final build + ctest pass; close out this section.
+- 4.6 ✅ — Final build + ctest: 63/63 pass (4 new tests, all green; 19 GPU tests skipped cleanly on this no-device machine).
 
-### Files modified (so far)
+### Files modified
 
 - `include/core/Types.hpp` — added `Tile::operator!=`, `Region::operator==/!=`, `Region::canonicalize()`, `std::hash<Tile>`, `std::hash<Region>`; `Node::pullInput` signature gains `const Region&`.
 - `include/core/RenderCache.hpp` — new `CacheKey` + `CacheKeyHash`; map re-keyed; `invalidateIfExtentChanged` and `m_lastExtent` removed; `evict` widened; no longer includes `<vulkan/vulkan.h>`.
+- `include/CLAUDE.md` — §5 (Region semantics) extended.
 - `src/core/RenderCache.cpp` — `garbageCollect` walks the new map and tests `it->first.pin` directly.
 - `src/core/Nodes.cpp` — `Node::pullInput` implementation forwards the region to `RenderCache::retrieve`; all four `execute` bodies pass their requested region to `pullInput`.
 - `src/main.cpp` — removed `renderCache.invalidateIfExtentChanged(...)` call.
-- `tests/core/RenderCacheTest.cpp` — removed `InvalidateIfExtentChangedClearsCache`.
+- `tests/core/RenderCacheTest.cpp` — removed `InvalidateIfExtentChangedClearsCache`; added four region-keyed tests.
 - `tests/core/PushPullTest.cpp` — `evict(pin)` → `evict(pin, testRegion)`.
+
+### Verification
+
+- Build: clean.
+- `ctest --test-dir build` — 63/63 pass headless (4 new tests, baseline previously 60).
+- Manual review: `RenderCache.hpp` is now Vulkan-free (header dependency closure shrank by one).
+
+### Dependencies
+Phases 1, 2.
+
+### Known follow-ups for later phases
+- The `Region` propagation contract is documented for `markRequiredTiles` overrides; no production node currently exercises a non-identity mapping. The first one (likely `Blur` in a future feature branch) will validate the contract end-to-end.
+- `CacheKey` is intentionally exposed in `RenderCache.hpp`. If the hash specialisation ever needs to grow (e.g. to include node generation), it stays a one-file change.
+- `Region::canonicalize()` is a public mutator. Future code that builds regions in many places could lean on this — or we could harden the contract by making `Region`'s constructor accept tiles and canonicalise on construction. Deferred until needed.
