@@ -101,6 +101,21 @@ GitHub Actions run style checks on every push and pull request. Use the pre-comm
 
 ---
 
+## Project documents
+
+| Document | Purpose |
+|----------|---------|
+| [CLAUDE.md](CLAUDE.md) | Engineering conventions and invariants. PRs cite this. |
+| [docs/architecture.md](docs/architecture.md) | One-page system overview. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Setup, branch naming, commit style, PR checklist. |
+| [CHANGELOG.md](CHANGELOG.md) | User-visible change ledger (Keep-a-Changelog format). |
+| `REFACTOR_LOG.md` | Per-phase dev log for the active cleanup branch (not committed to `main`). |
+| `TEMP_DOCUMENTATION.md` | Private dev archive of the original implementation phases (not modified). |
+
+`LICENSE`, `NOTICE`, `CODE_OF_CONDUCT.md`, and `SECURITY.md` will be added by the project owner.
+
+---
+
 ## Built With
 * **C++20 & Vulkan 1.3** — Core engine and GPU infrastructure.
 * **Dear ImGui** — Node editor and viewport UI.
