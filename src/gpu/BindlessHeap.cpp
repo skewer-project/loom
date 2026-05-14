@@ -1,6 +1,7 @@
 #include "gpu/BindlessHeap.hpp"
 
 #include <cassert>
+#include <iostream>
 #include <stdexcept>
 
 namespace loom::gpu {
@@ -78,7 +79,17 @@ BindlessHeap::~BindlessHeap() {
 
 uint32_t BindlessHeap::registerImage(VkImageView view) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_freeImageSlots.empty()) return 0xFFFFFFFF;
+    if (m_freeImageSlots.empty()) {
+        // The bindless image heap is exhausted. The contract is to return the
+        // 0xFFFFFFFF sentinel so callers (TransientImagePool, downstream
+        // dispatch code) can recover; a stale sentinel propagating into a
+        // shader is a hard-to-diagnose GPU hang, so log loudly first to make
+        // the root cause visible. Tests that deliberately exhaust the heap
+        // (ResourcePoolTest::FreeListExhaustion) rely on the sentinel return.
+        std::cerr << "[loom][ERROR] BindlessHeap::registerImage: heap exhausted (max "
+                  << MAX_RESOURCES << " image slots)\n";
+        return 0xFFFFFFFF;
+    }
 
     uint32_t slot = m_freeImageSlots.front();
     m_freeImageSlots.pop();
@@ -102,7 +113,11 @@ uint32_t BindlessHeap::registerImage(VkImageView view) {
 
 uint32_t BindlessHeap::registerBuffer(VkBuffer buffer, VkDeviceSize size) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_freeBufferSlots.empty()) return 0xFFFFFFFF;
+    if (m_freeBufferSlots.empty()) {
+        std::cerr << "[loom][ERROR] BindlessHeap::registerBuffer: heap exhausted (max "
+                  << MAX_RESOURCES << " buffer slots)\n";
+        return 0xFFFFFFFF;
+    }
 
     uint32_t slot = m_freeBufferSlots.front();
     m_freeBufferSlots.pop();

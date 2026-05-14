@@ -15,7 +15,7 @@ class DisplayPass {
 
     void record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage, VkImageView dstImageView,
                 VkDescriptorSet bindlessSet, uint32_t bindlessSlot, uint32_t width, uint32_t height,
-                uint32_t toneMapMode);
+                uint32_t toneMapMode, uint32_t displayTransform, float exposure);
 
   private:
     void createPipeline(VkFormat swapchainFormat, VkDescriptorSetLayout bindlessLayout);
@@ -25,11 +25,18 @@ class DisplayPass {
     VkPipeline m_pipeline = VK_NULL_HANDLE;
     VkPipelineLayout m_layout = VK_NULL_HANDLE;
 
+    // Layout must match shaders/DisplayPass.frag's push_constant block and
+    // loom::color::DisplayParams exactly. Extending this requires updating all
+    // three in lockstep.
     struct PushConstants {
         uint32_t inputSlotIndex;
         uint32_t width;
         uint32_t height;
         uint32_t toneMapMode;
+        uint32_t displayTransform;
+        float exposure;
+        float _pad0;
+        float _pad1;
     };
 };
 

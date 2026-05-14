@@ -1,13 +1,13 @@
 #pragma once
 
 #include <algorithm>
-#include <cassert>
 #include <memory>
 #include <queue>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
 
+#include "core/Assert.hpp"
 #include "core/Nodes.hpp"
 #include "core/RenderCache.hpp"
 #include "core/SlotMap.hpp"
@@ -383,8 +383,12 @@ class Graph {
             }
         }
 
-        // Defensive Invariant: All active nodes should be in the order
-        assert(topoOrder.size() == activeNodes.size());
+        // Defensive Invariant: All active nodes should be in the order. A
+        // mismatch indicates a cycle slipped past canAddLink (corruption) or
+        // an active node was concurrently removed. Either is a programming
+        // bug, not user error — LOOM_ASSERT survives NDEBUG.
+        LOOM_ASSERT(topoOrder.size() == activeNodes.size(),
+                    "Topological sort missed active nodes — cycle or concurrent mutation?");
     }
 
     std::string getDefaultNodeName(NodeType type) {

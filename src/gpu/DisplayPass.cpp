@@ -169,7 +169,7 @@ VkShaderModule DisplayPass::createShaderModule(const std::string& filename) {
 void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage,
                          VkImageView dstImageView, VkDescriptorSet bindlessSet,
                          uint32_t bindlessSlot, uint32_t width, uint32_t height,
-                         uint32_t toneMapMode) {
+                         uint32_t toneMapMode, uint32_t displayTransform, float exposure) {
     // Barrier 1: Compute Write -> Fragment Read (Memory Dependency)
     // hdrImage is transitioned to SHADER_READ_ONLY_OPTIMAL by DispatchManager
     VkImageMemoryBarrier2 hdrBarrier{};
@@ -229,7 +229,8 @@ void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_layout, 0, 1, &bindlessSet, 0,
                             nullptr);
 
-    PushConstants pc{bindlessSlot, width, height, toneMapMode};
+    PushConstants pc{bindlessSlot,     width,    height, toneMapMode,
+                     displayTransform, exposure, 0.0f,   0.0f};
     vkCmdPushConstants(cmd, m_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
 
     vkCmdDraw(cmd, 3, 1, 0, 0);

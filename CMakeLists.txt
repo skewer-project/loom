@@ -170,6 +170,8 @@ add_library(LoomCore STATIC
     src/gpu/DisplayPass.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
+    src/core/Assert.cpp
+    src/core/ColorManagement.cpp
     src/core/Nodes.cpp
     src/core/RenderCache.cpp
 )
@@ -211,6 +213,8 @@ add_executable(LoomTests
     tests/core/TopoTest.cpp
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
+    tests/core/ColorManagementTest.cpp
+    tests/core/RenderCacheTest.cpp
     tests/gpu/ResourcePoolTest.cpp
     tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp

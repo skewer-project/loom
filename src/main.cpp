@@ -1,6 +1,7 @@
 #include <cstdlib>  // For EXIT_SUCCESS and EXIT_FAILURE
 #include <iostream>
 
+#include "core/ColorManagement.hpp"
 #include "core/Graph.hpp"
 #include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
@@ -105,6 +106,10 @@ int main() {
                 evalCtx.renderCache = &renderCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
+                // Drop cached images at the wrong extent (interim until Phase
+                // 4 makes Region part of the cache key).
+                renderCache.invalidateIfExtentChanged(evalCtx.requestedExtent);
+
                 // 2-Pass Execution: Mark -> Sort -> Execute
                 loom::core::Region region;
                 region.tiles.push_back({0, 0, (uint32_t)imgui.getViewportSize().x,
@@ -125,18 +130,31 @@ int main() {
 
                 // If we have a viewer output, render it to the viewport
                 if (viewerOutput.isValid()) {
-                    displayPass.record(cmd, imagePool.getImage(viewerOutput),
-                                       imgui.getViewportImage(), imgui.getViewportImageView(),
-                                       bindlessSet, viewerOutput.bindlessSlot,
-                                       (uint32_t)imgui.getViewportSize().x,
-                                       (uint32_t)imgui.getViewportSize().y, 0);
+                    // Pick the display transform based on the actual swapchain
+                    // format. *_SRGB formats let the hardware apply the OETF;
+                    // *_UNORM formats need the shader to encode.
+                    const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
+                        static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));
+                    displayPass.record(
+                        cmd, imagePool.getImage(viewerOutput), imgui.getViewportImage(),
+                        imgui.getViewportImageView(), bindlessSet, viewerOutput.bindlessSlot,
+                        (uint32_t)imgui.getViewportSize().x, (uint32_t)imgui.getViewportSize().y,
+                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
+                        /*exposure=*/1.0f);
                 }
 
                 vulkan.endFrame(cmd, imgui);
 
-                // Step 6: Frame Garbage Collection
-                // All images acquired this frame must be released back to the pool
-                // so they can be reused in the next frame.
+                // Step 6: Frame Garbage Collection.
+                // First, drop cache entries whose pins were deleted from the
+                // graph this frame (e.g. by removeNode). Without this they
+                // orphan and the pool slot is never recovered.
+                renderCache.garbageCollect(&graph);
+
+                // Then release every handle the cache enqueued (overwrites,
+                // evictions, the GC pass above) back to the pool. The pool
+                // itself defers the actual VMA destruction to its own pending
+                // queue, drained below.
                 for (auto handle : renderCache.takePendingReleases()) {
                     imagePool.release(handle);
                 }
