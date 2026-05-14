@@ -28,8 +28,20 @@ inline uint32_t decodeIndex(uint64_t id) {
 }
 
 enum class PinDirection { Input, Output };
+// PinType is the edit-time type checked by canAddLink. PinType::Float
+// corresponds to ResourceRef::Kind::Image at runtime (the name is historical
+// — these pins carry image handles, not float scalars). PinType::DeepBuffer
+// corresponds to ResourceRef::Kind::Deep.
 enum class PinType { Float, DeepBuffer };
 enum class NodeType { Constant, Merge, Viewer, Passthrough };
+
+// Declarative pin spec returned by Node::getPinSchema(). Replaces the
+// centralised switch on NodeType — adding a new node type is now a single
+// class edit.
+struct PinSpec {
+    PinDirection direction;
+    PinType type;
+};
 
 struct Tile {
     uint32_t x, y;
@@ -96,6 +108,11 @@ struct Node {
 
     virtual ~Node() = default;
 
+    // Pin schema declaration. Replaces the central switch in Graph; adding a
+    // new node type is a single subclass edit. Graph::addNode calls this
+    // immediately after construction.
+    [[nodiscard]] virtual std::vector<PinSpec> getPinSchema() const = 0;
+
     // Pass 1: Mark required tiles and collect active nodes
     virtual void markRequiredTiles(const Region& requestedRegion,
                                    std::unordered_set<NodeHandle>& activeNodes) = 0;
@@ -105,12 +122,20 @@ struct Node {
 
   protected:
     // Pulls the upstream output for input `inputIndex` at the given region.
-    // The region threads through to RenderCache::retrieve so a miss at a
-    // different region produces a fresh evaluation rather than a stale hit.
-    // Default node behaviour propagates the requested region unchanged to
-    // upstream nodes — see CLAUDE.md §5 (Region semantics). Nodes with
-    // non-identity spatial mappings override markRequiredTiles instead.
-    gpu::ImageHandle pullInput(EvaluationContext& ctx, const Region& region, uint32_t inputIndex);
+    // Returns a tagged ResourceRef; the runtime payload depends on the
+    // upstream node's output type. Image-only nodes should use
+    // `pullImageInput` which asserts Kind::Image and returns the inner
+    // handle. Default node behaviour propagates the requested region
+    // unchanged to upstream nodes — see CLAUDE.md §5 (Region semantics).
+    // Nodes with non-identity spatial mappings override markRequiredTiles.
+    gpu::ResourceRef pullInput(EvaluationContext& ctx, const Region& region, uint32_t inputIndex);
+
+    // Typed accessor for image-only inputs. Asserts the upstream payload is
+    // `Kind::Image` (so wiring a buffer-typed node to an image input is
+    // caught at evaluation if it slips past canAddLink) and returns the
+    // unwrapped ImageHandle.
+    gpu::ImageHandle pullImageInput(EvaluationContext& ctx, const Region& region,
+                                    uint32_t inputIndex);
 };
 
 }  // namespace loom::core

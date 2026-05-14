@@ -24,6 +24,8 @@ bool handleEqual(const gpu::ImageHandle& a, const gpu::ImageHandle& b) {
            a.generation == b.generation;
 }
 
+gpu::ResourceRef refOf(gpu::ImageHandle h) { return gpu::ResourceRef::fromImage(h); }
+
 core::Region oneTileRegion(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
     core::Region r;
     r.tiles.push_back({x, y, w, h});
@@ -35,6 +37,7 @@ core::Region oneTileRegion(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
 // a full Vulkan evaluation context.
 struct PullInputTestNode : core::Node {
     PullInputTestNode() : Node(core::NodeHandle{}, core::NodeType::Passthrough, "PullInputTest") {}
+    std::vector<core::PinSpec> getPinSchema() const override { return {}; }
     void markRequiredTiles(const core::Region&, std::unordered_set<core::NodeHandle>&) override {}
     void execute(core::EvaluationContext&, const core::Region&) override {}
     using core::Node::pullInput;
@@ -56,10 +59,10 @@ TEST(RenderCacheTest, OverwriteEnqueuesPreviousHandle) {
     const auto first = makeHandle(/*pool=*/0, /*slot=*/100, /*gen=*/1);
     const auto second = makeHandle(/*pool=*/1, /*slot=*/101, /*gen=*/1);
 
-    cache.store(outPin, emptyRegion, first);
+    cache.store(outPin, emptyRegion, refOf(first));
     EXPECT_EQ(cache.takePendingReleases().size(), 0u);
 
-    cache.store(outPin, emptyRegion, second);
+    cache.store(outPin, emptyRegion, refOf(second));
 
     auto pending = cache.takePendingReleases();
     ASSERT_EQ(pending.size(), 1u);
@@ -79,8 +82,8 @@ TEST(RenderCacheTest, StoringIdenticalHandleIsIdempotent) {
     const core::Region emptyRegion;
     const auto h = makeHandle(/*pool=*/0, /*slot=*/100, /*gen=*/1);
 
-    cache.store(outPin, emptyRegion, h);
-    cache.store(outPin, emptyRegion, h);
+    cache.store(outPin, emptyRegion, refOf(h));
+    cache.store(outPin, emptyRegion, refOf(h));
 
     EXPECT_EQ(cache.takePendingReleases().size(), 0u);
 }
@@ -94,7 +97,7 @@ TEST(RenderCacheTest, GarbageCollectDropsHandlesForDeletedPins) {
 
     const core::Region emptyRegion;
     const auto h = makeHandle(/*pool=*/0, /*slot=*/100, /*gen=*/1);
-    cache.store(outPin, emptyRegion, h);
+    cache.store(outPin, emptyRegion, refOf(h));
     EXPECT_EQ(cache.DEBUG_size(), 1u);
 
     // Remove the node — its pins become invalid.
@@ -122,7 +125,7 @@ TEST(RenderCacheTest, RegionMissCausesReeval) {
     const auto regionB = oneTileRegion(0, 0, 1280, 720);
     const auto h = makeHandle(0, 100, 1);
 
-    cache.store(outPin, regionA, h);
+    cache.store(outPin, regionA, refOf(h));
 
     auto miss = cache.retrieve(outPin, regionB);
     EXPECT_FALSE(miss.isValid());
@@ -138,10 +141,11 @@ TEST(RenderCacheTest, RegionHitSkipsReeval) {
     const auto regionA = oneTileRegion(0, 0, 800, 600);
     const auto h = makeHandle(7, 200, 3);
 
-    cache.store(outPin, regionA, h);
+    cache.store(outPin, regionA, refOf(h));
 
     auto hit = cache.retrieve(outPin, regionA);
-    EXPECT_TRUE(handleEqual(hit, h));
+    ASSERT_EQ(hit.kind, gpu::ResourceRef::Kind::Image);
+    EXPECT_TRUE(handleEqual(hit.image, h));
 }
 
 TEST(RenderCacheTest, RegionCanonicalisation) {
@@ -164,10 +168,11 @@ TEST(RenderCacheTest, RegionCanonicalisation) {
     retrieveOrder.tiles.push_back({64, 0, 64, 64});
 
     const auto h = makeHandle(1, 50, 2);
-    cache.store(outPin, storeOrder, h);
+    cache.store(outPin, storeOrder, refOf(h));
 
     auto hit = cache.retrieve(outPin, retrieveOrder);
-    EXPECT_TRUE(handleEqual(hit, h));
+    ASSERT_EQ(hit.kind, gpu::ResourceRef::Kind::Image);
+    EXPECT_TRUE(handleEqual(hit.image, h));
 }
 
 TEST(RenderCacheTest, RegionPropagatesInPullInput) {
@@ -187,7 +192,7 @@ TEST(RenderCacheTest, RegionPropagatesInPullInput) {
     const auto regionA = oneTileRegion(0, 0, 800, 600);
     const auto regionB = oneTileRegion(0, 0, 1280, 720);
     const auto stored = makeHandle(2, 75, 4);
-    cache.store(srcOut, regionA, stored);
+    cache.store(srcOut, regionA, refOf(stored));
 
     PullInputTestNode tester;
     tester.graph = &graph;
@@ -197,7 +202,8 @@ TEST(RenderCacheTest, RegionPropagatesInPullInput) {
     ctx.renderCache = &cache;
 
     auto hit = tester.pullInput(ctx, regionA, 0);
-    EXPECT_TRUE(handleEqual(hit, stored));
+    ASSERT_EQ(hit.kind, gpu::ResourceRef::Kind::Image);
+    EXPECT_TRUE(handleEqual(hit.image, stored));
 
     auto miss = tester.pullInput(ctx, regionB, 0);
     EXPECT_FALSE(miss.isValid());
@@ -211,8 +217,8 @@ TEST(RenderCacheTest, ClearEnqueuesAllHandles) {
     auto nB = graph.addNode(core::NodeType::Passthrough);
 
     const core::Region emptyRegion;
-    cache.store(graph.getNode(nA)->outputs[0], emptyRegion, makeHandle(0, 100, 1));
-    cache.store(graph.getNode(nB)->outputs[0], emptyRegion, makeHandle(1, 101, 1));
+    cache.store(graph.getNode(nA)->outputs[0], emptyRegion, refOf(makeHandle(0, 100, 1)));
+    cache.store(graph.getNode(nB)->outputs[0], emptyRegion, refOf(makeHandle(1, 101, 1)));
 
     cache.clear();
 

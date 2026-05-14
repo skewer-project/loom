@@ -431,22 +431,11 @@ class Graph {
     }
 
     void setupNodePins(Node* node) {
-        switch (node->type) {
-            case NodeType::Constant:
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
-            case NodeType::Merge:
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
-            case NodeType::Viewer:
-                createPin(node, PinDirection::Input, PinType::Float);
-                break;
-            case NodeType::Passthrough:
-                createPin(node, PinDirection::Input, PinType::Float);
-                createPin(node, PinDirection::Output, PinType::Float);
-                break;
+        // The schema is per-node-class — `Node::getPinSchema()` is virtual.
+        // Adding a new node type is now a single subclass edit; no central
+        // switch to maintain.
+        for (const auto& spec : node->getPinSchema()) {
+            createPin(node, spec.direction, spec.type);
         }
     }
 

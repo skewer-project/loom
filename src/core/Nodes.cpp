@@ -1,5 +1,6 @@
 #include "core/Nodes.hpp"
 
+#include "core/Assert.hpp"
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
 #include "core/NodeTaskBuilders.hpp"
@@ -18,7 +19,7 @@ gpu::ImageSpec defaultColorSpec(VkExtent2D extent) {
 
 }  // namespace
 
-gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, const Region& region,
+gpu::ResourceRef Node::pullInput(EvaluationContext& ctx, const Region& region,
                                  uint32_t inputIndex) {
     if (!graph || inputIndex >= inputs.size()) return {};
 
@@ -33,9 +34,22 @@ gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, const Region& region,
     return ctx.renderCache->retrieve(srcPinHandle, region);
 }
 
+gpu::ImageHandle Node::pullImageInput(EvaluationContext& ctx, const Region& region,
+                                      uint32_t inputIndex) {
+    gpu::ResourceRef ref = pullInput(ctx, region, inputIndex);
+    if (!ref.isValid()) return {};
+    LOOM_ASSERT(ref.kind == gpu::ResourceRef::Kind::Image,
+                "pullImageInput called on a non-image pin payload");
+    return ref.image;
+}
+
 // -----------------------------------------------------------------------------
 // ConstantNode
 // -----------------------------------------------------------------------------
+
+std::vector<PinSpec> ConstantNode::getPinSchema() const {
+    return {{PinDirection::Output, PinType::Float}};
+}
 
 void ConstantNode::markRequiredTiles(const Region& /*requestedRegion*/,
                                      std::unordered_set<NodeHandle>& activeNodes) {
@@ -48,12 +62,18 @@ void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ImageHandle handle = ctx.imagePool->acquire(defaultColorSpec(ctx.requestedExtent));
     const float red[4] = {1.0f, 0.0f, 0.0f, 1.0f};
     ctx.tasks.push_back(buildFillTask(ctx, handle, red, "ConstantNode.fill"));
-    ctx.renderCache->store(outputs[0], region, handle);
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(handle));
 }
 
 // -----------------------------------------------------------------------------
 // MergeNode
 // -----------------------------------------------------------------------------
+
+std::vector<PinSpec> MergeNode::getPinSchema() const {
+    return {{PinDirection::Input, PinType::Float},
+            {PinDirection::Input, PinType::Float},
+            {PinDirection::Output, PinType::Float}};
+}
 
 void MergeNode::markRequiredTiles(const Region& requestedRegion,
                                   std::unordered_set<NodeHandle>& activeNodes) {
@@ -74,15 +94,15 @@ void MergeNode::markRequiredTiles(const Region& requestedRegion,
 void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
-    gpu::ImageHandle in1 = pullInput(ctx, region, 0);
-    gpu::ImageHandle in2 = pullInput(ctx, region, 1);
+    gpu::ImageHandle in1 = pullImageInput(ctx, region, 0);
+    gpu::ImageHandle in2 = pullImageInput(ctx, region, 1);
 
     if (in1.isValid() && !in2.isValid()) {
-        ctx.renderCache->store(outputs[0], region, in1);
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(in1));
         return;
     }
     if (!in1.isValid() && in2.isValid()) {
-        ctx.renderCache->store(outputs[0], region, in2);
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(in2));
         return;
     }
 
@@ -98,12 +118,16 @@ void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
         const float grey[4] = {0.1f, 0.1f, 0.1f, 1.0f};
         ctx.tasks.push_back(buildFillTask(ctx, handle, grey, "MergeNode.fill"));
     }
-    ctx.renderCache->store(outputs[0], region, handle);
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(handle));
 }
 
 // -----------------------------------------------------------------------------
 // ViewerNode
 // -----------------------------------------------------------------------------
+
+std::vector<PinSpec> ViewerNode::getPinSchema() const {
+    return {{PinDirection::Input, PinType::Float}};
+}
 
 void ViewerNode::markRequiredTiles(const Region& requestedRegion,
                                    std::unordered_set<NodeHandle>& activeNodes) {
@@ -122,12 +146,16 @@ void ViewerNode::markRequiredTiles(const Region& requestedRegion,
 }
 
 void ViewerNode::execute(EvaluationContext& ctx, const Region& region) {
-    lastOutput = pullInput(ctx, region, 0);
+    lastOutput = pullImageInput(ctx, region, 0);
 }
 
 // -----------------------------------------------------------------------------
 // PassthroughNode
 // -----------------------------------------------------------------------------
+
+std::vector<PinSpec> PassthroughNode::getPinSchema() const {
+    return {{PinDirection::Input, PinType::Float}, {PinDirection::Output, PinType::Float}};
+}
 
 void PassthroughNode::markRequiredTiles(const Region& requestedRegion,
                                         std::unordered_set<NodeHandle>& activeNodes) {
@@ -148,7 +176,7 @@ void PassthroughNode::markRequiredTiles(const Region& requestedRegion,
 void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
     if (outputs.empty()) return;
 
-    gpu::ImageHandle in = pullInput(ctx, region, 0);
+    gpu::ImageHandle in = pullImageInput(ctx, region, 0);
     gpu::ImageHandle out = ctx.imagePool->acquire(defaultColorSpec(ctx.requestedExtent));
 
     if (in.isValid()) {
@@ -157,7 +185,7 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
         const float grey[4] = {0.1f, 0.1f, 0.1f, 1.0f};
         ctx.tasks.push_back(buildFillTask(ctx, out, grey, "PassthroughNode.fill"));
     }
-    ctx.renderCache->store(outputs[0], region, out);
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(out));
 }
 
 }  // namespace loom::core

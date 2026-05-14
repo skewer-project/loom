@@ -390,6 +390,63 @@ Independent of Phases 5–6 except where call sites overlap (Logger conversion t
 - `LOOM_PROFILE_SCOPE` is currently a no-op. Tracy swap drops `#include <tracy/Tracy.hpp>` into `Profile.hpp` and defines `LOOM_ENABLE_PROFILING` at the build-system level — no call-site churn.
 - The `(void)` discard pattern in tests is mechanical and noisy; a future macro `LOOM_TEST_DISCARD(expr)` could make the intent (test wants to discard) explicit, but two call sites today don't justify the abstraction.
 
+---
+
+## Phase 8 — Typed ResourceRef Refactor
+
+### Goal
+Replace the implicit assumption "every pin carries an `ImageHandle`" with a tagged `ResourceRef`. The structural seam unblocks deep buffers, geometry buffers, motion vectors, and any other non-image payload — without committing to any of them in this branch. `Kind::Buffer` and `Kind::Deep` are reserved in the union; v1 production code only ever produces `Kind::Image`.
+
+### Sub-task tracking
+
+- 8.1 ✅ — `ResourceRef` in `gpu/ResourceHandles.hpp`. `Kind { None, Image, Buffer, Deep }`, factory methods `fromImage` / `fromBuffer`, and `isValid()`. The `deep` sub-struct mirrors the OpenEXR Deep model (count image + offset image + samples buffer) so a future `Kind::Deep` consumer doesn't have to redesign the payload shape.
+- 8.2 ✅ — `Node::pullInput` now returns `ResourceRef`. The new `Node::pullImageInput` typed accessor asserts `ref.kind == Kind::Image` and returns the inner `ImageHandle`. Existing image-only nodes (`ConstantNode`, `MergeNode`, `ViewerNode`, `PassthroughNode`) consume `pullImageInput`; the assertion catches type mismatches that slip past `canAddLink` (e.g. a future production buffer node that someone forgets to gate on PinType).
+- 8.3 ✅ — `RenderCache` value type → `ResourceRef`. `store(pin, region, ref)` / `retrieve(pin, region) -> ResourceRef` / `evict` / `clear` / `garbageCollect` all carry the tagged payload. The `m_pendingImageReleases` queue stays typed as `ImageHandle` and is populated only when an evicted entry was `Kind::Image`; that keeps the pool-release contract simple (a single image-typed pool drains images). Future non-image kinds will route through their respective pools' release queues.
+- 8.4 ✅ — Data-driven pin schema. New virtual `Node::getPinSchema() const -> std::vector<PinSpec>`. The previous central switch in `Graph::setupNodePins` collapses to a 3-line loop over the schema. Adding a new node type is now a single subclass edit instead of two edits (subclass + Graph switch).
+- 8.5 ✅ — All four existing nodes updated. `ConstantNode { output:Float }`, `MergeNode { input:Float, input:Float, output:Float }`, `ViewerNode { input:Float }`, `PassthroughNode { input:Float, output:Float }`. Behaviour unchanged; each `execute` ends with `ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(handle))`.
+- 8.6 ✅ — Type-system enforcement test. New `tests/core/PinSchemaTest.cpp` with three cases: (1) every registered node reports the expected pin counts via `getPinSchema`; (2) a `DeepBuffer`-typed output cannot wire to a `Float`-typed input — `canAddLink` returns false and `tryAddLink` returns false; (3) the standalone `BufferTestNode` returns its declared schema. The buffer-output test reuses an existing Constant node's pin by mutating its `type` to `DeepBuffer` rather than exposing a "create raw pin" helper on Graph just for the test. Companion `tests/core/ResourceRefTest.cpp` covers the tag-union basics: default-constructed is None, `fromImage` / `fromBuffer` carry the inner handle, the `Kind::Deep` slot exists and its inner handles default to invalid.
+
+### Decisions
+
+- **PinType enum kept as-is.** `PinType::Float` historically meant "image" (the pins carry image handles, not floats) and `PinType::DeepBuffer` covers the future deep-comp slot. Renaming `Float → Image` for clarity was tempting but would have churned the editor UI's pin-label switch and the existing GraphTest type-mismatch test, all for cosmetics. A comment in `Types.hpp` documents the historical naming and the PinType ↔ ResourceRef::Kind mapping.
+- **ViewerNode::lastOutput stays `ImageHandle`.** The v1 viewer only displays images. A future multi-kind viewer (deep inspector, buffer inspector) lands with its own subclass and storage; documenting the v1 restriction in the `lastOutput` field comment makes the seam visible.
+- **RenderCache release queue stays image-typed.** The cache's job is bookkeeping (pin × region → ref); it doesn't own pool resources. Production code only ever stores `Kind::Image`, so a single `vector<ImageHandle>` release queue is right. When/if a non-image kind starts being stored, parallel queues per pool are simpler than a heterogeneous "release me from whichever pool you came from" queue.
+- **Pin-schema test reuses an existing pin via mutation.** Rather than expose a `Graph::createRawPin` helper just for the test, the buffer-output case mutates a Constant node's output pin's `type` to `DeepBuffer` and verifies `canAddLink` rejects the cross-type wire. This is the smallest possible test surface that exercises the rejection. A future `BufferTestNode` that participates in evaluation would warrant the helper.
+- **No `BufferTestNode` in Graph::addNode.** The plan offered registering it as a test-only NodeType. I kept it as a free class that isn't in the `NodeType` enum — the wiring rejection only depends on PinType, not on NodeType. Keeping the production enum clean is worth more than one less line in the test.
+
+### Files created
+
+- `tests/core/ResourceRefTest.cpp`
+- `tests/core/PinSchemaTest.cpp`
+
+### Files modified
+
+- `include/gpu/ResourceHandles.hpp` — adds `ResourceRef`, the `Kind` enum, factory methods, and the `DeepRef` sub-struct.
+- `include/core/Types.hpp` — adds `PinSpec`; documents the PinType ↔ Kind mapping; adds `Node::getPinSchema()` pure virtual; `Node::pullInput` signature changes to return `ResourceRef`; new `Node::pullImageInput` typed accessor.
+- `include/core/Nodes.hpp` — each concrete node declares `getPinSchema()`. `ViewerNode::lastOutput` gains a comment about the v1 image-only restriction.
+- `src/core/Nodes.cpp` — implementations of `getPinSchema()` per node; `pullInput` body returns `RenderCache::retrieve` (now `ResourceRef`); `pullImageInput` body asserts `Kind::Image` and unwraps; every `store` call wraps the image in `ResourceRef::fromImage`.
+- `include/core/RenderCache.hpp` — map value type → `ResourceRef`; `store` / `retrieve` / `evict` / `clear` / `garbageCollect` route through the tagged type; release queue extracts the inner `ImageHandle` only when `kind == Image`.
+- `src/core/RenderCache.cpp` — `garbageCollect` mirrors the kind-aware release.
+- `include/core/Graph.hpp` — `setupNodePins` collapses to a `for (const auto& spec : node->getPinSchema()) createPin(...)` loop.
+- `tests/core/RenderCacheTest.cpp` — `store` calls wrap in `refOf(...)`; `retrieve` and `pullInput` results are `ASSERT_EQ`-checked against `Kind::Image` before `.image` is extracted for `handleEqual`. `PullInputTestNode` implements the new `getPinSchema()` virtual.
+- `CMakeLists.txt` — adds the two new test files.
+
+### Verification
+
+- Build: clean. No new warnings on Loom's own code.
+- `ctest --test-dir build` — 70/70 pass (+4 `ResourceRefTest.*`, +3 `PinSchemaTest.*`).
+- The `BufferOutputCannotWireToImageInput` test pins the type-system contract: a `Kind::Deep` payload can never be wired into an image input via the editor.
+
+### Dependencies
+Phases 1–7. Region (Phase 4) and the typed push-constant helper (Phase 7.4) interact with `pullInput`'s signature change; the templated forEach + scratch buffers from Phase 7 were unaffected.
+
+### Known follow-ups
+
+- When the first production buffer node lands, plumb a `TransientBufferPool` release queue through `RenderCache` and add a parallel `m_pendingBufferReleases`. The pattern is identical to images; touching only the cache is preferable to a heterogeneous queue.
+- The OpenEXR `Kind::Deep` payload is declared but never populated. The first deep node will validate the shape end-to-end and possibly tweak the `DeepRef` layout.
+- `Node::pullImageInput` asserts on `Kind::Image` mismatch. Adding a buffer-typed input to a node means adding a `pullBufferInput` companion. Both could be folded behind a `pullInput<Kind>` template if the call sites grow.
+- `PinSchemaTest::BufferOutputCannotWireToImageInput` mutates an existing pin's type rather than constructing a buffer-output node end-to-end. The first production buffer node will replace that workaround with a real `addNode(NodeType::FileRead)` (or similar) test.
+
 ### Files created
 
 - `include/gpu/LayoutTransitions.hpp`, `src/gpu/LayoutTransitions.cpp`

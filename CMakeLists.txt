@@ -225,6 +225,8 @@ add_executable(LoomTests
     tests/core/NodeBehaviorTest.cpp
     tests/core/ColorManagementTest.cpp
     tests/core/RenderCacheTest.cpp
+    tests/core/ResourceRefTest.cpp
+    tests/core/PinSchemaTest.cpp
     tests/gpu/ResourcePoolTest.cpp
     tests/gpu/HazardTrackerTest.cpp
     tests/gpu/DisplayPassTest.cpp

@@ -33,26 +33,35 @@ struct CacheKeyHash {
 
 class RenderCache {
   public:
-    // Stores image for (pin, region). If a previous entry exists for the same
-    // key, the old handle is enqueued for release before being overwritten.
+    // Stores ref for (pin, region). If a previous entry exists for the same
+    // key, the old payload is enqueued for release before being overwritten.
     // Without this, a dirty re-eval would leak the previous pool slot every
-    // frame.
-    void store(PinHandle pin, const Region& region, gpu::ImageHandle image) {
+    // frame. v1 only stores `Kind::Image` payloads; the release queue
+    // extracts the inner ImageHandle. Future non-image kinds will route
+    // through a parallel deferred-release path on their respective pools.
+    void store(PinHandle pin, const Region& region, gpu::ResourceRef ref) {
         CacheKey key{pin, region};
         key.region.canonicalize();
         auto it = m_cache.find(key);
         if (it != m_cache.end()) {
-            if (it->second.poolIndex != image.poolIndex ||
-                it->second.generation != image.generation) {
-                m_pendingImageReleases.push_back(it->second);
+            // Same Kind::Image payload with identical handle is a no-op; any
+            // other change enqueues the prior image for release.
+            if (it->second.kind == gpu::ResourceRef::Kind::Image &&
+                ref.kind == gpu::ResourceRef::Kind::Image &&
+                it->second.image.poolIndex == ref.image.poolIndex &&
+                it->second.image.generation == ref.image.generation) {
+                return;
             }
-            it->second = image;
+            if (it->second.kind == gpu::ResourceRef::Kind::Image) {
+                m_pendingImageReleases.push_back(it->second.image);
+            }
+            it->second = ref;
         } else {
-            m_cache.emplace(std::move(key), image);
+            m_cache.emplace(std::move(key), ref);
         }
     }
 
-    gpu::ImageHandle retrieve(PinHandle pin, const Region& region) {
+    [[nodiscard]] gpu::ResourceRef retrieve(PinHandle pin, const Region& region) {
         CacheKey key{pin, region};
         key.region.canonicalize();
         auto it = m_cache.find(key);
@@ -60,7 +69,7 @@ class RenderCache {
         return {};
     }
 
-    bool hasValidData(Node* node, const Region& region) {
+    [[nodiscard]] bool hasValidData(Node* node, const Region& region) {
         CacheKey probe{};
         probe.region = region;
         probe.region.canonicalize();
@@ -76,19 +85,23 @@ class RenderCache {
         key.region.canonicalize();
         auto it = m_cache.find(key);
         if (it != m_cache.end()) {
-            m_pendingImageReleases.push_back(it->second);
+            if (it->second.kind == gpu::ResourceRef::Kind::Image) {
+                m_pendingImageReleases.push_back(it->second.image);
+            }
             m_cache.erase(it);
         }
     }
 
     void clear() {
         for (auto& pair : m_cache) {
-            m_pendingImageReleases.push_back(pair.second);
+            if (pair.second.kind == gpu::ResourceRef::Kind::Image) {
+                m_pendingImageReleases.push_back(pair.second.image);
+            }
         }
         m_cache.clear();
     }
 
-    std::vector<gpu::ImageHandle> takePendingReleases() {
+    [[nodiscard]] std::vector<gpu::ImageHandle> takePendingReleases() {
         std::vector<gpu::ImageHandle> result = std::move(m_pendingImageReleases);
         m_pendingImageReleases.clear();
         return result;
@@ -97,10 +110,10 @@ class RenderCache {
     void garbageCollect(const Graph* graph);
 
     // Diagnostic / test access. Not part of the production contract.
-    uint32_t DEBUG_size() const { return static_cast<uint32_t>(m_cache.size()); }
+    [[nodiscard]] uint32_t DEBUG_size() const { return static_cast<uint32_t>(m_cache.size()); }
 
   private:
-    std::unordered_map<CacheKey, gpu::ImageHandle, CacheKeyHash> m_cache;
+    std::unordered_map<CacheKey, gpu::ResourceRef, CacheKeyHash> m_cache;
     std::vector<gpu::ImageHandle> m_pendingImageReleases;
 };
 
