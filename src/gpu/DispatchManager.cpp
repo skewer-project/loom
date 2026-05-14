@@ -3,6 +3,7 @@
 #include <cstring>
 #include <unordered_set>
 
+#include "core/Profile.hpp"
 #include "gpu/HazardTracker.hpp"
 #include "gpu/TransientImagePool.hpp"
 
@@ -71,6 +72,7 @@ void emitMemoryBarrier(VkCommandBuffer cmd, VkAccessFlags2 srcAccess, VkAccessFl
 void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>& tasks,
                              ImageHandle finalViewerImage, VkDescriptorSet bindlessSet,
                              VkPipelineLayout pipelineLayout, TransientImagePool* imagePool) {
+    LOOM_PROFILE_SCOPE("DispatchManager::submit");
     if (tasks.empty() && !finalViewerImage.isValid()) return;
 
     // Pass 1 — Batched Pre-Dispatch Layout Transitions.

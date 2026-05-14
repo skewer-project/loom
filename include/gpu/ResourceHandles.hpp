@@ -14,7 +14,7 @@ struct ImageHandle {
                generation == other.generation;
     }
     bool operator!=(const ImageHandle& other) const { return !(*this == other); }
-    bool isValid() const { return poolIndex != 0xFFFFFFFF; }
+    [[nodiscard]] bool isValid() const { return poolIndex != 0xFFFFFFFF; }
 };
 
 struct BufferHandle {
@@ -27,7 +27,7 @@ struct BufferHandle {
                generation == other.generation;
     }
     bool operator!=(const BufferHandle& other) const { return !(*this == other); }
-    bool isValid() const { return poolIndex != 0xFFFFFFFF; }
+    [[nodiscard]] bool isValid() const { return poolIndex != 0xFFFFFFFF; }
 };
 
 }  // namespace loom::gpu

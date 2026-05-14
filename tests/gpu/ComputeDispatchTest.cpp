@@ -119,8 +119,8 @@ TEST_F(ComputeDispatchTest, TaskGeneration) {
     core::Node* nPass = graph->getNode(hPass);
     core::Node* nViewer = graph->getNode(hViewer);
 
-    graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]);
-    graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]);
+    ASSERT_TRUE(graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]));
+    ASSERT_TRUE(graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]));
 
     // Evaluation starts from the viewer via graph execute
     graph->execute(evalCtx, testRegion);
@@ -150,8 +150,8 @@ TEST_F(ComputeDispatchTest, RAWHazardBarrier) {
     core::Node* nPass = graph->getNode(hPass);
     core::Node* nViewer = graph->getNode(hViewer);
 
-    graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]);
-    graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]);
+    ASSERT_TRUE(graph->tryAddLink(nConst->outputs[0], nPass->inputs[0]));
+    ASSERT_TRUE(graph->tryAddLink(nPass->outputs[0], nViewer->inputs[0]));
 
     graph->execute(evalCtx, testRegion);
 
@@ -171,7 +171,7 @@ TEST_F(ComputeDispatchTest, LayoutReentry) {
     core::Node* nConst = graph->getNode(hConst);
     core::Node* nViewer = graph->getNode(hViewer);
 
-    graph->tryAddLink(nConst->outputs[0], nViewer->inputs[0]);
+    ASSERT_TRUE(graph->tryAddLink(nConst->outputs[0], nViewer->inputs[0]));
 
     graph->execute(evalCtx, testRegion);
 

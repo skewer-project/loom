@@ -65,7 +65,7 @@ TEST_F(GraphTest, CascadingDeletion) {
     core::PinHandle outA = graph.getNode(nodeA)->outputs[0];
     core::PinHandle inB = graph.getNode(nodeB)->inputs[0];
 
-    graph.tryAddLink(outA, inB);
+    ASSERT_TRUE(graph.tryAddLink(outA, inB));
     core::LinkHandle lh = graph.getPin(inB)->link;
 
     ASSERT_NE(graph.getLink(lh), nullptr);

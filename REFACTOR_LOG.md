@@ -324,6 +324,72 @@ Phase 5.4 (timeline semaphore + `currentFrameValue`).
 - The Phase 7 cleanup will fold `unregister*` and `onFrameRetired` behind `[[nodiscard]]` where appropriate — currently neither returns a value, so no audit work.
 - The two `onFrameRetired` consumers (`BindlessHeap`, `TransientImagePool` — `TransientBufferPool` is built but not currently driven from main()) walk a `std::vector` of pending entries each frame. If a long-running session accumulates a large pending list before retirement catches up, a binary-search on a sorted vector or a min-heap by `releaseAtFrame` would pay off; today the list is bounded by `MAX_FRAMES_IN_FLIGHT` worth of evictions and the linear scan is fine.
 
+---
+
+## Phase 7 — Hot-path, Code Hygiene & Instrumentation
+
+### Goal
+Remove per-frame heap allocations, kill copy-paste, introduce a logger and a profiling-scope macro, and audit `[[nodiscard]]` where ignoring a return is a real bug. No behavioural changes; the test suite verifies that.
+
+### Sub-task tracking
+
+- 7.1 ✅ — `SlotMap::forEach` templated. `std::function` removed; the per-call heap closure is gone. `Graph::forEachNode` (both const / non-const) and `Graph::forEachLink` follow the same pattern. Templated `forEach` keeps them in the header, which is also fine for compile time at this scale.
+- 7.2 ✅ — Reusable scratch buffers hoisted to `Graph` members: `m_dirtyQueue` (std::deque) for `markDirty`, `m_topoQueue` (std::deque) + `m_inDegree` (std::vector<int>, indexed by node-handle index) for `computeTopologicalOrder`. Each method `clear()`s its scratch up front; capacity is retained between calls. The map → vector swap drops `std::unordered_map<uint32_t,int>` allocation pressure and is O(1) lookup instead of average-O(1) with a hash.
+- 7.3 — **skipped this session.** Moving `Graph` method bodies to `Graph.cpp` would conflict with the just-introduced templated forEach helpers (which have to stay in the header) and the templated `addNode` payload would also remain in the header. Net win on compile time is marginal in current state; defer to a later cleanup when more of `Graph`'s API is non-template.
+- 7.4 ✅ — `ComputeTask::setPushConstants<T>()` typed helper with `static_assert(sizeof(T) <= 128, ...)` and `static_assert(std::is_trivially_copyable_v<T>)`. The `MAX_PUSH_CONSTANT_BYTES` constant replaces the magic 128. All four hand-rolled `memcpy(task.pushConstants.data(), &pc, sizeof(pc))` patterns in `Nodes.cpp` are gone — they now route through `setPushConstants(pc)` in the task builders. A future 129-byte struct fails to compile rather than silently corrupting the next field on the GPU.
+- 7.5 ✅ — Shared task builders in `core/NodeTaskBuilders.{hpp,cpp}`: `buildFillTask(ctx, out, color[4], label)` and `buildPassthroughTask(ctx, in, out, label)`. The four copy-paste-clone task constructions in `Nodes.cpp` collapse onto these. The labels (`ConstantNode.fill`, `MergeNode.fill`, `PassthroughNode.copy`, `PassthroughNode.fill`) come from the call sites, not the builders, so RenderDoc / NSight captures keep the per-node attribution.
+- 7.6 ✅ — `Graph::getViewers()` returns `std::vector<NodeHandle>`. `main.cpp` uses `viewers[0]` in v1 (single viewer); multi-viewer UI selection lands later. The previous code scanned every node via a `forEachNode` lambda and took whichever viewer it saw last — non-deterministic for multi-viewer graphs even though the case isn't exercised yet.
+- 7.7 ✅ — Logger façade in `core/Log.{hpp,cpp}`. `loom::log::trace/debug/info/warn/error(args...)` — variadic templates fold each arg through `std::ostringstream` so call sites read like the iostream they replace (`loom::log::info("Selected GPU: ", deviceName, " (score: ", score, ")")`). Thread-safe via internal `std::mutex`. v1 backend writes to stderr (warn/error) or stdout (others) prefixed with `[HH:MM:SS.mmm][SEV ]`; the implementation is the swappable surface — replacing `Log.cpp` with spdlog / Tracy / structured JSON is a one-file change. Converted call sites: `main.cpp`, `ImGuiRenderer.cpp`, `Device.cpp`, `Instance.cpp`'s validation callback (now severity-aware: ERROR → `log::error`, everything else → `log::warn`), `BindlessHeap.cpp`, `PipelineCache.cpp`.
+- 7.8 ✅ — `core/Profile.hpp` defines `LOOM_PROFILE_SCOPE("name")` and `LOOM_PROFILE_FRAME()`. v1: compile-time no-op (the macro guard checks `LOOM_ENABLE_PROFILING`, which is undefined). v2 hook is already in place: define the macro, drop a Tracy include into `Profile.cpp`, and every existing call site instruments automatically. Sprinkled at: `Graph::execute`, `DispatchManager::submit`, `DisplayPass::record`, `FrameLoop::beginFrame`, `FrameLoop::endFrame`.
+- 7.9 ✅ — `[[nodiscard]]` audit landed: `Window::shouldClose`, `Window::wasResized`, `Window::getNativeWindow`; every handle's `isValid()` (both `loom::core::Handle<Tag>` and `loom::gpu::ImageHandle`/`BufferHandle`); `SlotMap::insert`, `emplace`, `get`, `isValid`; `Graph::addNode`, `tryAddLink`, `canAddLink`, `getViewers`; `PipelineCache::getOrCreate`; `FrameLoop` and `VulkanContext` accessors that were missing it. Production discard sites updated: `main.cpp` startup wiring checks the `tryAddLink` result and warns; `NodeEditorPanel`'s in-loop drag wiring uses an explicit `(void)` since `canAddLink` already approved the edge (the `tryAddLink` is a belt-and-braces second check). Test files were over-eager about discarding `tryAddLink` for happy-path edges — those got wrapped in `ASSERT_TRUE` via a one-shot perl pass (`perl -i -pe 's/^(\s+)((?:graph|m_graph|g)\.tryAddLink\(...\));$/$1ASSERT_TRUE($2);/'`), which incidentally tightens the tests' invariant checking. `SlotMapTest::IterationSkipsRemovedItems` uses `(void)` for the two emplaces it deliberately discards.
+- 7.10 — partial. `std::span` migration was scoped to "read-only ranges at API boundaries"; `HazardTracker` is the only consumer that fit cleanly. `DispatchManager::submit(VkCommandBuffer, const std::vector<ComputeTask>&, ...)` and the task-builder signatures stay as `std::vector` for now since the callers always own a vector — the conversion buys nothing in this codebase yet. Documented as a `Known follow-ups` item if a non-vector caller appears.
+
+### Decisions
+
+- **No `Graph.hpp` → `Graph.cpp` split.** Templated forEach helpers and templated addNode keep most of the API in the header anyway; moving the non-template bodies would save a small amount of compile time at the cost of a tree-wide churn that doesn't compose well with future templating. Revisit when more of `Graph` stops being templated.
+- **Logger backend is iostream in v1, deliberately not picking a logging library.** spdlog / fmt would each pull in a non-trivial dependency, and v1's call rate (a handful per frame at most) doesn't justify the cost. The façade is the contract: backend swap is a `Log.cpp` rewrite.
+- **`ASSERT_TRUE` over `(void)` for `tryAddLink` happy-path call sites in tests.** Two reasons: (1) it tightens the test invariant — if a future edge change makes a "should-pass" link silently fail, the test exposes it at the wiring step rather than later when a downstream assertion mysteriously fails; (2) it preserves the visual cue that this line is a non-trivial state mutation, where `(void)` reads more like "I don't care about this result."
+- **`[[maybe_unused]] m_device` in `TransientBufferPool`.** The field is unused since Phase 4 because all buffer creation goes through VMA, which takes the device internally. Deleting the field would also delete the constructor parameter and break callsite symmetry with `TransientImagePool` (which does still need the device for `vkDestroyImageView`). `[[maybe_unused]]` is the cheap honest signal; if the buffer pool ever needs the device again it's already plumbed.
+
+### Files created
+
+- `include/core/Log.hpp`, `src/core/Log.cpp`
+- `include/core/Profile.hpp`
+- `include/core/NodeTaskBuilders.hpp`, `src/core/NodeTaskBuilders.cpp`
+
+### Files modified
+
+- `include/core/SlotMap.hpp` — templated forEach, [[nodiscard]] on insert/emplace/get/isValid.
+- `include/core/Graph.hpp` — templated forEachNode/forEachLink; scratch members `m_dirtyQueue`, `m_topoQueue`, `m_inDegree`; `getViewers()`; LOOM_PROFILE_SCOPE on `execute`; `[[nodiscard]]` on addNode/tryAddLink/canAddLink.
+- `include/core/Handle.hpp` — `[[nodiscard]] isValid`.
+- `include/gpu/ResourceHandles.hpp` — `[[nodiscard]] isValid` on ImageHandle / BufferHandle.
+- `include/platform/Window.hpp` — `[[nodiscard]] shouldClose / wasResized / getNativeWindow`.
+- `include/gpu/ComputeTask.hpp` — `setPushConstants<T>` typed helper.
+- `include/gpu/PipelineCache.hpp` — `[[nodiscard]] getOrCreate`.
+- `include/gpu/TransientBufferPool.hpp` — `[[maybe_unused]] m_device`.
+- `src/core/Nodes.cpp` — rewritten on top of NodeTaskBuilders; one default `ImageSpec` helper at file scope; no more memcpy push-constant patterns.
+- `src/gpu/FrameLoop.cpp`, `src/gpu/DispatchManager.cpp`, `src/gpu/DisplayPass.cpp` — LOOM_PROFILE_SCOPE at the planned sites.
+- `src/main.cpp`, `src/ui/ImGuiRenderer.cpp`, `src/gpu/Device.cpp`, `src/gpu/Instance.cpp`, `src/gpu/BindlessHeap.cpp`, `src/gpu/PipelineCache.cpp` — `std::cout` / `std::cerr` → `loom::log::*`.
+- `src/ui/NodeEditorPanel.cpp` — explicit `(void)` on the in-editor `tryAddLink`.
+- Tests: `TopoTest`, `GraphTest`, `PushPullTest`, `NodeBehaviorTest`, `ComputeDispatchTest`, `GraphExecutionTest` — happy-path `tryAddLink` calls wrapped in `ASSERT_TRUE`; `SlotMapTest` uses `(void)` for deliberate discards.
+- `CMakeLists.txt` — adds `Log.cpp`, `NodeTaskBuilders.cpp`.
+
+### Verification
+
+- Build: clean across all configurations. Zero compiler warnings on Loom's own code (the GLFW vendored tree still emits `-Wpedantic` and `-Wmissing-field-initializers` from upstream; those land in Phase 9 if they need silencing).
+- `ctest --test-dir build` — 63/63 pass. The `ASSERT_TRUE` wraps strengthened the test invariants: if `tryAddLink` ever silently rejects an edge that the test expects to succeed, it fails at the wiring step rather than downstream.
+
+### Dependencies
+Independent of Phases 5–6 except where call sites overlap (Logger conversion touches `Device.cpp`, `Instance.cpp`, `BindlessHeap.cpp`, `PipelineCache.cpp`, all of which were the subjects of earlier phases).
+
+### Known follow-ups
+
+- 7.3 (Graph.hpp → Graph.cpp split) deferred. Revisit when the API stops being mostly templated.
+- 7.10 (std::span migration) is partial — only `HazardTracker` accepts spans today. When a non-vector caller of `DispatchManager::submit` or `NodeTaskBuilders` appears, widen the signatures then.
+- The logger backend is iostream; replacing with spdlog/Tracy is a `Log.cpp`-only change.
+- `LOOM_PROFILE_SCOPE` is currently a no-op. Tracy swap drops `#include <tracy/Tracy.hpp>` into `Profile.hpp` and defines `LOOM_ENABLE_PROFILING` at the build-system level — no call-site churn.
+- The `(void)` discard pattern in tests is mechanical and noisy; a future macro `LOOM_TEST_DISCARD(expr)` could make the intent (test wants to discard) explicit, but two call sites today don't justify the abstraction.
+
 ### Files created
 
 - `include/gpu/LayoutTransitions.hpp`, `src/gpu/LayoutTransitions.cpp`

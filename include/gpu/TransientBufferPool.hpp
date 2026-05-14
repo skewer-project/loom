@@ -45,7 +45,8 @@ class TransientBufferPool {
 
     void retireEntry(BufferHandle handle);
 
-    VkDevice m_device;  // Note: unused as of phase 4
+    [[maybe_unused]] VkDevice m_device;  // Kept for symmetry with TransientImagePool;
+                                         // unused as of phase 4.
     VmaAllocator m_allocator;
     BindlessHeap& m_bindlessHeap;
     std::vector<BufferEntry> m_buffers;

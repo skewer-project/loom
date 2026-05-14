@@ -53,9 +53,9 @@ TEST(SlotMapTest, SlotReusesMemoryWithNewGeneration) {
 
 TEST(SlotMapTest, IterationSkipsRemovedItems) {
     core::SlotMap<MyNode, core::NodeHandle> map;
-    map.emplace("Node A", 1);
+    (void)map.emplace("Node A", 1);
     core::NodeHandle h2 = map.emplace("Node B", 2);
-    map.emplace("Node C", 3);
+    (void)map.emplace("Node C", 3);
 
     map.remove(h2);
 

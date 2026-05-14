@@ -2,11 +2,11 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <stdexcept>
 #include <vector>
 
 #include "core/Assert.hpp"
+#include "core/Log.hpp"
 #include "platform/UserDataDir.hpp"
 
 namespace loom::gpu {
@@ -21,8 +21,8 @@ fs::path cacheFilePath() {
     } catch (const std::exception& e) {
         // If we can't resolve a user-data dir we degrade to an in-memory
         // cache for this run.
-        std::cerr << "PipelineCache: could not resolve user-data dir (" << e.what()
-                  << "); pipeline cache will not be persisted." << std::endl;
+        loom::log::warn("PipelineCache: could not resolve user-data dir (", e.what(),
+                        "); pipeline cache will not be persisted.");
         return {};
     }
 }
@@ -98,8 +98,8 @@ void PipelineCache::createVkPipelineCache() {
     // treat any failure as "no existing cache" and retry with an empty one.
     VkResult result = vkCreatePipelineCache(m_device, &info, nullptr, &m_vkCache);
     if (result != VK_SUCCESS && !blob.empty()) {
-        std::cerr << "PipelineCache: discarding incompatible on-disk cache (VkResult "
-                  << static_cast<int>(result) << ")" << std::endl;
+        loom::log::warn("PipelineCache: discarding incompatible on-disk cache (VkResult ",
+                        static_cast<int>(result), ")");
         info.initialDataSize = 0;
         info.pInitialData = nullptr;
         result = vkCreatePipelineCache(m_device, &info, nullptr, &m_vkCache);

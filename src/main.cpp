@@ -3,6 +3,7 @@
 
 #include "core/ColorManagement.hpp"
 #include "core/Graph.hpp"
+#include "core/Log.hpp"
 #include "core/RenderCache.hpp"
 #include "gpu/DispatchManager.hpp"
 #include "gpu/DisplayPass.hpp"
@@ -15,7 +16,7 @@
 
 int main() {
     try {
-        std::cout << "Initializing Loom..." << std::endl;
+        loom::log::info("Initializing Loom...");
 
         loom::platform::Window window(1280, 720, "Loom");
 
@@ -82,11 +83,13 @@ int main() {
 
             if (constNode && viewerNode) {
                 // Connect Constant output to Viewer input
-                graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0]);
+                if (!graph.tryAddLink(constNode->outputs[0], viewerNode->inputs[0])) {
+                    loom::log::warn("startup: failed to wire Constant -> Viewer");
+                }
             }
         }
 
-        std::cout << "Loom initialized successfully." << std::endl;
+        loom::log::info("Loom initialized successfully.");
 
         while (!window.shouldClose()) {
             window.pollEvents();
@@ -170,10 +173,10 @@ int main() {
         vulkan.waitIdle();
         vkDestroyPipelineLayout(vulkan.getDevice(), pipelineLayout, nullptr);
 
-        std::cout << "Shutting down Loom..." << std::endl;
+        loom::log::info("Shutting down Loom...");
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        loom::log::error("Fatal error: ", e.what());
         return EXIT_FAILURE;
     }
 

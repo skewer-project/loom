@@ -9,6 +9,7 @@
 
 #include "core/Assert.hpp"
 #include "core/Nodes.hpp"
+#include "core/Profile.hpp"
 #include "core/RenderCache.hpp"
 #include "core/SlotMap.hpp"
 #include "core/Types.hpp"
@@ -17,7 +18,7 @@ namespace loom::core {
 
 class Graph {
   public:
-    NodeHandle addNode(NodeType type, std::string name = "") {
+    [[nodiscard]] NodeHandle addNode(NodeType type, std::string name = "") {
         if (name.empty()) {
             name = getDefaultNodeName(type);
         }
@@ -77,7 +78,7 @@ class Graph {
         isTopoDirty = true;
     }
 
-    bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
+    [[nodiscard]] bool tryAddLink(PinHandle startPinHandle, PinHandle endPinHandle) {
         if (!canAddLink(startPinHandle, endPinHandle)) return false;
 
         Pin* endPin = pins.get(endPinHandle);
@@ -168,6 +169,7 @@ class Graph {
     }
 
     void execute(EvaluationContext& ctx, const Region& region) {
+        LOOM_PROFILE_SCOPE("Graph::execute");
         std::unordered_set<NodeHandle> activeNodes;
 
         // Pass 1: Mark
@@ -199,7 +201,7 @@ class Graph {
     PinHandle getPinHandleByIndex(uint32_t index) const { return pins.getHandleByIndex(index); }
     LinkHandle getLinkHandleByIndex(uint32_t index) const { return links.getHandleByIndex(index); }
 
-    bool canAddLink(PinHandle startPinHandle, PinHandle endPinHandle) const {
+    [[nodiscard]] bool canAddLink(PinHandle startPinHandle, PinHandle endPinHandle) const {
         const Pin* startPin = pins.get(startPinHandle);
         const Pin* endPin = pins.get(endPinHandle);
 

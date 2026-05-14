@@ -105,7 +105,10 @@ void NodeEditorPanel::handleUserIntent() {
             if (!m_graph->canAddLink(startPin, endPin)) {
                 ed::RejectNewItem();
             } else if (ed::AcceptNewItem()) {
-                m_graph->tryAddLink(startPin, endPin);
+                // canAddLink already approved; if tryAddLink still rejects
+                // (race against a concurrent edit) drop the link silently — the
+                // node editor will reflect the unchanged state on next frame.
+                (void)m_graph->tryAddLink(startPin, endPin);
             }
         }
     }

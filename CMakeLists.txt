@@ -180,6 +180,7 @@ add_library(LoomCore STATIC
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp
     src/core/ColorManagement.cpp
+    src/core/Log.cpp
     src/core/Nodes.cpp
     src/core/NodeTaskBuilders.cpp
     src/core/RenderCache.cpp

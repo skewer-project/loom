@@ -1,11 +1,11 @@
 #include "gpu/Instance.hpp"
 
 #include <cstring>
-#include <iostream>
 #include <stdexcept>
 #include <string>
 
 #include "core/Assert.hpp"
+#include "core/Log.hpp"
 #include "platform/Window.hpp"
 
 namespace loom::gpu {
@@ -34,9 +34,13 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 }
 
 VKAPI_ATTR VkBool32 VKAPI_CALL
-debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT, VkDebugUtilsMessageTypeFlagsEXT,
+debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT,
               const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData, void*) {
-    std::cerr << "Vulkan Validation Layer: " << pCallbackData->pMessage << std::endl;
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        loom::log::error("Vulkan validation: ", pCallbackData->pMessage);
+    } else {
+        loom::log::warn("Vulkan validation: ", pCallbackData->pMessage);
+    }
     return VK_FALSE;
 }
 

@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "core/Profile.hpp"
+
 namespace loom::gpu {
 
 static std::vector<char> readFile(const std::string& filename) {
@@ -170,6 +172,7 @@ void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage
                          VkImageView dstImageView, VkDescriptorSet bindlessSet,
                          uint32_t bindlessSlot, uint32_t width, uint32_t height,
                          uint32_t toneMapMode, uint32_t displayTransform, float exposure) {
+    LOOM_PROFILE_SCOPE("DisplayPass::record");
     // Barrier 1: Compute Write -> Fragment Read (Memory Dependency)
     // hdrImage is transitioned to SHADER_READ_ONLY_OPTIMAL by DispatchManager
     VkImageMemoryBarrier2 hdrBarrier{};

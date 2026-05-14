@@ -1,8 +1,9 @@
 #include "gpu/BindlessHeap.hpp"
 
 #include <cassert>
-#include <iostream>
 #include <stdexcept>
+
+#include "core/Log.hpp"
 
 namespace loom::gpu {
 
@@ -86,8 +87,8 @@ uint32_t BindlessHeap::registerImage(VkImageView view) {
         // shader is a hard-to-diagnose GPU hang, so log loudly first to make
         // the root cause visible. Tests that deliberately exhaust the heap
         // (ResourcePoolTest::FreeListExhaustion) rely on the sentinel return.
-        std::cerr << "[loom][ERROR] BindlessHeap::registerImage: heap exhausted (max "
-                  << MAX_RESOURCES << " image slots)\n";
+        loom::log::error("BindlessHeap::registerImage: heap exhausted (max ", MAX_RESOURCES,
+                         " image slots)");
         return 0xFFFFFFFF;
     }
 
@@ -114,8 +115,8 @@ uint32_t BindlessHeap::registerImage(VkImageView view) {
 uint32_t BindlessHeap::registerBuffer(VkBuffer buffer, VkDeviceSize size) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_freeBufferSlots.empty()) {
-        std::cerr << "[loom][ERROR] BindlessHeap::registerBuffer: heap exhausted (max "
-                  << MAX_RESOURCES << " buffer slots)\n";
+        loom::log::error("BindlessHeap::registerBuffer: heap exhausted (max ", MAX_RESOURCES,
+                         " buffer slots)");
         return 0xFFFFFFFF;
     }
 

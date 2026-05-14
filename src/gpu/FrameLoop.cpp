@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "core/Assert.hpp"
+#include "core/Profile.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/LayoutTransitions.hpp"
 #include "gpu/ResourceFactory.hpp"
@@ -99,6 +100,7 @@ void FrameLoop::destroySyncObjects() {
 void FrameLoop::recreateSwapchain() { m_swapchain.recreate(); }
 
 VkCommandBuffer FrameLoop::beginFrame() {
+    LOOM_PROFILE_SCOPE("FrameLoop::beginFrame");
     // Minimisation guard.
     int width = 0, height = 0;
     glfwGetFramebufferSize(m_window, &width, &height);
@@ -147,6 +149,7 @@ VkCommandBuffer FrameLoop::beginFrame() {
 }
 
 void FrameLoop::endFrame(VkCommandBuffer cmd, loom::ui::ImGuiRenderer& imgui) {
+    LOOM_PROFILE_SCOPE("FrameLoop::endFrame");
     // Step D — Transition swapchain image to COLOR_ATTACHMENT_OPTIMAL.
     transitionImageLayout(cmd, m_swapchain.getImage(m_currentImageIndex), VK_IMAGE_LAYOUT_UNDEFINED,
                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);

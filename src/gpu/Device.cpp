@@ -1,11 +1,11 @@
 #include "gpu/Device.hpp"
 
-#include <iostream>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "core/Log.hpp"
 #include "gpu/Instance.hpp"
 
 namespace loom::gpu {
@@ -152,8 +152,7 @@ void Device::pickPhysicalDevice(Instance& instance) {
 
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(m_physicalDevice, &props);
-    std::cout << "Selected GPU: " << props.deviceName << " (score: " << bestScore.score << ")"
-              << std::endl;
+    loom::log::info("Selected GPU: ", props.deviceName, " (score: ", bestScore.score, ")");
 }
 
 void Device::createLogicalDevice(Instance& instance) {
