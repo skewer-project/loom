@@ -12,6 +12,7 @@
 #include "gpu/BindlessHeap.hpp"
 #include "gpu/Device.hpp"
 #include "gpu/Instance.hpp"
+#include "gpu/ResourceFactory.hpp"
 #include "gpu/Swapchain.hpp"
 #include "platform/Window.hpp"
 #include "ui/ImGuiRenderer.hpp"
@@ -25,10 +26,8 @@ class VulkanContext {
     ~VulkanContext();
 
     void init(const loom::platform::Window& window, const char* appName);
-    void createCommandPool();
     void allocateCommandBuffers();
     void createSyncObjects();
-    void createDescriptorPool();
     void recreateSwapchain();
     void cleanupSyncObjects();
 
@@ -47,20 +46,24 @@ class VulkanContext {
     VkPhysicalDevice getPhysicalDevice() const { return m_physicalDevice; }
     VkDevice getDevice() const { return m_device; }
     VkDescriptorPool getDescriptorPool() const {
-        return m_descriptorPool;
+        return m_resourceFactory ? m_resourceFactory->getDescriptorPool() : VK_NULL_HANDLE;
     }  // Passed to ImGui_ImplVulkan_InitInfo during UI initialization.
     VkFormat getSwapchainImageFormat() const {
         return m_swapchainObj ? m_swapchainObj->getFormat() : VK_FORMAT_UNDEFINED;
     }
     uint32_t getGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
     VkQueue getGraphicsQueue() const { return m_graphicsQueue; }
-    VkCommandPool getCommandPool() const { return m_commandPool; }
+    VkCommandPool getCommandPool() const {
+        return m_resourceFactory ? m_resourceFactory->getCommandPool() : VK_NULL_HANDLE;
+    }
     uint32_t getSwapchainImageCount() const {
         return m_swapchainObj ? m_swapchainObj->getImageCount() : 0;
     }
 
-    VmaAllocator getVmaAllocator() const { return m_vmaAllocator; }
-    BindlessHeap& getBindlessHeap() { return *m_bindlessHeap; }
+    VmaAllocator getVmaAllocator() const {
+        return m_resourceFactory ? m_resourceFactory->getVmaAllocator() : VK_NULL_HANDLE;
+    }
+    BindlessHeap& getBindlessHeap() { return m_resourceFactory->getBindlessHeap(); }
 
   private:
     GLFWwindow* m_window = nullptr;  // Non-owning pointer. The Window object in main() owns the
@@ -68,15 +71,12 @@ class VulkanContext {
     std::unique_ptr<Instance> m_instanceObj;
     std::unique_ptr<Device> m_deviceObj;
     std::unique_ptr<Swapchain> m_swapchainObj;
+    std::unique_ptr<ResourceFactory> m_resourceFactory;
 
     // Shadow handles from m_deviceObj for convenience inside this façade.
     // Removed in Phase 5.7 when the rest of VulkanContext is slimmed down.
     VkPhysicalDevice m_physicalDevice = VK_NULL_HANDLE;
     VkDevice m_device = VK_NULL_HANDLE;
-    VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
-
-    VmaAllocator m_vmaAllocator = VK_NULL_HANDLE;
-    std::unique_ptr<BindlessHeap> m_bindlessHeap;
 
     VkQueue m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue m_computeQueue = VK_NULL_HANDLE;
@@ -86,9 +86,8 @@ class VulkanContext {
     uint32_t m_computeQueueFamily = UINT32_MAX;
     uint32_t m_presentQueueFamily = UINT32_MAX;
 
-    // One command buffer per frame in flight. Allocated from m_commandPool and is
-    // destroyed implicitly when the pool is destroyed.
-    VkCommandPool m_commandPool = VK_NULL_HANDLE;
+    // One command buffer per frame in flight. Allocated from
+    // m_resourceFactory's command pool and destroyed implicitly with it.
     std::vector<VkCommandBuffer> m_commandBuffers;
 
     // Signaled when the swapchain image is ready to be rendered into

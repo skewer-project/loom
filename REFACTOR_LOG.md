@@ -278,10 +278,10 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - 5.1 ✅ — `Instance` carved out (instance + debug messenger + surface). Validation severity drops `VERBOSE_BIT_EXT`.
 - 5.2 ✅ — `Device` carved out (physical + logical device + queues + queue families). Requests VK 1.3 features explicitly; rejects unsuitable devices at construction with a contextual error.
 - 5.3 ✅ — `Swapchain` carved out (swapchain + images + image views + recreate logic). Public `acquire / present / recreate / get* / getImage / getImageView`. Eliminates the `m_oldSwapchain` member.
-- 5.5 — pending. `ResourceFactory` (command pool, descriptor pool, VMA, `BindlessHeap`, single-time-commands).
+- 5.5 ✅ — `ResourceFactory` carved out (command pool, descriptor pool, VMA allocator, `BindlessHeap`, single-time-commands). VulkanContext getters delegate to it; the per-frame command-buffer allocation pulls the pool from the factory rather than from a member. Net deletion of ~98 lines in `VulkanContext.cpp` for the same behaviour. Destructor order: `m_resourceFactory.reset()` before the device is torn down, matching the existing swapchain-then-device pattern.
 - 5.4 — pending. `FrameLoop` carve-out with timeline-semaphore switch. **Behavioural change** — replaces binary-fence + per-image-fence pattern with `vkWaitSemaphores(timeline, N)`.
 - 5.6 — pending. Disk-backed `VkPipelineCache` + `platform/UserDataDir` helper.
-- 5.7 — pending. Slim `VulkanContext` to a true façade once 5.4 + 5.5 + 5.6 are in.
+- 5.7 — pending. Slim `VulkanContext` to a true façade once 5.4 + 5.6 are in.
 
 ### Files created
 
@@ -289,6 +289,7 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - `include/gpu/Instance.hpp`, `src/gpu/Instance.cpp`
 - `include/gpu/Device.hpp`, `src/gpu/Device.cpp`
 - `include/gpu/Swapchain.hpp`, `src/gpu/Swapchain.cpp`
+- `include/gpu/ResourceFactory.hpp`, `src/gpu/ResourceFactory.cpp`
 
 ### Files modified
 

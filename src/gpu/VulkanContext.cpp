@@ -27,21 +27,10 @@ VulkanContext::~VulkanContext() {
         m_swapchainObj.reset();
         cleanupSyncObjects();
 
-        m_bindlessHeap.reset();
-        if (m_vmaAllocator != VK_NULL_HANDLE) {
-            vmaDestroyAllocator(m_vmaAllocator);
-            m_vmaAllocator = VK_NULL_HANDLE;
-        }
-
-        if (m_commandPool != VK_NULL_HANDLE) {
-            vkDestroyCommandPool(m_device, m_commandPool, nullptr);
-            m_commandPool = VK_NULL_HANDLE;
-        }
-
-        if (m_descriptorPool != VK_NULL_HANDLE) {
-            vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
-            m_descriptorPool = VK_NULL_HANDLE;
-        }
+        // ResourceFactory owns the command pool, descriptor pool, VMA
+        // allocator, and BindlessHeap. Destroy it before tearing down the
+        // device so all dependent resources go first.
+        m_resourceFactory.reset();
 
         m_device = VK_NULL_HANDLE;
     }
@@ -69,102 +58,17 @@ void VulkanContext::init(const loom::platform::Window& window, const char* appNa
     m_presentQueueFamily = m_deviceObj->getPresentQueueFamily();
 
     m_swapchainObj = std::make_unique<Swapchain>(*m_instanceObj, *m_deviceObj, m_window);
-    createCommandPool();
+    m_resourceFactory = std::make_unique<ResourceFactory>(*m_instanceObj, *m_deviceObj);
     allocateCommandBuffers();
     createSyncObjects();
-    createDescriptorPool();
-
-    // VMA initialization
-    VmaAllocatorCreateInfo allocatorInfo = {};
-    allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
-    allocatorInfo.physicalDevice = m_physicalDevice;
-    allocatorInfo.device = m_device;
-    allocatorInfo.instance = m_instanceObj->get();
-
-    if (vmaCreateAllocator(&allocatorInfo, &m_vmaAllocator) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create VMA allocator!");
-    }
-
-    m_bindlessHeap = std::make_unique<BindlessHeap>(m_device);
-}
-
-void VulkanContext::createCommandPool() {
-    VkCommandPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-    // Allows individual command buffers to be re-recorded
-    // each frame without resetting the entire pool.
-    poolInfo.queueFamilyIndex = m_graphicsQueueFamily;
-    // Command buffers from this pool can only be submitted
-    // to queues from this family.
-
-    if (vkCreateCommandPool(m_device, &poolInfo, nullptr, &m_commandPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create command pool!");
-    }
-}
-
-void VulkanContext::createDescriptorPool() {
-    VkDescriptorPoolSize poolSizes[] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000}
-        // 1000 allows one descriptor per node preview
-        // image in the compositor. Expand if needed.
-    };
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    // This flag is mandatory to allow external UI systems or node graphs to free individual
-    // descriptor sets internally without resetting the entire pool.
-    poolInfo.maxSets = 1000;
-    // Must be >= the total number of descriptor sets
-    // that will ever be allocated from this pool simultaneously.
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = poolSizes;
-
-    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_descriptorPool) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor pool!");
-    }
 }
 
 VkCommandBuffer VulkanContext::beginSingleTimeCommands() {
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = m_commandPool;
-    allocInfo.commandBufferCount = 1;
-    // Allocate a temporary one-shot command buffer.
-    // This is separate from the per-frame command buffers
-    // in m_commandBuffers — it is used only for one-off
-    // GPU transfers and freed immediately after submission.
-
-    VkCommandBuffer commandBuffer;
-    LOOM_VK_CHECK(vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer));
-
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    // ONE_TIME_SUBMIT tells the driver this buffer is recorded
-    // once, submitted once, and never reused. Allows optimization.
-
-    LOOM_VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
-    return commandBuffer;
+    return m_resourceFactory->beginSingleTimeCommands();
 }
 
 void VulkanContext::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
-    LOOM_VK_CHECK(vkEndCommandBuffer(commandBuffer));
-
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-
-    LOOM_VK_CHECK(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE));
-    LOOM_VK_CHECK(vkQueueWaitIdle(m_graphicsQueue));
-    // vkQueueWaitIdle is a hard sync — the CPU blocks until the
-    // GPU finishes. This is acceptable for one-time setup operations
-    // like texture uploads. Never use this in the render loop.
-
-    vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
+    m_resourceFactory->endSingleTimeCommands(commandBuffer);
 }
 
 void VulkanContext::allocateCommandBuffers() {
@@ -172,15 +76,13 @@ void VulkanContext::allocateCommandBuffers() {
 
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = m_commandPool;
+    allocInfo.commandPool = m_resourceFactory->getCommandPool();
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     // Primary buffers are submitted directly to a queue.
     // Secondary buffers are called from primary buffers — not needed here.
     allocInfo.commandBufferCount = static_cast<uint32_t>(m_commandBuffers.size());
 
-    if (vkAllocateCommandBuffers(m_device, &allocInfo, m_commandBuffers.data()) != VK_SUCCESS) {
-        throw std::runtime_error("failed to allocate command buffers!");
-    }
+    LOOM_VK_CHECK(vkAllocateCommandBuffers(m_device, &allocInfo, m_commandBuffers.data()));
 }
 
 void VulkanContext::createSyncObjects() {

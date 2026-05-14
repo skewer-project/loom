@@ -166,6 +166,7 @@ add_library(LoomCore STATIC
     src/gpu/Device.cpp
     src/gpu/Swapchain.cpp
     src/gpu/BindlessHeap.cpp
+    src/gpu/ResourceFactory.cpp
     src/gpu/TransientImagePool.cpp
     src/gpu/TransientBufferPool.cpp
     src/gpu/PipelineCache.cpp
