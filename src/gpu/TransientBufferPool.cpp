@@ -13,8 +13,8 @@ TransientBufferPool::~TransientBufferPool() {
     for (auto& entry : m_buffers) {
         if (entry.buffer != VK_NULL_HANDLE)
             vmaDestroyBuffer(m_allocator, entry.buffer, entry.allocation);
-        if (entry.bindlessSlot != 0xFFFFFFFF) m_bindlessHeap.unregisterBuffer(entry.bindlessSlot);
     }
+    // No bindless unregister: see TransientImagePool::~TransientImagePool.
 }
 
 BufferHandle TransientBufferPool::acquire(VkDeviceSize minSize) {
@@ -55,21 +55,38 @@ BufferHandle TransientBufferPool::acquire(VkDeviceSize minSize) {
     return {poolIndex, slot, 0};
 }
 
-void TransientBufferPool::release(BufferHandle handle) {
+void TransientBufferPool::release(BufferHandle handle, uint64_t releaseAtFrame) {
     if (!handle.isValid()) return;
     assert(handle.poolIndex < m_buffers.size());
     auto& entry = m_buffers[handle.poolIndex];
     if (entry.generation != handle.generation) {
         throw std::runtime_error("stale handle release!");
     }
-    m_pendingReleases.push_back(handle);
+    m_pendingReleases.push_back({handle, releaseAtFrame});
+}
+
+void TransientBufferPool::retireEntry(BufferHandle handle) {
+    auto& entry = m_buffers[handle.poolIndex];
+    entry.isFree = true;
+    entry.generation++;
+}
+
+void TransientBufferPool::onFrameRetired(uint64_t retiredValue) {
+    auto keep = m_pendingReleases.begin();
+    for (auto it = m_pendingReleases.begin(); it != m_pendingReleases.end(); ++it) {
+        if (it->releaseAtFrame <= retiredValue) {
+            retireEntry(it->handle);
+        } else {
+            if (keep != it) *keep = *it;
+            ++keep;
+        }
+    }
+    m_pendingReleases.erase(keep, m_pendingReleases.end());
 }
 
 void TransientBufferPool::flushPendingReleases() {
-    for (auto handle : m_pendingReleases) {
-        auto& entry = m_buffers[handle.poolIndex];
-        entry.isFree = true;
-        entry.generation++;
+    for (const auto& pending : m_pendingReleases) {
+        retireEntry(pending.handle);
     }
     m_pendingReleases.clear();
 }

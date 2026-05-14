@@ -99,7 +99,7 @@ TEST_F(ResourcePoolTest, FreeListExhaustion) {
     // Acquire 2048 distinct image specs to exhaust the heap
     for (uint32_t i = 0; i < 2048; ++i) {
         gpu::ImageSpec spec{VK_FORMAT_R8G8B8A8_UNORM, {1 + i, 1}, VK_IMAGE_USAGE_SAMPLED_BIT};
-        imagePool->acquire(spec);
+        [[maybe_unused]] auto h = imagePool->acquire(spec);
     }
 
     // 2049th should return sentinel value

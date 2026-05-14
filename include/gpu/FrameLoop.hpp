@@ -60,6 +60,11 @@ class FrameLoop {
     // consumers (Phase 6).
     [[nodiscard]] uint64_t currentFrameValue() const { return m_frameValue; }
 
+    // Live query of the timeline counter. Returns the highest frame value the
+    // GPU has actually retired. Consumers (BindlessHeap, TransientImagePool)
+    // use this to drain entries whose `releaseAtFrame <= retiredValue`.
+    [[nodiscard]] uint64_t getRetiredFrameValue() const;
+
     void waitIdle() const;
 
   private:

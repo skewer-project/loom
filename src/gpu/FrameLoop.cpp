@@ -33,6 +33,13 @@ FrameLoop::~FrameLoop() {
 
 void FrameLoop::waitIdle() const { vkDeviceWaitIdle(m_device.get()); }
 
+uint64_t FrameLoop::getRetiredFrameValue() const {
+    if (m_timeline == VK_NULL_HANDLE) return 0;
+    uint64_t value = 0;
+    vkGetSemaphoreCounterValue(m_device.get(), m_timeline, &value);
+    return value;
+}
+
 void FrameLoop::allocateCommandBuffers() {
     m_commandBuffers.resize(core::MAX_FRAMES_IN_FLIGHT);
 

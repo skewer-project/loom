@@ -14,11 +14,10 @@ TransientImagePool::~TransientImagePool() {
         if (entry.view != VK_NULL_HANDLE) vkDestroyImageView(m_device, entry.view, nullptr);
         if (entry.image != VK_NULL_HANDLE)
             vmaDestroyImage(m_allocator, entry.image, entry.allocation);
-        // Bindless slots are managed by the BindlessHeap, but unregistering here for completeness
-        // if needed. Actually the prompt says "unregisterImage": push the slot back to the
-        // respective free-list.
-        if (entry.bindlessSlot != 0xFFFFFFFF) m_bindlessHeap.unregisterImage(entry.bindlessSlot);
     }
+    // No bindless unregister: the BindlessHeap descriptor pool is destroyed
+    // alongside the pool's lifetime, so pushing slots back to its free queues
+    // would have no observable effect.
 }
 
 ImageHandle TransientImagePool::acquire(ImageSpec spec) {
@@ -86,21 +85,38 @@ ImageHandle TransientImagePool::acquire(ImageSpec spec) {
     return {poolIndex, slot, 0};
 }
 
-void TransientImagePool::release(ImageHandle handle) {
+void TransientImagePool::release(ImageHandle handle, uint64_t releaseAtFrame) {
     if (!handle.isValid()) return;
     assert(handle.poolIndex < m_images.size());
     auto& entry = m_images[handle.poolIndex];
     if (entry.generation != handle.generation) {
         throw std::runtime_error("stale handle release!");
     }
-    m_pendingReleases.push_back(handle);
+    m_pendingReleases.push_back({handle, releaseAtFrame});
+}
+
+void TransientImagePool::retireEntry(ImageHandle handle) {
+    auto& entry = m_images[handle.poolIndex];
+    entry.isFree = true;
+    entry.generation++;
+}
+
+void TransientImagePool::onFrameRetired(uint64_t retiredValue) {
+    auto keep = m_pendingReleases.begin();
+    for (auto it = m_pendingReleases.begin(); it != m_pendingReleases.end(); ++it) {
+        if (it->releaseAtFrame <= retiredValue) {
+            retireEntry(it->handle);
+        } else {
+            if (keep != it) *keep = *it;
+            ++keep;
+        }
+    }
+    m_pendingReleases.erase(keep, m_pendingReleases.end());
 }
 
 void TransientImagePool::flushPendingReleases() {
-    for (auto handle : m_pendingReleases) {
-        auto& entry = m_images[handle.poolIndex];
-        entry.isFree = true;
-        entry.generation++;
+    for (const auto& pending : m_pendingReleases) {
+        retireEntry(pending.handle);
     }
     m_pendingReleases.clear();
 }

@@ -140,14 +140,33 @@ uint32_t BindlessHeap::registerBuffer(VkBuffer buffer, VkDeviceSize size) {
     return slot;
 }
 
-void BindlessHeap::unregisterImage(uint32_t slot) {
+void BindlessHeap::unregisterImage(uint32_t slot, uint64_t releaseAtFrame) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_freeImageSlots.push(slot);
+    m_pendingImageSlots.push_back({slot, releaseAtFrame});
 }
 
-void BindlessHeap::unregisterBuffer(uint32_t slot) {
+void BindlessHeap::unregisterBuffer(uint32_t slot, uint64_t releaseAtFrame) {
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_freeBufferSlots.push(slot);
+    m_pendingBufferSlots.push_back({slot, releaseAtFrame});
+}
+
+void BindlessHeap::onFrameRetired(uint64_t retiredValue) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto drain = [&](std::vector<PendingSlot>& pending, std::queue<uint32_t>& freeQueue) {
+        auto keep = pending.begin();
+        for (auto it = pending.begin(); it != pending.end(); ++it) {
+            if (it->releaseAtFrame <= retiredValue) {
+                freeQueue.push(it->slot);
+            } else {
+                if (keep != it) *keep = *it;
+                ++keep;
+            }
+        }
+        pending.erase(keep, pending.end());
+    };
+    drain(m_pendingImageSlots, m_freeImageSlots);
+    drain(m_pendingBufferSlots, m_freeBufferSlots);
 }
 
 }  // namespace loom::gpu

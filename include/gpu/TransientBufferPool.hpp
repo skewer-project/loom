@@ -15,13 +15,18 @@ class TransientBufferPool {
     TransientBufferPool(VkDevice device, VmaAllocator allocator, BindlessHeap& bindlessHeap);
     ~TransientBufferPool();
 
-    BufferHandle acquire(VkDeviceSize minSize);
-    void release(BufferHandle handle);
+    [[nodiscard]] BufferHandle acquire(VkDeviceSize minSize);
+
+    // See TransientImagePool::release for the lifetime contract.
+    void release(BufferHandle handle, uint64_t releaseAtFrame = 0);
+    void onFrameRetired(uint64_t retiredValue);
     void flushPendingReleases();
 
-    VkBuffer getBuffer(BufferHandle handle) const;
-    VkDeviceSize getSize(BufferHandle handle) const;
-    uint32_t DEBUG_getBindlessSlot(BufferHandle handle) const { return handle.bindlessSlot; }
+    [[nodiscard]] VkBuffer getBuffer(BufferHandle handle) const;
+    [[nodiscard]] VkDeviceSize getSize(BufferHandle handle) const;
+    [[nodiscard]] uint32_t DEBUG_getBindlessSlot(BufferHandle handle) const {
+        return handle.bindlessSlot;
+    }
 
   private:
     struct BufferEntry {
@@ -33,11 +38,18 @@ class TransientBufferPool {
         bool isFree = true;
     };
 
+    struct PendingRelease {
+        BufferHandle handle;
+        uint64_t releaseAtFrame;
+    };
+
+    void retireEntry(BufferHandle handle);
+
     VkDevice m_device;  // Note: unused as of phase 4
     VmaAllocator m_allocator;
     BindlessHeap& m_bindlessHeap;
     std::vector<BufferEntry> m_buffers;
-    std::vector<BufferHandle> m_pendingReleases;
+    std::vector<PendingRelease> m_pendingReleases;
 };
 
 }  // namespace loom::gpu

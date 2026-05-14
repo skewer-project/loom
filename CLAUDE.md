@@ -32,10 +32,11 @@ Headless `core/` **may not** include any Vulkan header. GPU-dependent code lives
 ## 2. Resource ownership
 
 - Every `acquire()` on `TransientImagePool` / `TransientBufferPool` is paired with one of:
-  - `release(handle)` on the pool, or
+  - `release(handle, releaseAtFrame)` on the pool, or
   - `cache.store(pin, region, handle)` on `RenderCache`, which transfers ownership to the cache.
-- The cache owns until the entry is evicted (`evict`, `clear`, or `garbageCollect`). Eviction enqueues the handle into `m_pendingImageReleases`; the frame loop drains the queue at end-of-frame.
-- A released `ImageHandle` remains GPU-valid for **`MAX_FRAMES_IN_FLIGHT`** additional frames — see §6 on frame retirement. Code that needs the slot back sooner must `vkDeviceWaitIdle` first.
+- The cache owns until the entry is evicted (`evict`, `clear`, or `garbageCollect`). Eviction enqueues the handle into `m_pendingImageReleases`; the engine drains the queue once per frame and calls `pool.release(handle, frameValue + MAX_FRAMES_IN_FLIGHT)` for each.
+- A released `ImageHandle` remains GPU-valid until the timeline counter reaches `releaseAtFrame`. The standard tag is `frameLoop.currentFrameValue() + MAX_FRAMES_IN_FLIGHT`, which guarantees the slot is not reissued while any in-flight frame still references its descriptor. Code that needs the slot back sooner must `vkDeviceWaitIdle` first.
+- Once per frame the engine queries `frameLoop.getRetiredFrameValue()` and forwards it to `imagePool.onFrameRetired(retired)` and `bindlessHeap.onFrameRetired(retired)`. Anything tagged `<= retired` is moved back to its free list / pool entry. `flushPendingReleases()` exists as a synchronous drain for shutdown and unit-test paths — production code must not call it inside the render loop.
 - Raw `new` / `delete` is disallowed. Use `std::unique_ptr` / `std::shared_ptr` / VMA / RAII.
 
 ---

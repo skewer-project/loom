@@ -148,15 +148,21 @@ int main() {
                 renderCache.garbageCollect(&graph);
 
                 // Then release every handle the cache enqueued (overwrites,
-                // evictions, the GC pass above) back to the pool. The pool
-                // itself defers the actual VMA destruction to its own pending
-                // queue, drained below.
+                // evictions, the GC pass above) back to the pool, tagged with
+                // the frame at which it is safe to reuse. The handle remains
+                // GPU-valid until the timeline semaphore reaches that value.
+                const uint64_t releaseAtFrame =
+                    vulkan.currentFrameValue() + loom::core::MAX_FRAMES_IN_FLIGHT;
                 for (auto handle : renderCache.takePendingReleases()) {
-                    imagePool.release(handle);
+                    imagePool.release(handle, releaseAtFrame);
                 }
             }
 
-            imagePool.flushPendingReleases();
+            // Once per frame, ask the GPU what's actually retired and free
+            // any pool / bindless entries that have aged out.
+            const uint64_t retired = vulkan.getRetiredFrameValue();
+            imagePool.onFrameRetired(retired);
+            vulkan.getBindlessHeap().onFrameRetired(retired);
         }
 
         vulkan.waitIdle();

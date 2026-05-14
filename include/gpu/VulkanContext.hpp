@@ -45,6 +45,13 @@ class VulkanContext {
     // (BindlessHeap, TransientImagePool) in Phase 6.
     [[nodiscard]] uint64_t currentFrameValue() const { return m_frameLoop->currentFrameValue(); }
 
+    // Live query of the timeline counter — the highest frame the GPU has
+    // actually retired. Drive `onFrameRetired` on bindless / pool consumers
+    // with this value once per frame.
+    [[nodiscard]] uint64_t getRetiredFrameValue() const {
+        return m_frameLoop->getRetiredFrameValue();
+    }
+
     [[nodiscard]] VkCommandBuffer beginSingleTimeCommands() {
         return m_resourceFactory->beginSingleTimeCommands();
     }

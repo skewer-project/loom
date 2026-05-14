@@ -283,6 +283,47 @@ Split the ~970-line `VulkanContext` god class into focused subsystems (`Instance
 - 5.6 ✅ — Disk-backed `VkPipelineCache`. New `platform::userDataDir()` resolves `~/Library/Caches/loom` on macOS, `$XDG_DATA_HOME/loom` (or `$HOME/.local/share/loom`) on Linux, `%LOCALAPPDATA%/loom` on Windows, and lazy-creates the directory. `PipelineCache` constructs a `VkPipelineCache` seeded from `pipeline_cache.bin` if present and passes the handle to `vkCreateComputePipelines` instead of the previous `VK_NULL_HANDLE`. Destructor calls `vkGetPipelineCacheData` and writes to a `.tmp` sibling + rename so a crash mid-write leaves the prior cache intact. Driver/GPU mismatch on load (returns `VK_ERROR_INCOMPATIBLE_DRIVER` or otherwise fails) falls back to an empty cache with a stderr note — the engine boots, just slower until it re-warms. Path resolution can throw if `$HOME` is unset; we catch and degrade to an in-memory cache rather than failing engine startup.
 - 5.7 ✅ — `VulkanContext` slimmed to a pure composition root. All shadow members are gone: `m_physicalDevice`, `m_device`, `m_graphicsQueue` / `m_computeQueue` / `m_presentQueue`, the three queue-family indices, and the per-frame command-buffer / semaphore / fence vectors. Every getter now delegates to a subsystem object. The body of `VulkanContext.cpp` is ~30 lines (constructor, destructor with explicit reset order, `init` composition, `waitIdle`). Public API is unchanged from `main.cpp` and the tests' perspective; the file went from ~290 lines to ~35.
 
+---
+
+## Phase 6 — Bindless Lifetime & Sync Hardening
+
+### Goal
+Tie `BindlessHeap` slot recycling and `TransientImagePool` / `TransientBufferPool` entry release to the FrameLoop's timeline-semaphore retirement, so a slot is never re-issued while shaders still reference its descriptor.
+
+### Decisions
+
+- **Tagged-release API.** `release(handle, releaseAtFrame)` carries the deferred frame value with the pending entry rather than a separate side channel. The engine path passes `vulkan.currentFrameValue() + MAX_FRAMES_IN_FLIGHT`; the default arg `0` lets unit tests pair `release(h)` with `flushPendingReleases()` for synchronous behaviour. `flushPendingReleases()` is preserved as the explicit "drain everything regardless of tag" escape hatch — required for shutdown after `vkDeviceWaitIdle`, and convenient for tests that don't construct a real frame loop.
+- **Drain via the live timeline counter.** Rather than have FrameLoop publish "frame X retired" callbacks on a hook list, the engine queries `vkGetSemaphoreCounterValue` once per frame (via `vulkan.getRetiredFrameValue()`) and forwards it to consumers. Live query is more responsive than the lower-bound `m_frameValue + 1 - MAX_FRAMES_IN_FLIGHT` from the begin-frame wait, and avoids accumulating a list of registered hooks for what is currently a fixed set of two consumers.
+- **`BindlessHeap::unregisterImage(slot, releaseAtFrame)` is now the sole API.** The previous immediate-push-to-free signature had no useful production caller (only a no-op invocation in `TransientImagePool`'s destructor, removed). The pool destructor's call to `unregisterImage` was dead code: the `BindlessHeap` descriptor pool is destroyed alongside the image pool's lifetime, so pushing slots back to its free queues has no observable effect. Removing it eliminates the cyclic-destructor concern.
+- **Cyclic destructor concern.** `TransientImagePool::~TransientImagePool` and `TransientBufferPool::~TransientBufferPool` used to call `BindlessHeap::unregister*` during their teardown. With both pools constructed by `main()` (not by `ResourceFactory`), and the `BindlessHeap` owned by `ResourceFactory`, the destruction order in `main()` matters: pools are destroyed before `vulkan.waitIdle()` returns and `VulkanContext`'s destructor reaches `m_resourceFactory.reset()`. Removing the unregister calls makes the order irrelevant — the slot queues are torn down with the heap regardless.
+- **`getRetiredFrameValue` lives on `FrameLoop`, surfaced via `VulkanContext`.** Querying the timeline semaphore is the natural responsibility of whoever owns it. Putting the getter behind both the subsystem and the façade preserves the option to add a deferred-release manager later without churning call sites.
+
+### Files modified
+
+- `include/gpu/BindlessHeap.hpp`, `src/gpu/BindlessHeap.cpp` — pending-slot queues, `unregister*(slot, releaseAtFrame)` and `onFrameRetired(retiredValue)`.
+- `include/gpu/TransientImagePool.hpp`, `src/gpu/TransientImagePool.cpp` — `release(handle, releaseAtFrame)`, `onFrameRetired`, `flushPendingReleases` retained for shutdown / tests; destructor no longer calls `unregisterImage`.
+- `include/gpu/TransientBufferPool.hpp`, `src/gpu/TransientBufferPool.cpp` — same shape.
+- `include/gpu/FrameLoop.hpp`, `src/gpu/FrameLoop.cpp` — `getRetiredFrameValue()` queries `vkGetSemaphoreCounterValue`.
+- `include/gpu/VulkanContext.hpp` — `getRetiredFrameValue()` passthrough.
+- `src/main.cpp` — release loop tags handles with `currentFrameValue + MAX_FRAMES_IN_FLIGHT`; once-per-frame `imagePool.onFrameRetired(retired)` and `bindlessHeap.onFrameRetired(retired)` replace the old unconditional `flushPendingReleases()`.
+- `CLAUDE.md` §2 — lifetime contract updated to spell out the tagging convention and the `flushPendingReleases` shutdown carve-out.
+- `tests/gpu/ResourcePoolTest.cpp` — silence `[[nodiscard]]` warning on the `FreeListExhaustion` test (deliberate-discard pattern).
+
+### Verification
+
+- Build: clean.
+- `ctest --test-dir build` — 63/63 pass. The tests that use `release(h)`+`flushPendingReleases()` keep working because the default `releaseAtFrame = 0` plus `flushPendingReleases()`'s "drain everything" semantics matches the old behaviour.
+- The deferred-release path is not exercised by the headless test suite. Phase 10's `BindlessSlotNotReusedWithinFrameLifetime` and `Stress_1000AcquireReleaseCycles` are the proper end-to-end tests; they need a Vulkan device with validation layers and are deferred.
+
+### Dependencies
+Phase 5.4 (timeline semaphore + `currentFrameValue`).
+
+### Known follow-ups
+
+- Phase 10 will add the `BindlessSlotNotReusedWithinFrameLifetime` test (acquire A; submit a frame using A; `release(h, currentFrameValue + MAX_FRAMES_IN_FLIGHT)`; assert the slot is *not* in the bindless free queue until that many further frames have retired).
+- The Phase 7 cleanup will fold `unregister*` and `onFrameRetired` behind `[[nodiscard]]` where appropriate — currently neither returns a value, so no audit work.
+- The two `onFrameRetired` consumers (`BindlessHeap`, `TransientImagePool` — `TransientBufferPool` is built but not currently driven from main()) walk a `std::vector` of pending entries each frame. If a long-running session accumulates a large pending list before retirement catches up, a binary-search on a sorted vector or a min-heap by `releaseAtFrame` would pay off; today the list is bounded by `MAX_FRAMES_IN_FLIGHT` worth of evictions and the linear scan is fine.
+
 ### Files created
 
 - `include/gpu/LayoutTransitions.hpp`, `src/gpu/LayoutTransitions.cpp`
