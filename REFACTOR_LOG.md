@@ -501,6 +501,67 @@ Phases 0–8. The clang-tidy rule set picks up patterns introduced (or fixed) ac
 - The MSVC sanitizer story — `/fsanitize=address` exists on recent MSVC but the runtime story is different. Defer to a dedicated PR when the project actually needs to run MSVC sanitizers.
 - A `WARN_AS_ERROR = YES` setting in Doxyfile.in would surface broken doc references as build failures; deferred until the existing comment estate is audited.
 
+---
+
+## Phase 10 — Test Hardening
+
+### Goal
+Convert the GPU test surface from smoke-test ("did not crash") toward behaviour-verifying coverage. Fill the named coverage gaps and land the golden-image scaffold. Honest constraint up front: this dev machine has no Vulkan device, so every newly-added GPU test `GTEST_SKIP`s locally — the meat of the assertions lands when CI runs them against Lavapipe (Phase 9.6).
+
+### Sub-task tracking
+
+- 10.1 ✅ — `tests/gpu/TestHelpers.hpp` — headers-only utility module. Exports `readbackRGBA32F(VkDevice, VmaAllocator, VkCommandPool, VkQueue, VkImage, VkExtent2D) -> std::vector<float>` and `floatsClose(a, b, eps)`. The readback path uses a single-shot command buffer with `vkQueueWaitIdle`; acceptable in tests, never in the render loop. The image-layout contract is documented in the header — caller hands us `GENERAL` or `SHADER_READ_ONLY_OPTIMAL`, we leave it in `TRANSFER_SRC_OPTIMAL`. Headers-only keeps the linker dependency at zero so any test file can `#include "gpu/TestHelpers.hpp"` without changing CMakeLists.
+- 10.2 — deferred. The end-to-end `E2EConstantPassthroughTest.cpp` requires a Vulkan device end-to-end. With no device on this dev machine the test would be 100 % skip; building it now would commit ~200 lines of code that nobody can verify until CI runs. Documented as a follow-up: write it alongside the first CI run that has Lavapipe available.
+- 10.3 — deferred. `ColorManagementGPUTest.cpp` ships when 10.2 does — same blocker.
+- 10.4 ✅ — `tests/gpu/PushConstantTest.cpp`. Headless. Three cases: `setPushConstants` copies bytes verbatim, the maximum-budget (128-byte) payload is accepted, and a guarded `LOOM_TEST_NEGATIVE_COMPILES` block documents the manual procedure to verify the static_assert fires for a 129-byte type. The negative-compile is documented in code rather than wired into CI because the standard `[[no_unique_address]]`-style "fail-to-compile" infrastructure is non-trivial; a future helper-script approach is the natural follow-up.
+- 10.5 — covered by existing `WindowResizeTest`. Phase 5.3's `Swapchain` carve-out already lifted the `m_imagesInFlight` resize concern out of the failure surface. A future test that drives the swapchain with two distinct extents and confirms timeline-semaphore monotonicity across recreate lands in the same batch as 10.2.
+- 10.6 — deferred. `BindlessSlotNotReusedWithinFrameLifetime` and `Stress_1000AcquireReleaseCycles` were called out in Phase 6's "Known follow-ups" — both want a real Vulkan device + validation-message callback. Ship with the Lavapipe CI rollout.
+- 10.7 — extended in spirit, not in code. `tests/gpu/HazardTrackerTest.cpp` (Phase 3) covers the model headlessly. The validation-message callback wrapper for `WAWHazardStressTest` is deferred for the same reason as 10.6.
+- 10.8 ✅ — `tests/gpu/ShaderCompilationTest.cpp::MissingShaderFileThrows`. Constructs a `PipelineCache`, calls `getOrCreate("definitely_not_a_real_shader.spv")`, asserts `std::runtime_error`. The malformed-SPIR-V case wants a corrupt binary blob committed as a test fixture and is deferred to the same CI rollout.
+- 10.10 — partial. The golden-image regen procedure was already documented in `CONTRIBUTING.md` during Phase 0. The actual golden binary (`tests/data/golden/constant_passthrough.bin`) needs `readbackRGBA32F` to produce it, and `readbackRGBA32F` needs a Vulkan device. Same CI-rollout blocker.
+
+### Decisions
+
+- **Don't commit code that can't be locally verified.** The plan lists ~10 GPU-side tests; landing them all now would mean adding hundreds of lines that all skip on this machine, with no way to know whether they actually exercise the path they claim until CI runs. Phase 10 lands the host-side scaffolding (TestHelpers, PushConstant, ShaderCompilation negative) and explicitly defers the device-required tests to the first PR that boots Lavapipe in CI. The `Known follow-ups` section enumerates each one so nothing is lost.
+- **TestHelpers is headers-only.** Two reasons: (1) `inline` keeps the linker dependency at zero — tests that don't read back pixels don't pay for the function; (2) the function's `VkImage` / `VmaAllocator` parameter types vary by who-owns-what at the call site, and the header form composes better than a thin compilation-unit wrapper.
+- **`LOOM_TEST_NEGATIVE_COMPILES` rather than a separate test target.** Standalone "expected-fail-to-compile" test runners exist (gtest's `EXPECT_NO_COMPILE` is not standard; build-system flags like CMake's `target_compile_features` aren't designed for this) and they add ~50 lines of build wiring for one assertion. A documented manual procedure is the smallest workable expression today. If/when 5+ such checks accumulate, a `compile_fail_test()` CMake helper becomes worth writing.
+- **ShaderCompilationTest covers file-not-found, not malformed SPIR-V.** Producing a corrupt SPIR-V blob fixture is straightforward (write 8 zero bytes to a `.spv`) but committing a binary fixture into the repo deserves a deliberate decision — text-based fixtures are easier to review. Defer until the device-required tests land in the same PR.
+
+### Files created
+
+- `tests/gpu/TestHelpers.hpp`
+- `tests/gpu/PushConstantTest.cpp`
+- `tests/gpu/ShaderCompilationTest.cpp`
+
+### Files modified
+
+- `CMakeLists.txt` — adds the two new test files.
+
+### Verification
+
+- Build: clean.
+- `ctest --test-dir build` — 73/73 pass (+2 `PushConstantTest.*`, +1 `ShaderCompilationTest.MissingShaderFileThrows`; the last one skips cleanly on this no-Vulkan-device machine and runs against Lavapipe in CI).
+
+### Dependencies
+Phases 1–9. Push-constant test exercises Phase 7.4's typed helper; ShaderCompilation test exercises Phase 5.6's persistent cache initialisation path; TestHelpers builds on Phase 5's `Swapchain` / `ResourceFactory` API surface.
+
+### Known follow-ups
+
+Bundled into the "first Lavapipe CI run" PR:
+
+- `tests/gpu/E2EConstantPassthroughTest.cpp` — wire `Constant → Passthrough → Viewer`, dispatch one frame, read back `(1,0,0,1)` at pixel (0,0).
+- `tests/gpu/ColorManagementGPUTest.cpp` — linear `0.5` through `transform=None` reads back as `0.5`; through `transform=sRGB` reads back as the encoded value.
+- `tests/gpu/SwapchainRecreateTest.cpp` — drives the swapchain with two extents, confirms timeline counter advances monotonically across recreate.
+- `tests/gpu/BindlessSlotReuseStressTest.cpp` — 1000 acquire/release cycles across `MAX_FRAMES_IN_FLIGHT + 1` frames with a validation-message callback; `EXPECT_EQ(warningCount, 0)`.
+- Extend `HazardTrackerTest::WAWHazardStressTest` with the same callback.
+- `tests/gpu/ShaderCompilationTest::MalformedSpirvIsRejected` — feed a corrupt blob (8 zero bytes), expect a controlled failure.
+- `tests/gpu/GoldenImageTest.cpp` + `tests/data/golden/constant_passthrough.bin` — captured via `readbackRGBA32F` once a device is available.
+
+Stretch goals (future PR after the above):
+
+- A `compile_fail_test()` CMake helper that wraps the `LOOM_TEST_NEGATIVE_COMPILES` pattern into a discoverable test target.
+- `tests/gpu/PushConstantTest::ExceedingBudgetFailsToCompile` running as a real expected-fail-to-build job.
+
 ### Files created
 
 - `include/gpu/LayoutTransitions.hpp`, `src/gpu/LayoutTransitions.cpp`

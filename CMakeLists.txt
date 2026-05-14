@@ -246,6 +246,8 @@ add_executable(LoomTests
     tests/gpu/ComputeDispatchTest.cpp
     tests/gpu/GraphExecutionTest.cpp
     tests/gpu/WindowResizeTest.cpp
+    tests/gpu/PushConstantTest.cpp
+    tests/gpu/ShaderCompilationTest.cpp
 )
 
 target_link_libraries(LoomTests PRIVATE
