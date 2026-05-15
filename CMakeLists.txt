@@ -68,7 +68,32 @@ FetchContent_Declare(
 )
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(glfw googletest)
+# OpenEXR + Imath. Pinned to release tags; FetchContent pulls them in tree so
+# Loom builds standalone from a fresh checkout (no system OpenEXR required).
+# Tools/examples/tests are disabled to keep the configure-time blast radius
+# small. See docs/CONVENTIONS.md §19 for the channel-naming convention layered
+# on top of these libraries.
+FetchContent_Declare(
+  Imath
+  GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/Imath.git
+  GIT_TAG v3.1.12
+)
+set(IMATH_INSTALL OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+  OpenEXR
+  GIT_REPOSITORY https://github.com/AcademySoftwareFoundation/openexr.git
+  GIT_TAG v3.2.4
+)
+set(OPENEXR_INSTALL OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(OPENEXR_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(glfw googletest Imath OpenEXR)
 
 # --- Vendored Libraries ---
 # Base DearImGui
@@ -225,6 +250,20 @@ endif()
 # --- Loom Application ---
 add_executable(Loom src/main.cpp)
 target_link_libraries(Loom PRIVATE LoomCore)
+
+
+# --- Throwaway tools (Phase A.0 spike) ---
+# Not part of the shipping build. Each tool is a single self-contained
+# translation unit linking OpenEXR directly. They exist so that fixture
+# generation and round-trip inspection are reproducible without depending on
+# the engine. The shipping IDeepReader / IDeepWriter wrappers land in Phase B.
+add_executable(exr_spike tools/exr_spike.cpp)
+target_link_libraries(exr_spike PRIVATE OpenEXR::OpenEXR Imath::Imath)
+target_compile_definitions(exr_spike PRIVATE LOOM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+
+add_executable(make_deep_fixture tools/make_deep_fixture.cpp)
+target_link_libraries(make_deep_fixture PRIVATE OpenEXR::OpenEXR Imath::Imath)
+target_compile_definitions(make_deep_fixture PRIVATE LOOM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
 
 
 # --- Test Suite ---

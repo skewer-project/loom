@@ -7,7 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
-<!-- Note: items land here as phases of the cleanup branch merge. -->
+- OpenEXR + Imath as transitive `FetchContent` dependencies (pinned to
+  `v3.2.4` / `v3.1.12`). Loom now reads and writes deep EXRs standalone from a
+  fresh checkout; tools and tests are disabled in the OpenEXR sub-build to
+  keep configure-time blast radius small.
+- `tools/exr_spike` and `tools/make_deep_fixture` — throwaway Phase A.0
+  command-line tools for deep-EXR inspection and committed-fixture generation.
+- `tests/data/deep_smoke.exr` — 16×16 deep EXR fixture with the v1 channel
+  set (`Z`, `ZBack`, `R`, `G`, `B`, `A`).
 
 ### Changed
 
