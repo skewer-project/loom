@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   command-line tools for deep-EXR inspection and committed-fixture generation.
 - `tests/data/deep_smoke.exr` — 16×16 deep EXR fixture with the v1 channel
   set (`Z`, `ZBack`, `R`, `G`, `B`, `A`).
+- `core::DeepLayout` — interned, hashable, ordered channel-list abstraction
+  with per-channel byte offsets and packed-sample stride. Process-wide
+  `getDeepLayout(channels)` returns content-addressed pointers so equal
+  layouts compare by pointer equality.
+- `ResourceRef::DeepRef` extended with `const core::DeepLayout* layout`;
+  `ResourceRef::fromDeep` helper added for symmetry with `fromImage` / `fromBuffer`.
 
 ### Changed
 

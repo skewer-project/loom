@@ -48,4 +48,29 @@ TEST(ResourceRefTest, DeepSlotReservedButZeroByDefault) {
     EXPECT_FALSE(ref.deep.countImage.isValid());
     EXPECT_FALSE(ref.deep.offsetImage.isValid());
     EXPECT_FALSE(ref.deep.samples.isValid());
+    EXPECT_EQ(ref.deep.layout, nullptr);
+}
+
+TEST(ResourceRefTest, FromDeepCarriesPayload) {
+    gpu::ResourceRef::DeepRef d;
+    d.countImage.poolIndex = 1;
+    d.countImage.bindlessSlot = 11;
+    d.countImage.generation = 1;
+    d.offsetImage.poolIndex = 2;
+    d.offsetImage.bindlessSlot = 12;
+    d.offsetImage.generation = 1;
+    d.samples.poolIndex = 3;
+    d.samples.bindlessSlot = 13;
+    d.samples.generation = 1;
+    // The layout pointer in DeepRef is a non-owning reference into the
+    // process-wide DeepLayoutRegistry; we leave it null here so this test
+    // stays linkage-free of core::DeepLayout.
+    d.layout = nullptr;
+
+    auto ref = gpu::ResourceRef::fromDeep(d);
+    EXPECT_EQ(ref.kind, gpu::ResourceRef::Kind::Deep);
+    EXPECT_TRUE(ref.isValid());
+    EXPECT_EQ(ref.deep.countImage.poolIndex, 1u);
+    EXPECT_EQ(ref.deep.offsetImage.poolIndex, 2u);
+    EXPECT_EQ(ref.deep.samples.poolIndex, 3u);
 }

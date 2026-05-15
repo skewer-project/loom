@@ -217,6 +217,7 @@ add_library(LoomCore STATIC
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp
     src/core/ColorManagement.cpp
+    src/core/DeepLayout.cpp
     src/core/Log.cpp
     src/core/Nodes.cpp
     src/core/NodeTaskBuilders.cpp
@@ -275,6 +276,7 @@ add_executable(LoomTests
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
     tests/core/ColorManagementTest.cpp
+    tests/core/DeepLayoutTest.cpp
     tests/core/RenderCacheTest.cpp
     tests/core/ResourceRefTest.cpp
     tests/core/PinSchemaTest.cpp

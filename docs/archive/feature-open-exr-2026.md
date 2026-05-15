@@ -169,3 +169,115 @@ fixture).
   v1 — the Loom build always sets it OFF in the relevant scope.
 
 ---
+
+## Phase A.1 — `core::DeepLayout` + `ResourceRef::DeepRef` extension
+
+### Goal
+
+Introduce the interned, hashable, ordered channel-list abstraction that every
+downstream Phase A / B / D component will key on. Extend `ResourceRef::DeepRef`
+with a non-owning `const DeepLayout*` so pin payloads carry their channel
+schema alongside the GPU resources.
+
+### Decisions
+
+- **`DeepChannel { name, type, components }`.** Plan-of-record; matches the
+  shape called out in the roadmap. `type` is one of `Float16` / `Float32` /
+  `UInt32` (Phase A.0's spike already established that the three OpenEXR
+  pixel types cover the whole reachable surface area). `components` is the
+  "vector channel" coalescer — `world_pos` is 1 channel with `components=3`
+  even though OpenEXR's deep API hands it back as three scalar channels
+  (`world_pos.x|y|z`). Coalescing is the loader's responsibility (Phase
+  B.1); the layout structure is agnostic.
+- **Packing is tight, no inter-channel padding.** Documented in the header.
+  V1 makes no alignment guarantees beyond natural alignment of each scalar
+  element. The shader-side SSBO load tolerates 2-byte alignment for 4-byte
+  values on every desktop GPU we target. If a future tile-streaming
+  evaluator needs 16-byte stride alignment we can introduce automatic
+  padding then — at that point `DeepLayout` becomes responsible for
+  inserting the pad channels, but the wire format from `DeepLayoutRegistry`
+  stays content-addressable.
+- **Process-wide content-addressed registry, single-threaded.** The plan
+  called for "process-wide `DeepLayoutRegistry`: hash → canonical pointer.
+  Layouts compare by pointer equality." Implemented as a static bucketed
+  map (`hash → vector<unique_ptr<DeepLayout>>`) so identical-content
+  layouts collapse to one allocation and pointer equality is always sound.
+  CONVENTIONS §13 says the engine is single-threaded and warns against
+  speculative locking; the registry follows that. The Phase C.1 worker
+  thread parses EXR data off the main thread but hands the channel list
+  back to the main thread for interning — no concurrent registry access.
+- **Hash includes channel order.** `boost::hash_combine` pattern with the
+  golden-ratio constant. Different orderings of the same channel set yield
+  different layouts (pinned by `DifferentChannelOrderInternsDistinctly`).
+  This matters because byte offsets depend on order: a writer that emits
+  channels in a different sequence produces a layout that consumers must
+  treat as distinct.
+- **Bucket fallback on hash collision.** The registry walks the bucket and
+  compares channels element-wise on a hash match. Pathological hash
+  collisions still yield correct pointer-equality semantics, at the cost
+  of an O(b) walk where b is bucket size. At realistic scales (a handful
+  of distinct layouts per session) this never matters.
+- **`DEBUG_clearLayoutRegistry()` for tests.** The registry is static and
+  persists across `TEST` invocations in the same process; the Phase A.1
+  tests need a clean slate per case to assert interning counts. The
+  `DEBUG_` prefix is the existing project convention for diagnostic-only
+  accessors (matches `TransientImagePool::DEBUG_getFreeSlotCount`).
+- **`ResourceRef::DeepRef::layout` is a non-owning, nullable pointer.**
+  The plan called for the layout pointer to live alongside `countImage` /
+  `offsetImage` / `samples`. Nullable because a default-constructed
+  `DeepRef` exists as a placeholder pin payload before evaluation runs;
+  production-path consumers must check before dereferencing. Pointer
+  equality between two refs' `layout` fields means they share the same
+  channel schema (and therefore the same per-channel byte offsets).
+- **Forward-declare `core::DeepLayout` in `ResourceHandles.hpp`.** The
+  header is included from both `core/` and `gpu/`; pulling in
+  `core/DeepLayout.hpp` here would invert the dependency direction.
+  Forward declaration keeps the include graph clean — consumers that
+  actually walk the layout include `core/DeepLayout.hpp` directly.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/core/DeepLayout.hpp` | `DeepChannel`, `ChannelType`, `DeepLayout`, `getDeepLayout`, `DEBUG_*` |
+| `src/core/DeepLayout.cpp` | Implementation + process-wide registry |
+| `tests/core/DeepLayoutTest.cpp` | 7 cases covering offsets, stride, interning, hash, unknown-channel tolerance, empty layout |
+
+### Files modified
+
+- `include/gpu/ResourceHandles.hpp` — `DeepRef` gains `const core::DeepLayout*
+  layout = nullptr`. Forward-declares `core::DeepLayout`. Adds
+  `ResourceRef::fromDeep(DeepRef)` for symmetry with `fromImage` / `fromBuffer`.
+- `tests/core/ResourceRefTest.cpp` — `DeepSlotReservedButZeroByDefault` extended
+  to assert `layout == nullptr` by default. New `FromDeepCarriesPayload` case.
+- `CMakeLists.txt` — `LoomCore` adds `src/core/DeepLayout.cpp`; `LoomTests`
+  adds `tests/core/DeepLayoutTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 81/81 pass (+7 `DeepLayoutFixture.*` cases, +1
+  `ResourceRefTest.FromDeepCarriesPayload`). Baseline was 73; net +8.
+- Manual review: `ResourceHandles.hpp` no longer pulls any `core/` content
+  in the absence of `DeepLayout` access (forward declaration only).
+
+### Dependencies
+
+A.0 (channel-type vocabulary established in the spike).
+
+### Known follow-ups for later sub-phases
+
+- Phase A.4's `StagingArena::uploadDeepImage` is the first non-test caller
+  of `getDeepLayout`. It assembles the candidate channel list from the
+  parsed EXR header and hands it to the registry; the returned pointer
+  becomes `DeepRef::layout`.
+- Phase B.1's `IDeepReader` populates the layout's `components` field via
+  channel-name pattern matching (`world_pos.x` / `.y` / `.z` coalesce into
+  one `world_pos` entry with `components=3`). The pattern matcher is a
+  small helper inside the reader — `DeepLayout` itself does not know about
+  the dot-separated convention.
+- If we ever need cross-thread access to the registry, gate it on a single
+  `std::mutex` inside `Registry`. Cost is one branch per `getDeepLayout`
+  call — negligible.
+
+---
