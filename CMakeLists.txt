@@ -232,6 +232,7 @@ add_library(LoomCore STATIC
     src/core/Log.cpp
     src/core/Nodes.cpp
     src/core/NodeTaskBuilders.cpp
+    src/core/Param.cpp
     src/core/RenderCache.cpp
 )
 if(HAS_SHADER_COMPILER)
@@ -290,6 +291,7 @@ add_executable(LoomTests
     tests/core/CameraTest.cpp
     tests/core/ColorManagementTest.cpp
     tests/core/DeepLayoutTest.cpp
+    tests/core/ParamTest.cpp
     tests/core/RenderCacheTest.cpp
     tests/core/ResourceRefTest.cpp
     tests/core/PinSchemaTest.cpp

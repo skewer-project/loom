@@ -2,9 +2,90 @@
 
 #include <imgui.h>
 
+#include <cstdio>
+#include <string>
+#include <variant>
+
+#include "core/Param.hpp"
+
 namespace ed = ax::NodeEditor;
 
 namespace loom::ui {
+
+namespace {
+
+// Render a single Param into the current ImGui scope. Routes mutations
+// through `Node::setParam` so the dirty-flag contract is single-sourced.
+// Returns true when the widget reports a value change this frame — the
+// caller then calls `Graph::markDirty(node)` to cascade re-evaluation
+// downstream.
+bool renderParamWidget(core::Node& node, size_t paramIndex) {
+    auto& p = node.params[paramIndex];
+    bool changed = false;
+    // Disambiguate widget IDs across nodes: ImGui scopes labels by string,
+    // so two nodes with a "color" param would collide on the same canvas.
+    char label[64];
+    std::snprintf(label, sizeof(label), "##%s_%u_%u", p.name().c_str(), node.id.index,
+                  node.id.generation);
+
+    ImGui::PushItemWidth(120.0f);
+    ImGui::TextUnformatted(p.name().c_str());
+    ImGui::SameLine();
+
+    std::visit(
+        [&](auto&& v) {
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_same_v<T, float>) {
+                float current = v;
+                bool edited = p.range().hasBounds ? ImGui::SliderFloat(label, &current,
+                                                                       p.range().min, p.range().max)
+                                                  : ImGui::InputFloat(label, &current);
+                if (edited) {
+                    node.setParam(paramIndex, current);
+                    changed = true;
+                }
+            } else if constexpr (std::is_same_v<T, int>) {
+                int current = v;
+                bool edited =
+                    p.range().hasBounds
+                        ? ImGui::SliderInt(label, &current, static_cast<int>(p.range().min),
+                                           static_cast<int>(p.range().max))
+                        : ImGui::InputInt(label, &current);
+                if (edited) {
+                    node.setParam(paramIndex, current);
+                    changed = true;
+                }
+            } else if constexpr (std::is_same_v<T, bool>) {
+                bool current = v;
+                if (ImGui::Checkbox(label, &current)) {
+                    node.setParam(paramIndex, current);
+                    changed = true;
+                }
+            } else if constexpr (std::is_same_v<T, glm::vec3>) {
+                glm::vec3 current = v;
+                float arr[3] = {current.x, current.y, current.z};
+                bool edited = p.range().hasBounds ? ImGui::ColorEdit3(label, arr)
+                                                  : ImGui::InputFloat3(label, arr);
+                if (edited) {
+                    node.setParam(paramIndex, glm::vec3(arr[0], arr[1], arr[2]));
+                    changed = true;
+                }
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                char buffer[256];
+                std::snprintf(buffer, sizeof(buffer), "%s", v.c_str());
+                if (ImGui::InputText(label, buffer, sizeof(buffer))) {
+                    node.setParam(paramIndex, std::string(buffer));
+                    changed = true;
+                }
+            }
+        },
+        p.value());
+
+    ImGui::PopItemWidth();
+    return changed;
+}
+
+}  // namespace
 
 NodeEditorPanel::NodeEditorPanel(core::Graph* graph) : m_graph(graph) {
     ed::Config config;
@@ -55,6 +136,15 @@ void NodeEditorPanel::renderNodes() {
                          ed::PinKind::Output);
             ImGui::TextUnformatted(m_graph->getPinLabel(pinHandle).c_str());
             ed::EndPin();
+        }
+
+        // Per-node Param widgets. The widget routes its mutation through
+        // `Node::setParam`, which flips this node's `isDirty`. The cascade
+        // to downstream nodes is what `Graph::markDirty` handles.
+        for (size_t i = 0; i < node.params.size(); ++i) {
+            if (renderParamWidget(node, i)) {
+                m_graph->markDirty(h);
+            }
         }
 
         ed::EndNode();

@@ -10,6 +10,7 @@ class ConstantNode : public Node {
   public:
     ConstantNode(NodeHandle h, std::string n) : Node(h, NodeType::Constant, std::move(n)) {}
     [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
     void markRequiredTiles(const Region& requestedRegion,
                            std::unordered_set<NodeHandle>& activeNodes) override;
     void execute(EvaluationContext& ctx, const Region& region) override;
@@ -19,6 +20,7 @@ class MergeNode : public Node {
   public:
     MergeNode(NodeHandle h, std::string n) : Node(h, NodeType::Merge, std::move(n)) {}
     [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
     void markRequiredTiles(const Region& requestedRegion,
                            std::unordered_set<NodeHandle>& activeNodes) override;
     void execute(EvaluationContext& ctx, const Region& region) override;
@@ -31,6 +33,7 @@ class ViewerNode : public Node {
     gpu::ImageHandle lastOutput;
     ViewerNode(NodeHandle h, std::string n) : Node(h, NodeType::Viewer, std::move(n)) {}
     [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
     void markRequiredTiles(const Region& requestedRegion,
                            std::unordered_set<NodeHandle>& activeNodes) override;
     void execute(EvaluationContext& ctx, const Region& region) override;
@@ -40,6 +43,7 @@ class PassthroughNode : public Node {
   public:
     PassthroughNode(NodeHandle h, std::string n) : Node(h, NodeType::Passthrough, std::move(n)) {}
     [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
     void markRequiredTiles(const Region& requestedRegion,
                            std::unordered_set<NodeHandle>& activeNodes) override;
     void execute(EvaluationContext& ctx, const Region& region) override;

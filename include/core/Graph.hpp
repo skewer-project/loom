@@ -47,6 +47,11 @@ class Graph {
 
         Node* nodePtr = nodes.get(nodeHandle)->get();
         setupNodePins(nodePtr);
+        // Param declaration runs after pins are wired so a subclass that
+        // wants to inspect its own pin count from `buildParams()` can do so.
+        // Virtual-from-ctor pitfall is avoided by calling here, not in the
+        // Node constructor.
+        nodePtr->buildParams();
 
         isTopoDirty = true;
         return nodeHandle;

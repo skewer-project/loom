@@ -27,6 +27,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   threaded from the UI through graph evaluation.
 - `glm` (1.0.1) added as a header-only `FetchContent` dependency for vector /
   matrix math.
+- `core::Param` — generic per-node parameter tag-union over `float / int /
+  bool / glm::vec3 / std::string`, with optional `ParamRange` bounds and JSON
+  round-trip via the vendored `crude_json`.
+- Nodes carry a `std::vector<Param>` and override `buildParams()` (called once
+  from `Graph::addNode`). `Node::setParam` is the canonical mutation entry
+  point and flips `isDirty`.
+- `NodeEditorPanel` renders generic Param widgets (slider / drag / checkbox /
+  color picker / text input) keyed off the variant tag.
+
+### Changed
+- `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
+  are now editable in the UI rather than hardcoded.
 
 ### Changed
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/Handle.hpp"
+#include "core/Param.hpp"
 #include "gpu/ResourceHandles.hpp"
 
 namespace loom::core {
@@ -100,11 +101,19 @@ struct Node {
     std::string name;
     std::vector<PinHandle> inputs;
     std::vector<PinHandle> outputs;
+    std::vector<Param> params;
     bool isDirty = true;
     Graph* graph = nullptr;
 
     Node(NodeHandle h, NodeType t, std::string n)
-        : id(h), type(t), name(std::move(n)), inputs(), outputs(), isDirty(true), graph(nullptr) {}
+        : id(h),
+          type(t),
+          name(std::move(n)),
+          inputs(),
+          outputs(),
+          params(),
+          isDirty(true),
+          graph(nullptr) {}
 
     virtual ~Node() = default;
 
@@ -113,12 +122,36 @@ struct Node {
     // immediately after construction.
     [[nodiscard]] virtual std::vector<PinSpec> getPinSchema() const = 0;
 
+    // Per-node parameter declaration. Override in subclasses to populate
+    // `params` with editable values. Graph::addNode invokes this once,
+    // immediately after the pin schema is wired — virtual-from-ctor pitfall
+    // is avoided by calling here, not in the Node constructor.
+    virtual void buildParams() {}
+
     // Pass 1: Mark required tiles and collect active nodes
     virtual void markRequiredTiles(const Region& requestedRegion,
                                    std::unordered_set<NodeHandle>& activeNodes) = 0;
 
     // Pass 2: Record Vulkan compute commands for the specified region
     virtual void execute(EvaluationContext& ctx, const Region& region) = 0;
+
+    // Param mutation entry point. Routes UI / test edits through one place
+    // so the dirty-propagation contract is total — every code path that
+    // changes a Param value also flips `isDirty`, which causes downstream
+    // nodes to re-evaluate next frame. The `Param` itself is value-typed
+    // and does not back-reference the node.
+    void setParam(size_t index, Param::Value v) {
+        if (index >= params.size()) return;
+        params[index].setValue(std::move(v));
+        isDirty = true;
+    }
+
+    // JSON round-trip for the node's params. Used by the per-session
+    // crash-recovery save (the node editor writes the whole graph including
+    // params; this method covers the per-node portion). Reading an empty /
+    // mismatched array leaves params untouched.
+    [[nodiscard]] crude_json::value paramsToJson() const;
+    void paramsFromJson(const crude_json::value& j);
 
   protected:
     // Pulls the upstream output for input `inputIndex` at the given region.

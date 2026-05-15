@@ -382,3 +382,124 @@ dependency between A.1 and A.2 — they could have landed in either order.
   v1 has no need.
 
 ---
+
+## Phase A.3 — Generic `Param` tag-union + JSON serialise
+
+### Goal
+
+Land the editable per-node parameter system that Phase B.2's
+`DeepEXRReadNode` (path + frame_index params), Phase C.2's timeline
+scrubber, Phase C.4's `TransformNode` (translate/rotate/scale), and the
+eventual knob-animation system in Phase E all consume. JSON serialise via
+the vendored `crude_json` so per-session crash recovery is free.
+
+### Decisions
+
+- **`Param::Value = std::variant<float, int, bool, glm::vec3, std::string>`.**
+  Plan-of-record. The five alternatives cover every parameter shape v1
+  through v2 ship needs. Adding a new alternative (e.g. `glm::mat4` for a
+  transform handle, `std::filesystem::path` if we ever need it distinct
+  from `std::string`) is one variant entry + one `if constexpr` branch in
+  `toJson` / `fromJson` / `renderParamWidget`.
+- **`ParamRange` is unconditionally serialised when meaningful.** The
+  range stores `min` / `max` / `step` / `hasBounds`. `hasBounds=false`
+  means "no enforced clamp" — the UI falls back to a free-form input. The
+  encoder writes `range` when either `hasBounds` or `step != 0`; readers
+  tolerate the absence and reconstruct defaults. This keeps the JSON
+  small for the common no-bounds case without losing round-trip identity.
+- **`Node::buildParams()` is invoked from `Graph::addNode`, not from the
+  `Node` constructor.** Calling a virtual function from a constructor
+  dispatches to the base, not the subclass. The plan said "invoked from
+  constructor"; this is a documented C++ gotcha and the right place is
+  one line into `addNode` (right after `setupNodePins`). The Node
+  constructor is now const-correct re: vtable setup.
+- **`Node::setParam(index, value)` is the canonical mutation entry.** It
+  flips `isDirty` and is what both the panel and the tests use. The
+  `Param` itself is value-typed and does not back-reference the node, so
+  direct `.value() = ...` mutation does *not* flip dirty — the test
+  `SetParamFlipsNodeDirty` pins this contract.
+- **`NodeEditorPanel` widgets route through `Node::setParam`.** A single
+  source of truth for "did this param change → mark dirty + cascade".
+  The panel additionally calls `Graph::markDirty(handle)` after a widget
+  reports change so downstream nodes flip dirty too (the cascade is
+  what triggers re-evaluation in the next frame's `Graph::execute`).
+- **Each toy node migrates to the new system.** `ConstantNode` declares
+  `color: vec3 = (1, 0, 0)` (replaces the hardcoded red fill).
+  `MergeNode` declares `mergeColor: vec3 = (1, 0, 1)` (replaces the
+  hardcoded magenta). `ViewerNode` and `PassthroughNode` declare empty
+  param vectors but still override `buildParams()` so the
+  paramsFromJson / paramsToJson contract is uniform per node. This is
+  the minimal-but-real migration the plan calls for.
+- **Widget-id namespacing.** ImGui scopes its internal IDs by string;
+  two nodes with the same-named param ("color" twice) would collide on
+  the canvas. The panel suffixes the widget label with
+  `_{nodeIndex}_{nodeGeneration}` so handles disambiguate by node
+  identity, not by widget order.
+- **`paramsFromJson` matches by name, not by index.** A forward-tolerant
+  load: a future build that drops or reorders a param leaves the
+  existing values in place rather than zeroing the whole vector. Matches
+  the same posture as the channel-naming spec (§19) — newer files load
+  in older builds; older files load in newer builds.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/core/Param.hpp` | `Param`, `ParamRange`, value-variant + JSON round-trip API |
+| `src/core/Param.cpp` | Implementation; `valueToJson`, `fromJson` with malformed-input tolerance |
+| `tests/core/ParamTest.cpp` | 10 cases: per-type round trip, range round trip, dirty-flag flip, buildParams populated, paramsFromJson, malformed-input default |
+
+### Files modified
+
+- `include/core/Types.hpp` — `Node` gains `std::vector<Param> params`,
+  `virtual buildParams()`, `setParam(i, v)`, `paramsToJson()`,
+  `paramsFromJson(j)`. Forward-includes `core/Param.hpp`.
+- `include/core/Nodes.hpp` — every concrete node declares
+  `buildParams() override`.
+- `src/core/Nodes.cpp` — implementations: `ConstantNode` and `MergeNode`
+  declare a `vec3` param and use it in `execute`; `ViewerNode` and
+  `PassthroughNode` provide empty overrides for shape parity. New
+  `Node::paramsToJson` / `paramsFromJson` implementations.
+- `include/core/Graph.hpp` — `addNode` calls `buildParams()` after
+  `setupNodePins`. Inline comment explains why not in the constructor.
+- `src/ui/NodeEditorPanel.cpp` — new `renderParamWidget(Node&, size_t)`
+  helper. Widget renderers cover the five variant alternatives; each
+  routes through `Node::setParam` and the panel calls
+  `Graph::markDirty(handle)` to cascade.
+- `CMakeLists.txt` — `LoomCore` adds `src/core/Param.cpp`; `LoomTests`
+  adds `tests/core/ParamTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 99/99 pass (+10 `ParamTest.*` cases). Baseline
+  was 89; net +10.
+- Manual review:
+  - `ConstantNode` now consumes its `color` param (visible as a tinted
+    fill in the viewport if you wire it up and run the GUI).
+  - Render-cache hits stay valid: changing the color via `setParam`
+    flips `isDirty` so the next frame re-evaluates, but a steady-state
+    no-edit frame still serves from cache. Pinned indirectly by
+    `PushPullTest::DirtyPropagation` (which still passes).
+  - `crude_json::value` is owned by the `imgui_node_editor` library
+    target; `LoomCore` already links it for the editor itself, so
+    nothing new pulls in.
+
+### Dependencies
+
+A.2 in the sense that the `glm::vec3` variant alternative needs glm. No
+other inter-A dependencies — A.3 could have landed before A.2.
+
+### Known follow-ups for later sub-phases
+
+- The graph-level JSON serialiser (load / save of the full DAG, viewer
+  state, camera) lands in Phase E. `Node::paramsToJson` is already in
+  the shape that future serialiser will pull from.
+- The widget-rendering branch is currently one big `if constexpr` chain
+  inside a `std::visit`. If we add many more types (or if more nodes
+  need bespoke widget styles), this would benefit from a registry of
+  widget renderers keyed off the variant tag. Premature today.
+- The `Param::Value` variant could be extended with `glm::vec2`,
+  `glm::vec4`, `glm::quat`, etc. when concrete callers need them.
+
+---
