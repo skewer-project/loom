@@ -93,7 +93,17 @@ set(OPENEXR_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(OPENEXR_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(OPENEXR_BUILD_PYTHON OFF CACHE BOOL "" FORCE)
 
-FetchContent_MakeAvailable(glfw googletest Imath OpenEXR)
+# glm — header-only vec/mat math. Used by core::Camera and core::Param.
+# Pinned to 1.0.1. The library is templates-only and `INTERFACE`-linked, so
+# pulling it in adds zero compile time to translation units that don't
+# include it.
+FetchContent_Declare(
+  glm
+  GIT_REPOSITORY https://github.com/g-truc/glm.git
+  GIT_TAG 1.0.1
+)
+
+FetchContent_MakeAvailable(glfw googletest Imath OpenEXR glm)
 
 # --- Vendored Libraries ---
 # Base DearImGui
@@ -216,6 +226,7 @@ add_library(LoomCore STATIC
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp
+    src/core/Camera.cpp
     src/core/ColorManagement.cpp
     src/core/DeepLayout.cpp
     src/core/Log.cpp
@@ -239,6 +250,7 @@ target_link_libraries(LoomCore PUBLIC
     imgui_node_editor
     vma
     glfw
+    glm::glm
     Vulkan::Vulkan
 )
 
@@ -275,6 +287,7 @@ add_executable(LoomTests
     tests/core/TopoTest.cpp
     tests/core/IdTagTest.cpp
     tests/core/NodeBehaviorTest.cpp
+    tests/core/CameraTest.cpp
     tests/core/ColorManagementTest.cpp
     tests/core/DeepLayoutTest.cpp
     tests/core/RenderCacheTest.cpp

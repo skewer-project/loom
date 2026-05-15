@@ -281,3 +281,104 @@ A.0 (channel-type vocabulary established in the spike).
   call — negligible.
 
 ---
+
+## Phase A.2 — `core::Camera` + `EvaluationContext` threading
+
+### Goal
+
+Add the right-handed Y-up perspective camera that Phase B.5's `PointCloudPass`
+and Phase D.2's splat shader consume, and thread it through
+`EvaluationContext` so nodes can reach it during evaluation. Also wire the
+scene-time `frame` index that Phase C's animation playback needs.
+
+### Decisions
+
+- **glm via FetchContent, pinned to 1.0.1.** The roadmap calls for
+  `glm::vec3` in `Param` and the camera class is half-a-dozen lines without
+  it. Pulling glm in is a one-line `FetchContent_Declare` — header-only,
+  template-only, zero-cost for translation units that don't include it.
+  `LoomCore`'s public link list now carries `glm::glm` so headers in
+  `include/core/` and `include/gpu/` can refer to glm types without
+  per-target boilerplate.
+- **RH/Y-up/meters, Vulkan clip-space.** Documented in `Camera.hpp`'s class
+  comment and pinned in §19. The choice matches Vulkan / glTF / Blender;
+  Loom converts at the loader boundary for files declaring a different
+  convention.
+- **Y-flip lives in the projection, not in the viewport.** Vulkan's clip
+  space has +Y down; negating row 1, column 1 of the projection matrix
+  pre-flips world +Y so it lands at clip -Y. The alternative — a negative-
+  height `VkViewport` — has historically caused inconsistent
+  winding-order semantics across drivers (front-face determination flips
+  silently). The projection-side flip is portable and explicit, and is
+  pinned by `CameraTest.ProjectionFlipsYForVulkanClipSpace`.
+- **`perspectiveRH_ZO` for the projection.** Vulkan NDC.z is in [0, 1]
+  (Zero-One), matching `glm::perspectiveRH_ZO`. The default GLM behaviour
+  is OpenGL's [-1, 1]; using the `_ZO` variant avoids a manual
+  remap. Pinned by `CameraTest.ProjectionMatrixMapsViewportZTo01`.
+- **Dirty flag is `mutable`; rebuild is lazy.** Callers read matrices
+  through `viewMatrix()` / `projectionMatrix()` const-accessors, which
+  recompute on first read after any setter. Production code paths upload
+  the matrices into a uniform buffer once per frame; this design lets the
+  orbit controller in Phase B.6 mutate the camera state many times within
+  a frame (mouse drag, scroll zoom) without each mutation rebuilding the
+  matrix — only the final read does.
+- **`viewProj()` is not separately cached.** One mat4 multiply is below
+  profiling noise; an extra cache slot would add a maintenance burden and
+  another dirty-flag invariant to keep straight.
+- **`EvaluationContext::camera` is nullable.** Headless tests and the
+  current production graph don't need a camera; only the deep-pointcloud
+  passes (Phase B.5+) do. Defaulting to null keeps the existing 73-test
+  baseline untouched.
+- **`EvaluationContext::frame` is a `uint64_t` scene-time index, distinct
+  from FrameLoop's GPU frame value.** Documented inline. Scene-time
+  monotonically increments per UI frame for playback purposes; GPU frame
+  value advances per submit and is used by the timeline-semaphore
+  retirement logic. Keeping them separate avoids the temptation to gate
+  scene-state changes on a GPU-side counter.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/core/Camera.hpp` | RH/Y-up perspective camera with lazy-rebuild view/proj |
+| `src/core/Camera.cpp` | Implementation; uses glm's `lookAtRH` + `perspectiveRH_ZO` |
+| `tests/core/CameraTest.cpp` | 8 cases: dirty-flag transitions, view-matrix correctness, view-origin-maps-to-zero, Vulkan Z range, Y flip, view*proj identity, aspect-only invalidation |
+
+### Files modified
+
+- `include/core/EvaluationContext.hpp` — forward-declares `core::Camera`;
+  adds `const Camera* camera = nullptr` and `uint64_t frame = 0`. New
+  members carry inline rationale.
+- `CMakeLists.txt` — `glm` declared via `FetchContent` (tag `1.0.1`);
+  `LoomCore` adds `glm::glm` to its public link interface and
+  `src/core/Camera.cpp` to its sources; `LoomTests` adds
+  `tests/core/CameraTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 89/89 pass (+8 `CameraTest.*` cases). Baseline
+  was 81; net +8.
+- Manual review: no existing test or production code referenced
+  `EvaluationContext::camera` or `::frame`, so adding the fields is a pure
+  extension. Defaults are zero/null, so the 73 pre-A.0 tests remain
+  unchanged.
+
+### Dependencies
+
+A.1 in the sense that the next caller of the camera (Phase B.5's
+`PointCloudPass`) reads per-sample data through `DeepLayout`. No code-level
+dependency between A.1 and A.2 — they could have landed in either order.
+
+### Known follow-ups for later sub-phases
+
+- The orbit controller in Phase B.6 mutates `position` / `target` via
+  mouse-drag math. The camera's lazy dirty flag is the right shape for
+  that traffic pattern.
+- Phase B.5's `PointCloudPass` uploads `viewProj()` into a uniform buffer
+  once per frame at the start of the dispatch chain. The matrix flows
+  through `EvaluationContext::camera`, not through a global.
+- A future `OrthoCamera` could derive from a shared `Projection` base, but
+  v1 has no need.
+
+---

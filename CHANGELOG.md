@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   layouts compare by pointer equality.
 - `ResourceRef::DeepRef` extended with `const core::DeepLayout* layout`;
   `ResourceRef::fromDeep` helper added for symmetry with `fromImage` / `fromBuffer`.
+- `core::Camera` — RH/Y-up perspective camera with lazy-rebuilt view /
+  projection matrices and Vulkan-correct clip-space (Y-flipped, Z in [0, 1]).
+- `core::EvaluationContext` carries `const Camera* camera` and `uint64_t frame`
+  threaded from the UI through graph evaluation.
+- `glm` (1.0.1) added as a header-only `FetchContent` dependency for vector /
+  matrix math.
 
 ### Changed
 
