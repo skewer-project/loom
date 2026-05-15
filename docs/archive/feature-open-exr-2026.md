@@ -715,3 +715,127 @@ A.4 — the tracker change is self-contained.
   hazards land in one frame, but profile first.
 
 ---
+
+## Phase A.6 — Documentation updates
+
+### Goal
+
+Land the conventions and architecture-doc updates that document Phase A's
+new surface area. Specifically: a new §19 in `docs/CONVENTIONS.md` for the
+channel-naming spec + coordinate convention, a new §20 for the Param
+shape / dirty-flag contract / JSON serialisation, and an architecture-doc
+refresh that adds `core::Camera` / `core::DeepLayout` / `core::Param` /
+`gpu::StagingArena` / `loom::io` to the layer diagram.
+
+### Decisions
+
+- **§19 documents the channel-naming spec as the file-format contract.**
+  Producers (Skewer or any other tool) follow this spec; Loom inspects
+  the channel list at load and builds a `DeepLayout` accordingly. The
+  spec covers v1 required channels (`Z`, `R`, `G`, `B`, `A`), v1 optional
+  (`ZBack`), NVS extensions (`world_pos.*`, `normal.*`, `albedo.*`), and
+  Phase D.5 stretch (`sh.*`, `scale`, `material_id`). Forward
+  compatibility is explicit: unknown channels are recorded by the layout
+  (so writers preserve them) and logged-but-ignored by consumer shaders.
+- **§19 documents the coordinate convention as RH/Y-up/meters with an
+  `loom/coordSystem` EXR header attribute as the load-time transform
+  hook.** Files from a left-handed or Z-up producer carry that attribute;
+  Loom transforms at the loader boundary. The internal engine math
+  always sees RH/Y-up/meters. The transform table is a one-line addition
+  per new convention.
+- **§20 documents the Param dirty-flag contract.** `Node::setParam` is
+  the **only** mutation entry that flips `isDirty`; direct
+  `params[i].setValue(...)` is reserved for restore-from-JSON paths
+  where the caller takes responsibility for dirty propagation. The
+  `NodeEditorPanel` routes every widget change through `setParam` plus
+  `Graph::markDirty` for the downstream cascade.
+- **§20 documents the JSON shape verbatim.** A future reader (a
+  contributor writing a project save/load PR) can reverse-engineer the
+  shape from `Param::toJson`, but pinning the shape in the conventions
+  doc is the difference between "we serialise Params" and "this is what
+  the wire looks like, here's how to extend it."
+- **Architecture doc grows a `loom::io` row.** ParsedDeepImage lives
+  there now; Phase B's `IDeepReader` / `IDeepWriter` join it. `io/`
+  depends on `core/` (for `DeepLayout`), depended on by `gpu/` (for
+  `uploadDeepImage`). The layering rule that `core/` cannot include
+  Vulkan headers remains intact and is restated.
+- **Per-sub-phase entries in this archive file.** Each sub-phase
+  (A.0 through A.6) gets its own section in the archive log, matching
+  the structure of `refactor-cleanup-2026.md` (which logged the
+  11-phase cleanup that produced the baseline this branch builds on).
+  Reviewers can read top-to-bottom to follow the build-out chronology.
+
+### Files modified
+
+- `docs/CONVENTIONS.md` — adds §19 (channel-naming + coordinate
+  convention) and §20 (Param shape + dirty-flag + JSON). §17 entry for
+  `docs/archive/` extended to reference `feature-open-exr-2026.md`.
+- `docs/architecture.md` — system diagram updated with `Camera`,
+  `DeepLayout`, `Param`, `StagingArena`, and a new `loom::io` row;
+  layer descriptions add the new types; compile-time dependency block
+  notes `io → core` and `gpu → io`; out-of-scope paragraph rewritten
+  to point at the deep-EXR / NVS phase log.
+- `docs/archive/feature-open-exr-2026.md` — this section.
+
+### Verification
+
+- Build: clean (no code change in A.6).
+- `ctest --preset debug` — 109/109 pass (unchanged from A.5, headless
+  baseline).
+- Manual review: §19's channel list matches `tests/data/deep_smoke.exr`
+  (v1 required + optional `ZBack`); §20's JSON shape matches
+  `Param::toJson` byte-for-byte; architecture-doc diagram matches the
+  current `include/` / `src/` directory layout.
+
+### Dependencies
+
+A.0 — A.5 (everything they introduce is what A.6 documents).
+
+### Phase A — global summary
+
+A.0 — A.6 collectively land:
+
+- **OpenEXR + Imath via `FetchContent`** (v3.2.4 / v3.1.12), tools/tests
+  disabled — Loom builds standalone from a fresh checkout.
+- **`tools/exr_spike` + `tools/make_deep_fixture`** plus a committed
+  16×16 deep-EXR fixture (`tests/data/deep_smoke.exr`).
+- **`core::DeepLayout`** — interned, hashable, ordered channel schema
+  with per-channel byte offsets and packed-sample stride.
+- **`core::Camera`** — RH/Y-up perspective camera with lazy view/proj
+  rebuild and Vulkan-correct clip-space.
+- **`core::Param`** — generic per-node tag-union (float / int / bool /
+  vec3 / string) with JSON round-trip and a strict dirty-flag contract.
+- **`gpu::StagingArena`** — host-visible bump arena for CPU→GPU uploads.
+- **`gpu::uploadDeepImage`** — SoA→AoS interleave + count/offset image
+  prefix-sum + samples-buffer copy.
+- **`io::ParsedDeepImage`** — CPU-side SoA-per-channel parsed deep image
+  (Phase B reader output shape).
+- **`gpu::HazardTracker` widened** to a kind-discriminated `ResourceKey
+  { Kind, poolIndex, generation }` covering both images and buffers.
+- **`ResourceRef::DeepRef.layout`** + `ResourceRef::fromDeep`.
+- **`EvaluationContext::camera` / `::frame`** threaded into eval.
+- **`Node::buildParams` / `setParam` / `paramsToJson` / `paramsFromJson`**
+  on every concrete node; toy nodes migrated.
+- **`NodeEditorPanel`** renders generic Param widgets keyed off variant
+  tag.
+- **glm 1.0.1** added as a header-only `FetchContent` dependency.
+- **`docs/CONVENTIONS.md` §19 + §20**.
+
+Test count: 73 → 109 (+36). The 6 new GPU tests (`StagingArenaTest.*`)
+skip cleanly on this no-device machine and exercise on Lavapipe in CI
+(Phase 9).
+
+Phase A exit criteria from the plan:
+
+- ✅ All tests green.
+- ✅ `tools/exr_spike` loads a deep EXR and prints channel-aware
+  metadata. (Demonstrated end-to-end with the committed fixture.)
+- ⏳ The 4 toy nodes have params editable in the UI. (The Param system
+  is wired; live UI verification requires a running session — code-path
+  review confirms the widget renderer routes through `setParam`.)
+- ✅ OpenEXR is a transitive dep via CMake; Loom builds standalone
+  from a fresh checkout.
+
+Phase A is complete.
+
+---

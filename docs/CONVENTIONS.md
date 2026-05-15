@@ -193,7 +193,7 @@ The full gate matrix is wired in Phase 9 of the cleanup. Pre-Phase-9 PRs are rev
 - `docs/README.md` is the index of everything under `docs/`.
 - `CHANGELOG.md` (repo root) is the user-visible-change ledger.
 - `CONTRIBUTING.md` (repo root) covers dev setup, branch naming, commit style, and the PR checklist.
-- `docs/archive/` holds historical per-phase dev logs. They are read-only — consulted for context, never edited. Current entries: `refactor-cleanup-2026.md` (the cleanup-branch log) and `build-out-phases-1-6.md` (the original implementation log).
+- `docs/archive/` holds historical per-phase dev logs. They are read-only — consulted for context, never edited. Current entries: `refactor-cleanup-2026.md` (the cleanup-branch log), `build-out-phases-1-6.md` (the original implementation log), and `feature-open-exr-2026.md` (the Phase A foundational layer for deep-EXR + NVS).
 - Public API additions are documented in Doxygen comments on the header declaration. The Doxygen build is wired in Phase 9 (`cmake --build build --target docs` once Doxygen is installed); public-API additions before then still write the comments, they are simply not yet rendered.
 
 ---
@@ -209,3 +209,141 @@ The following are explicitly **not** addressed by the `refactor/claudes-review` 
 - Per-tile streaming evaluator. `Region` participates in cache keys; node `execute` still allocates a full-extent image.
 - Multi-queue (async transfer / async compute) separation.
 - Tracy / NSight integration. `LOOM_PROFILE_SCOPE` is a no-op in v1; the swap is a future PR.
+
+---
+
+## 19. Deep EXR channel-naming convention & coordinate system
+
+Loom reads and writes deep EXR files generically — it inspects the channel
+list at load time and builds an internal `core::DeepLayout`. The "file
+format" Loom understands is therefore not a binary schema; it is a
+**channel-naming convention** documented here. Any producer emitting matching
+channel names interoperates with Loom.
+
+### Coordinate convention
+
+- **Right-handed, +Y up, units in meters.** Matches Vulkan / glTF / Blender.
+- A file declaring a different convention via the optional EXR header attribute
+  `loom/coordSystem` (string: `"rh-y-up-m"`, `"lh-y-up-m"`, `"rh-z-up-m"`, ...)
+  is transformed at the loader boundary. The internal engine math always sees
+  RH/Y-up/meters. Adding a new attribute value is a one-line addition to the
+  loader's transform table.
+
+### Required channels (any deep EXR Loom loads)
+
+- `Z` — front depth, world units (existing OpenEXR Deep convention).
+- `R`, `G`, `B` — premultiplied radiance.
+- `A` — alpha / coverage / opacity.
+
+### Optional channels (any deep EXR may carry these)
+
+- `ZBack` — back depth for volumetric samples. If absent, assumed equal to `Z`.
+
+### NVS extension channels (the "novel-view synthesis" variant)
+
+A deep EXR carrying these channels is the NVS variant — it supports
+novel-view re-rendering in Phase D.
+
+- `world_pos.{x,y,z}` — sample's world-space position. Without this, Loom can
+  only re-render flat 2D; with it, point-cloud and novel-view rendering work.
+- `normal.{x,y,z}` — unit-length normal at the sample. Required for
+  Lambertian shading.
+- `albedo.{r,g,b}` — diffuse albedo (separate from `R`/`G`/`B` which carry
+  path-traced radiance). Used for re-shading under a novel view direction.
+
+### Stretch channels (Phase D.5)
+
+- `sh.0.{r,g,b}` … `sh.8.{r,g,b}` — degree-2 SH coefficients for
+  view-dependent radiance.
+- `scale` — splat radius hint, world units.
+- `material_id` — integer index into a future material table.
+
+### Forward compatibility
+
+Producers writing channels Loom does not recognise: Loom logs an info-level
+`unrecognised channel` message and ignores them at the consumer-shader
+level. The `DeepLayout` itself stores every channel from the source — round-trip
+writers (Phase D.4) preserve unknown channels verbatim. **Loom never refuses
+to load a deep EXR with extra channels.** Forward compatibility is a soft floor.
+
+### Cross-thread / process-wide invariants
+
+- `core::DeepLayout` is interned via `core::getDeepLayout(channels)`. Two
+  requests with the same channel sequence return the same `const DeepLayout*`.
+- Channel order is part of the identity. Two channel lists with the same
+  channels in different order produce different layout pointers.
+- Per-channel packing is tight (no inter-channel padding). v1 makes no
+  alignment guarantees beyond natural alignment of each scalar element.
+
+### GPU payload
+
+A `ResourceRef::Deep` carries:
+- `countImage`  — `R32_UINT` 2D image, per-pixel sample count.
+- `offsetImage` — `R32_UINT` 2D image, prefix-sum offsets into `samples`.
+- `samples`     — flat device-local SSBO, `layout.stride() * totalSamples`
+  bytes, packed AoS per the `layout`.
+- `layout`      — non-owning `const core::DeepLayout*`.
+
+`gpu::uploadDeepImage` handles the SoA→AoS interleave from
+`io::ParsedDeepImage` to the packed GPU layout via a host-visible
+`gpu::StagingArena`.
+
+---
+
+## 20. Per-node parameters (`core::Param`)
+
+Every `core::Node` carries a `std::vector<core::Param>` populated by an
+override of `Node::buildParams()`. The Param system is the seam between
+user-facing widgets, the dirty-propagation contract, and the per-session
+JSON snapshot.
+
+### Value shape
+
+```cpp
+class Param {
+    std::string name;
+    std::variant<float, int, bool, glm::vec3, std::string> value;
+    ParamRange range;  // optional min/max/step + hasBounds flag
+};
+```
+
+Adding a new alternative to the variant is a single line plus a branch in
+`Param::toJson` / `fromJson` and (for the UI) `renderParamWidget`.
+
+### Dirty-flag contract
+
+- `Node::setParam(index, value)` is the **only** API that should mutate a
+  Param value. It always sets `node.isDirty = true`. Direct
+  `params[i].setValue(...)` mutation does *not* flip dirty — it's reserved
+  for restore-from-JSON code paths where dirty propagation is the caller's
+  problem.
+- The `NodeEditorPanel` widget renderer routes every change through
+  `Node::setParam`. After a widget reports change the panel calls
+  `Graph::markDirty(handle)` to cascade re-evaluation through downstream
+  nodes.
+
+### JSON serialisation
+
+- `Param::toJson()` / `Param::fromJson()` produce / consume a
+  `crude_json::value` of shape:
+  ```json
+  { "name": "...", "type": "vec3", "value": [...], "range": {...} }
+  ```
+  where `type` is one of `"float"`, `"int"`, `"bool"`, `"vec3"`, `"string"`.
+  `range` is omitted when `hasBounds` is false and `step` is zero.
+- `Node::paramsToJson()` / `Node::paramsFromJson()` operate on the full
+  `std::vector<Param>` and match incoming entries against existing params by
+  **name** (not by index) — a future build that drops or reorders params
+  leaves existing values in place rather than zeroing.
+- Malformed input produces a default-constructed Param and logs via
+  `loom::log::warn`. The reader never throws.
+
+### `buildParams` lifecycle
+
+- Called once per node by `Graph::addNode`, immediately after `setupNodePins`.
+- Not called from the `Node` constructor — virtual dispatch from a
+  constructor goes to the base, not the subclass. Calling from `addNode` after
+  the vtable is set is the safe location.
+- Overrides should construct each `Param` with its default value and any
+  `ParamRange` metadata. The default value drives both first-frame behaviour
+  and the JSON load fallback when a saved value is malformed.
