@@ -35,6 +35,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   point and flips `isDirty`.
 - `NodeEditorPanel` renders generic Param widgets (slider / drag / checkbox /
   color picker / text input) keyed off the variant tag.
+- `gpu::StagingArena` — host-visible bump arena for CPU→GPU upload staging.
+- `gpu::uploadDeepImage` — packs a CPU-side SoA `io::ParsedDeepImage` into
+  the device-local AoS sample layout described by a `core::DeepLayout`,
+  emitting count / offset image uploads and the samples-buffer copy with
+  proper barriers.
+- `io::ParsedDeepImage` — CPU-side parsed deep-image struct (the
+  `IDeepReader::readFrame` output shape, ahead of Phase B.1).
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

@@ -223,6 +223,8 @@ add_library(LoomCore STATIC
     src/gpu/DisplayPass.cpp
     src/gpu/HazardTracker.cpp
     src/gpu/LayoutTransitions.cpp
+    src/gpu/StagingArena.cpp
+    src/gpu/DeepUpload.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp
@@ -297,6 +299,7 @@ add_executable(LoomTests
     tests/core/PinSchemaTest.cpp
     tests/gpu/ResourcePoolTest.cpp
     tests/gpu/HazardTrackerTest.cpp
+    tests/gpu/StagingArenaTest.cpp
     tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp

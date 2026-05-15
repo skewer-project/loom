@@ -503,3 +503,121 @@ other inter-A dependencies — A.3 could have landed before A.2.
   `glm::vec4`, `glm::quat`, etc. when concrete callers need them.
 
 ---
+
+## Phase A.4 — Staging upload path for deep buffers
+
+### Goal
+
+Land the host-visible scratch arena and the `uploadDeepImage` helper that
+Phase B.2's `DeepEXRReadNode` will call to push a parsed deep image to
+GPU resources. Establish the SoA-on-CPU → AoS-in-buffer interleave that
+the eventual shaders will consume.
+
+### Decisions
+
+- **Bump arena, not a true ring.** The plan called for a "host-visible
+  mapped ring buffer". V1 ships a bump arena with explicit `reset()` for
+  three reasons: (1) the engine is single-threaded as of this branch
+  (CONVENTIONS §13), so per-allocation lifetime tracking is overkill;
+  (2) every allocation in a frame retires together once that frame's
+  submit retires, so the whole-arena reset matches the natural lifetime;
+  (3) implementing a true ring with per-slab tagging is ~3× the code
+  and unlocks no v1 capability. The header comment explicitly flags the
+  upgrade path: when Phase C.1's worker-thread upload lands, the arena
+  grows per-slab tagging or splits into per-thread arenas.
+- **16 MiB default capacity.** Roomy enough for a 1080p deep image at
+  ~16 samples per pixel (the typical path-tracer output) or a
+  ~262k-sample NVS frame at the 64-byte layout. Production callers
+  override at construction; future config / CLI knob, but v1 hardcodes
+  the default. Documented in the header.
+- **`HOST_ACCESS_SEQUENTIAL_WRITE` allocation flag.** We never read
+  through the mapped pointer — only write. This lets VMA pick a
+  write-combined memory type on platforms that expose one, which is
+  measurably faster for the large-block copies the deep-image upload
+  produces.
+- **`io::ParsedDeepImage` is SoA, GPU sample buffer is AoS.** OpenEXR's
+  deep API hands per-channel pointers; the natural CPU representation
+  is one byte-blob per channel. The GPU shader-side wants per-sample
+  records (all channel values for sample S contiguous, then sample S+1,
+  ...) so cache behaviour during walks is sensible. `uploadDeepImage`
+  performs the interleave inside staging memory before issuing the
+  device-side copy. The double-traversal cost is below the
+  upload-bandwidth ceiling and saves the shader from doing it on every
+  read.
+- **`uploadDeepImage` is in `gpu/` and takes pools by reference, not
+  through `ResourceFactory`.** The caller already holds references to
+  the pools (which is how the rest of the production path works);
+  routing through the factory would invert the dependency. Future
+  refactor: when an explicit `UploadManager` materialises (Phase C.1
+  worker-thread path), it absorbs both the staging arena and the pools.
+- **OOM in staging returns an invalid `ResourceRef`, does not partially
+  fill.** Pinned by the contract on the header: the caller is
+  responsible for sizing the arena. The pools are released by the
+  caller via `release` on the (invalid) handles, which is a no-op.
+- **Test pattern matches the rest of `tests/gpu/`.** `GTEST_SKIP` when
+  no Vulkan device; six new cases — five pure-arena (allocate / align /
+  OOM / reset / mapped) plus one end-to-end deep-image upload + readback.
+  The readback test interleaves the expected packed bytes the same way
+  the upload does, then byte-compares against the GPU-resident sample
+  buffer's contents.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/gpu/StagingArena.hpp` | Bump-arena interface; documents the lifetime + LRU contract |
+| `src/gpu/StagingArena.cpp` | Implementation: persistently mapped, sequential-write VMA buffer |
+| `include/io/ParsedDeepImage.hpp` | CPU-side SoA-per-channel parsed deep image (Phase B.1's reader output shape) |
+| `include/gpu/DeepUpload.hpp` | `uploadDeepImage(cmd, staging, imagePool, bufferPool, parsed, layout) -> ResourceRef` |
+| `src/gpu/DeepUpload.cpp` | Interleave + count/offset prefix-sum + copies + barriers |
+| `tests/gpu/StagingArenaTest.cpp` | 6 cases including the deep-image round-trip |
+
+### Files modified
+
+- `CMakeLists.txt` — `LoomCore` adds `src/gpu/StagingArena.cpp` and
+  `src/gpu/DeepUpload.cpp`; `LoomTests` adds
+  `tests/gpu/StagingArenaTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 105/105 (52 ran, 53 GPU tests cleanly skipped
+  on this no-device machine). Baseline was 99; net +6 (all 6 require a
+  Vulkan device and skip in the headless environment, but compile
+  cleanly).
+- Round-trip test logic: the upload's CPU-side interleave is duplicated
+  in the test to produce the expected packed buffer. A device-side test
+  would catch any divergence between the two; on this branch the test
+  compiles + skips, and CI under Lavapipe (Phase 9) will exercise it.
+- Manual review: `uploadDeepImage` issues exactly the right barriers —
+  `UNDEFINED → TRANSFER_DST_OPTIMAL` before the copy, `TRANSFER_DST_OPTIMAL
+  → GENERAL` after, and a buffer barrier for the samples buffer
+  promoting `TRANSFER_WRITE → SHADER_READ`. The layout transitions go
+  through `gpu::transitionImageLayout` per CONVENTIONS §3.
+
+### Dependencies
+
+A.1 (DeepLayout — produces the stride / byte offsets the interleave
+loop consumes). A.3 in spirit (no code dependency, but the
+`DeepEXRReadNode` that drives the eventual production call site will
+declare path / frame_index params).
+
+### Known follow-ups for later sub-phases
+
+- Phase B.1's `IDeepReader::readFrame` produces a `DeepFrame` that
+  wraps `io::ParsedDeepImage`. The latter is intentionally simple so
+  the reader can construct it field-by-field.
+- Phase B.2's `DeepEXRReadNode::execute` is the first production
+  caller of `uploadDeepImage`. It pulls `ctx.imagePool`, `ctx.bufferPool`
+  (the latter to be added to `EvaluationContext` alongside Phase B.1)
+  and a frame-scoped `StagingArena` (also to be added to
+  `EvaluationContext`).
+- Phase C.1's worker-thread upload either (a) tags allocations
+  per-slab so a partial-frame retirement still reclaims usable space,
+  or (b) gives the worker its own arena and the main thread its own.
+  (b) is simpler and probably right.
+- Currently the GPU tests use the engine's main `VulkanContext`. When
+  Phase 9 wires Lavapipe in CI, the same tests run there with no
+  change — the `GTEST_SKIP` path is the headless fallback.
+
+---
