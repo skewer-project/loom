@@ -46,6 +46,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
   are now editable in the UI rather than hardcoded.
+- `gpu::HazardTracker` widened from image-only keys to `ResourceKey
+  { Kind, poolIndex, generation }`. Buffer hazards (RAW / WAW) are now
+  tracked alongside image hazards; deep-EXR payloads decompose into both.
+- `gpu::ComputeTask` carries `readBuffers` / `writeBuffers` vectors
+  alongside the existing image dependency vectors.
 
 ### Changed
 

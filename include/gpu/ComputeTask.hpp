@@ -30,6 +30,13 @@ struct ComputeTask {
     // which images have been written during this submit call.
     std::vector<ImageHandle> writeDependencies;
 
+    // BufferHandles this task reads from / writes to. Empty for image-only
+    // dispatches; populated by deep-EXR consumers and by future buffer-
+    // backed nodes. Parallel to readDependencies / writeDependencies in
+    // every respect (RAW + WAW hazard tracking through HazardTracker).
+    std::vector<BufferHandle> readBuffers;
+    std::vector<BufferHandle> writeBuffers;
+
     // Optional human-readable label for RenderDoc / NSight / GPU validation
     // layer output. Wrapped in vkCmdBeginDebugUtilsLabelEXT /
     // vkCmdEndDebugUtilsLabelEXT in debug builds when set; ignored in release.

@@ -131,14 +131,16 @@ void DispatchManager::submit(VkCommandBuffer cmd, const std::vector<ComputeTask>
     for (const auto& task : tasks) {
         const std::span<const ImageHandle> reads{task.readDependencies};
         const std::span<const ImageHandle> writes{task.writeDependencies};
+        const std::span<const BufferHandle> readBuffers{task.readBuffers};
+        const std::span<const BufferHandle> writeBuffers{task.writeBuffers};
 
         // WAW takes precedence over RAW: a write after both a prior read and
         // a prior write needs SHADER_WRITE -> SHADER_WRITE coverage which
         // subsumes the read dependency.
-        if (m_hazardTracker.needsBarrierBeforeWrite(writes)) {
+        if (m_hazardTracker.needsBarrierBeforeWrite(writes, writeBuffers)) {
             emitMemoryBarrier(cmd, VK_ACCESS_2_SHADER_WRITE_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
             m_hazardTracker.clearAfterBarrier();
-        } else if (m_hazardTracker.needsBarrierBeforeRead(reads)) {
+        } else if (m_hazardTracker.needsBarrierBeforeRead(reads, readBuffers)) {
             emitMemoryBarrier(cmd, VK_ACCESS_2_SHADER_WRITE_BIT, VK_ACCESS_2_SHADER_READ_BIT);
             m_hazardTracker.clearAfterBarrier();
         }

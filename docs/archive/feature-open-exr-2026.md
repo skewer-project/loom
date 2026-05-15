@@ -621,3 +621,97 @@ declare path / frame_index params).
   change — the `GTEST_SKIP` path is the headless fallback.
 
 ---
+
+## Phase A.5 — `HazardTracker` resource-key widening
+
+### Goal
+
+Widen `HazardTracker`'s tracking key from `ImageKey { poolIndex, generation }`
+to `ResourceKey { Kind { Image | Buffer }, poolIndex, generation }`. Adds
+buffer-hazard coverage so Phase A.4's deep payloads (two images + one
+buffer) decompose cleanly into the tracker.
+
+### Decisions
+
+- **`ResourceKey` extends `ImageKey` with a `Kind` discriminator.** The
+  image pool and the buffer pool have independent numbering spaces — a
+  buffer at `(poolIndex=0, generation=1)` and an image at
+  `(poolIndex=0, generation=1)` are different resources. Keying on Kind
+  prevents the cross-pool collision; pinned by the new
+  `ImageAndBufferDoNotAliasOnKey` test. The hash combines pool / gen as
+  before with a Kind-derived rotation; collision space is still well
+  below the per-frame resource count.
+- **`HazardTracker` exposes parallel image / buffer spans.** The new
+  overloads take `std::span<const BufferHandle>` after the image span,
+  defaulting to empty. Existing image-only call sites (the four toy
+  nodes' tasks today) compile unchanged because they pass only the image
+  span. New deep-EXR consumers pass both.
+- **`ComputeTask` gains `readBuffers` / `writeBuffers` parallel vectors.**
+  Mirrors the existing `readDependencies` / `writeDependencies` shape.
+  Per-node nodes that consume a `ResourceRef::Deep` populate both
+  vectors: `readDependencies = {countImage, offsetImage}`, `readBuffers
+  = {samples}`. `DispatchManager` reads both spans into the tracker.
+- **`DispatchManager` change is two lines.** The dispatch loop now
+  computes both spans and passes them through to the tracker's
+  `needsBarrierBeforeRead` / `needsBarrierBeforeWrite` calls. The barrier
+  emission code is unchanged: `vkCmdPipelineBarrier2` with a single
+  `VkMemoryBarrier2` covers all memory accesses regardless of resource
+  kind, so the barrier insertion side needs no new buffer-specific
+  machinery.
+- **Old `ImageKey` is gone, not aliased.** The plan called for a clean
+  widening, not a parallel `BufferKey`. Aliasing `ImageKey = ResourceKey
+  { Kind = Image, ... }` would have preserved compatibility with old
+  test code, but the test file was the only call site and the rename
+  is one mechanical sweep. Cleaner public surface.
+
+### Files modified
+
+- `include/gpu/HazardTracker.hpp` — `ImageKey` / `ImageKeyHash` → `ResourceKey`
+  / `ResourceKeyHash` with `Kind` discriminator; query methods gain
+  `BufferHandle` span overloads.
+- `src/gpu/HazardTracker.cpp` — `toKey` overloaded for both
+  `ImageHandle` and `BufferHandle`; query methods walk both spans;
+  `recordTask` traverses `readBuffers` / `writeBuffers` alongside the
+  image vectors.
+- `include/gpu/ComputeTask.hpp` — adds `readBuffers` / `writeBuffers`
+  vectors with inline rationale.
+- `src/gpu/DispatchManager.cpp` — passes the new buffer spans through
+  to the tracker.
+- `tests/gpu/HazardTrackerTest.cpp` — extended with 4 new cases:
+  `BufferRAWBarrierEmitted`, `BufferWAWBarrierEmitted`,
+  `ImageAndBufferDoNotAliasOnKey`, `DeepPayloadDecomposesAcrossImagesAndBuffer`.
+  Existing 7 cases unchanged in shape and still pass under the wider
+  key.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 109/109 pass (+4 new `HazardTrackerTest.*`
+  cases). Baseline was 105; net +4.
+- Manual review: the four new tests pin the cross-kind discrimination
+  contract (`ImageAndBufferDoNotAliasOnKey`) and the deep-payload
+  decomposition (the consumer's `read{Deps,Buffers}` covers all three
+  resources). The latter is the actual A.4 / B.2 use case.
+
+### Dependencies
+
+A.4 (deep payloads are the motivating use case). No code dependency on
+A.4 — the tracker change is self-contained.
+
+### Known follow-ups for later sub-phases
+
+- The `Kind` enum could grow `Deep` if we ever want a deep-handle
+  granularity for barrier checks. Today the deep payload decomposes
+  into its constituent image+buffer resources, which is the right
+  granularity — a barrier on one constituent's hazard is the same
+  pipeline barrier as for the whole deep payload.
+- `BufferHandle` lacks the `setLayout` / `getLayout` of `ImageHandle`,
+  so layout transitions don't apply. The hazard model is symmetric
+  (RAW / WAW), but pre-dispatch image-layout fixups (Pass 1 in
+  `DispatchManager::submit`) only touch images.
+- The hazard tracker still emits a single `vkMemoryBarrier2` covering
+  all accesses when any hazard is detected; finer-grained per-resource
+  barriers might marginally help GPU pipelining when many independent
+  hazards land in one frame, but profile first.
+
+---
