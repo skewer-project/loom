@@ -68,4 +68,22 @@ class DeepEXRReadNode : public Node {
     void execute(EvaluationContext& ctx, const Region& region) override;
 };
 
+// Front-to-back deep composite. Input pin: `Kind::Deep`. Output pin:
+// `Kind::Image` (RGBA32F sized to the source deep image, not the viewport).
+// First end-to-end deep-visualisation node: `DeepEXRRead → DeepFlatten →
+// Viewer → DisplayPass` renders a deep EXR as a flat 2D image.
+//
+// v1 assumes the standard deep-EXR layout (Z + ZBack + Float16 RGBA, stride
+// 16 bytes). `execute` validates the input layout and emits no dispatch on
+// a mismatch (with a warn log). Phase D will add layout-flexible variants.
+class DeepFlattenNode : public Node {
+  public:
+    DeepFlattenNode(NodeHandle h, std::string n) : Node(h, NodeType::DeepFlatten, std::move(n)) {}
+    [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
+    void markRequiredTiles(const Region& requestedRegion,
+                           std::unordered_set<NodeHandle>& activeNodes) override;
+    void execute(EvaluationContext& ctx, const Region& region) override;
+};
+
 }  // namespace loom::core

@@ -66,6 +66,8 @@ TEST(ResourceRefTest, FromDeepCarriesPayload) {
     // process-wide DeepLayoutRegistry; we leave it null here so this test
     // stays linkage-free of core::DeepLayout.
     d.layout = nullptr;
+    d.width = 320;
+    d.height = 240;
 
     auto ref = gpu::ResourceRef::fromDeep(d);
     EXPECT_EQ(ref.kind, gpu::ResourceRef::Kind::Deep);
@@ -73,4 +75,6 @@ TEST(ResourceRefTest, FromDeepCarriesPayload) {
     EXPECT_EQ(ref.deep.countImage.poolIndex, 1u);
     EXPECT_EQ(ref.deep.offsetImage.poolIndex, 2u);
     EXPECT_EQ(ref.deep.samples.poolIndex, 3u);
+    EXPECT_EQ(ref.deep.width, 320u);
+    EXPECT_EQ(ref.deep.height, 240u);
 }

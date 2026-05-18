@@ -1,5 +1,6 @@
 #include "core/NodeTaskBuilders.hpp"
 
+#include "core/DeepLayout.hpp"
 #include "gpu/PipelineCache.hpp"
 
 namespace loom::core {
@@ -34,6 +35,38 @@ gpu::ComputeTask buildFillTask(EvaluationContext& ctx, gpu::ImageHandle out, con
     task.groupCountX = groupCount(ctx.requestedExtent.width);
     task.groupCountY = groupCount(ctx.requestedExtent.height);
     task.groupCountZ = 1;
+    task.writeDependencies.push_back(out);
+    return task;
+}
+
+gpu::ComputeTask buildDeepFlattenTask(EvaluationContext& ctx, const gpu::ResourceRef::DeepRef& src,
+                                      gpu::ImageHandle out, const char* label) {
+    gpu::ComputeTask task{};
+    task.label = label;
+    task.pipeline = ctx.pipelineCache->getOrCreate("DeepFlatten.comp.spv");
+
+    struct DeepFlattenPC {
+        uint32_t countSlot;
+        uint32_t offsetSlot;
+        uint32_t samplesSlot;
+        uint32_t outputSlot;
+        uint32_t width;
+        uint32_t height;
+    } pc{};
+    pc.countSlot = src.countImage.bindlessSlot;
+    pc.offsetSlot = src.offsetImage.bindlessSlot;
+    pc.samplesSlot = src.samples.bindlessSlot;
+    pc.outputSlot = out.bindlessSlot;
+    pc.width = src.width;
+    pc.height = src.height;
+    task.setPushConstants(pc);
+
+    task.groupCountX = groupCount(src.width);
+    task.groupCountY = groupCount(src.height);
+    task.groupCountZ = 1;
+    task.readDependencies.push_back(src.countImage);
+    task.readDependencies.push_back(src.offsetImage);
+    task.readBuffers.push_back(src.samples);
     task.writeDependencies.push_back(out);
     return task;
 }

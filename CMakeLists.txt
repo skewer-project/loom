@@ -305,6 +305,7 @@ add_executable(LoomTests
     tests/core/CameraTest.cpp
     tests/core/ColorManagementTest.cpp
     tests/core/DeepEXRReadNodeTest.cpp
+    tests/core/DeepFlattenNodeTest.cpp
     tests/core/DeepLayoutTest.cpp
     tests/core/ParamTest.cpp
     tests/core/RenderCacheTest.cpp

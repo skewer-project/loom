@@ -56,6 +56,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `stagingArena`, and `deepReader` fields for nodes that need them.
 - `core::Node::pullDeepInput` typed accessor mirrors `pullImageInput`
   for Deep-pin consumers.
+- `core::DeepFlattenNode` — front-to-back deep composite via a new
+  `DeepFlatten.comp` compute shader. Output is RGBA32F sized to the
+  source deep image. v1 assumes the standard layout (Z + ZBack +
+  Float16 RGBA, stride 16); a layout-flexible variant lands in Phase D.
+- `gpu::ResourceRef::DeepRef` carries `width` / `height` so consumers
+  can size their dispatch / draw extent from the payload directly.
+- `core::buildDeepFlattenTask` task builder.
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

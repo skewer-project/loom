@@ -157,6 +157,8 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
     ref.deep.offsetImage = offsetImage;
     ref.deep.samples = samples;
     ref.deep.layout = &layout;
+    ref.deep.width = src.width;
+    ref.deep.height = src.height;
     return ref;
 }
 

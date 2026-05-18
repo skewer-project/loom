@@ -26,6 +26,10 @@ gpu::ImageSpec defaultColorSpec(VkExtent2D extent) {
                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT};
 }
 
+gpu::ImageSpec colorSpec(uint32_t width, uint32_t height) {
+    return defaultColorSpec({width, height});
+}
+
 // Lookup a vec3 param by name. Returns the default if the param is missing
 // or the wrong type — keeps node `execute` bodies linear and avoids burying
 // a LOOM_ASSERT for a soft contract.
@@ -355,6 +359,86 @@ void DeepEXRReadNode::execute(EvaluationContext& ctx, const Region& region) {
     gpu::ResourceRef ref = gpu::uploadDeepImage(ctx.cmd, *ctx.stagingArena, *ctx.imagePool,
                                                 *ctx.bufferPool, frame.image, *frame.layout);
     ctx.renderCache->store(outputs[0], region, ref);
+}
+
+// -----------------------------------------------------------------------------
+// DeepFlattenNode
+// -----------------------------------------------------------------------------
+
+std::vector<PinSpec> DeepFlattenNode::getPinSchema() const {
+    return {{PinDirection::Input, PinType::DeepBuffer}, {PinDirection::Output, PinType::Float}};
+}
+
+void DeepFlattenNode::buildParams() {
+    // v1 has no user-facing knobs. Future: sample-sort toggle, max-samples,
+    // composite-mode dropdown.
+}
+
+void DeepFlattenNode::markRequiredTiles(const Region& requestedRegion,
+                                        std::unordered_set<NodeHandle>& activeNodes) {
+    if (activeNodes.count(id)) return;
+    activeNodes.insert(id);
+
+    if (!inputs.empty()) {
+        Pin* inPin = graph->getPin(inputs[0]);
+        if (inPin && inPin->link.isValid()) {
+            Link* link = graph->getLink(inPin->link);
+            Pin* srcPin = graph->getPin(link->startPin);
+            Node* srcNode = graph->getNode(srcPin->node);
+            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+        }
+    }
+}
+
+namespace {
+
+// v1 layout check: Z (Float32, offset 0) + ZBack (Float32, offset 4) +
+// RGBA (Float16, offset 8). Stride 16. The shader hardcodes these offsets;
+// any mismatch produces wrong-looking output silently. Phase D introduces
+// a layout-flexible shader keyed off DeepLayout offsets.
+bool layoutMatchesV1Flatten(const core::DeepLayout& layout) {
+    if (layout.stride() != 16) return false;
+    if (layout.byteOffset("Z") != 0) return false;
+    if (layout.byteOffset("ZBack") != 4) return false;
+    if (layout.byteOffset("R") != 8) return false;
+    if (layout.byteOffset("G") != 10) return false;
+    if (layout.byteOffset("B") != 12) return false;
+    if (layout.byteOffset("A") != 14) return false;
+    return true;
+}
+
+}  // namespace
+
+void DeepFlattenNode::execute(EvaluationContext& ctx, const Region& region) {
+    if (outputs.empty()) return;
+
+    gpu::ResourceRef::DeepRef src = pullDeepInput(ctx, region, 0);
+
+    if (!src.layout || !src.samples.isValid() || !src.countImage.isValid()) {
+        // Upstream produced an empty deep payload (e.g. the read node had no
+        // file_path). Store an invalid image ref and let the viewer's
+        // existing fallback path render nothing.
+        ctx.renderCache->store(outputs[0], region, {});
+        return;
+    }
+
+    if (!layoutMatchesV1Flatten(*src.layout)) {
+        log::warn(
+            "DeepFlattenNode: input layout doesn't match the v1 standard "
+            "(Z + ZBack + RGBA half, stride 16) — skipping dispatch");
+        ctx.renderCache->store(outputs[0], region, {});
+        return;
+    }
+
+    gpu::ImageHandle out = ctx.imagePool->acquire(colorSpec(src.width, src.height));
+    if (!out.isValid()) {
+        log::warn("DeepFlattenNode: imagePool exhausted");
+        ctx.renderCache->store(outputs[0], region, {});
+        return;
+    }
+
+    ctx.tasks.push_back(buildDeepFlattenTask(ctx, src, out, "DeepFlattenNode.composite"));
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(out));
 }
 
 }  // namespace loom::core

@@ -58,11 +58,16 @@ struct ResourceRef {
     //                     production-path consumers must check before use.
     //                     Pointer equality with another DeepRef::layout means
     //                     the two refs share the same channel schema.
+    //   - `width`/`height` — source image dimensions in pixels. Used by
+    //                     consumers (`DeepFlattenNode`, point-cloud passes)
+    //                     to size their dispatch / draw extent.
     struct DeepRef {
         ImageHandle countImage;
         ImageHandle offsetImage;
         BufferHandle samples;
         const core::DeepLayout* layout = nullptr;
+        uint32_t width = 0;
+        uint32_t height = 0;
     } deep;
 
     [[nodiscard]] bool isValid() const { return kind != Kind::None; }

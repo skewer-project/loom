@@ -1,0 +1,74 @@
+// DeepFlatten — per-pixel front-to-back deep composite into an RGBA32F image.
+//
+// v1 hardcodes the standard deep-EXR layout described in docs/CONVENTIONS.md
+// §19:
+//
+//   stride = 16 bytes / sample
+//   uint[0]  = Z      (Float32, used for sort ordering — assumed pre-sorted)
+//   uint[1]  = ZBack  (Float32, unused by flatten)
+//   uint[2]  = R/G    (two Float16 halves, packed)
+//   uint[3]  = B/A    (two Float16 halves, packed)
+//
+// DeepFlattenNode validates the input `DeepLayout` at evaluation time and
+// refuses to dispatch if the layout doesn't match. Phase D will add a
+// layout-flexible variant for NVS-shaped inputs.
+//
+// Compositing math: Porter-Duff "over", premultiplied. Samples are assumed
+// to be sorted front-to-back (smallest Z first). The accumulator stops
+// early once the remaining alpha falls below an epsilon, which is the
+// standard optimisation for opaque-heavy scenes.
+
+#version 460
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, r32ui)  uniform readonly  uimage2D bindlessUintImages[];
+layout(set = 0, binding = 0, rgba32f) uniform writeonly image2D  bindlessRgbaImages[];
+
+layout(set = 0, binding = 1) readonly buffer SampleBuffer {
+    uint data[];
+} bindlessBuffers[];
+
+layout(push_constant) uniform PushConstants {
+    uint countSlot;
+    uint offsetSlot;
+    uint samplesSlot;
+    uint outputSlot;
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    if (coord.x >= int(pc.width) || coord.y >= int(pc.height)) return;
+
+    uint count   = imageLoad(bindlessUintImages[pc.countSlot],  coord).r;
+    uint baseOff = imageLoad(bindlessUintImages[pc.offsetSlot], coord).r;
+
+    vec3  accumRgb  = vec3(0.0);
+    float accumA    = 0.0;
+    float remaining = 1.0;
+
+    for (uint i = 0u; i < count; ++i) {
+        uint baseElement = (baseOff + i) * 4u;  // stride = 16 bytes = 4 uints
+
+        uint rgPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 2u];
+        uint baPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 3u];
+
+        vec2 rg = unpackHalf2x16(rgPacked);
+        vec2 ba = unpackHalf2x16(baPacked);
+
+        vec3  rgb = vec3(rg.x, rg.y, ba.x);
+        float a   = ba.y;
+
+        // Premultiplied "over" composite. `rgb` is already premultiplied
+        // (the channel-naming spec mandates this); see §19.
+        accumRgb += rgb * remaining;
+        accumA   += a   * remaining;
+        remaining *= (1.0 - a);
+        if (remaining < 0.0001) break;
+    }
+
+    imageStore(bindlessRgbaImages[pc.outputSlot], coord, vec4(accumRgb, accumA));
+}

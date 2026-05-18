@@ -42,6 +42,9 @@ class Graph {
             case NodeType::DeepEXRRead:
                 node = std::make_unique<DeepEXRReadNode>(nodeHandle, name);
                 break;
+            case NodeType::DeepFlatten:
+                node = std::make_unique<DeepFlattenNode>(nodeHandle, name);
+                break;
             default:
                 throw std::runtime_error("Unknown node type");
         }
@@ -436,6 +439,8 @@ class Graph {
                 return "Passthrough";
             case NodeType::DeepEXRRead:
                 return "DeepEXRRead";
+            case NodeType::DeepFlatten:
+                return "DeepFlatten";
             default:
                 return "Unknown";
         }

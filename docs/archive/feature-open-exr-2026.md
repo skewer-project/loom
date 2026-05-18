@@ -1076,3 +1076,119 @@ The first node that exercises the full Phase-A toolchain end-to-end.
   at the top of `execute`.
 
 ---
+
+## Phase B.3 — `DeepFlattenNode` + compute shader
+
+### Goal
+
+Complete the first end-to-end deep visualisation chain: `DeepEXRRead →
+DeepFlatten → Viewer → DisplayPass`. The flatten node walks each pixel's
+samples in the deep payload, front-to-back composites them into an RGBA32F
+image, and routes that image into the existing viewer / display chain.
+
+### Decisions
+
+- **Shader hardcodes the v1 standard layout.** Stride 16 bytes per sample:
+  `Z` at offset 0 (Float32), `ZBack` at 4 (Float32), `RGBA` at 8 as two
+  packed Float16 pairs. This matches the committed fixture and the
+  channel-naming spec's required v1 channel set. The push-constant block
+  carries only what's runtime-variable: the four bindless slots
+  (`countSlot`, `offsetSlot`, `samplesSlot`, `outputSlot`) and the image
+  dimensions. Total 24 bytes — well within budget.
+- **`DeepFlattenNode` validates the input layout at execute.** Calls a
+  free function `layoutMatchesV1Flatten(layout)` that checks `stride() ==
+  16` and the byte offset of every named channel. A mismatch logs at warn
+  and stores an invalid output (no dispatch). Phase D's
+  layout-flexible variant will replace this check with offset push-constants.
+- **`ResourceRef::DeepRef` gains `width` and `height` fields.** Consumers
+  (this node, B.5's `PointCloudPass`) need the source dimensions to size
+  their dispatch / draw extent without round-tripping through the pool's
+  image spec. The plan's
+  upload helper already had this metadata available; surfacing it on the
+  payload is cheaper than a pool lookup. `ResourceRefTest` extended to
+  cover the new fields.
+- **Output image is sized to the source deep image, not the viewport.**
+  The viewer pulls whatever the flatten node produces; the `DisplayPass`
+  already handles arbitrary-size source images. Sizing to the source
+  matches what production NLE / compositor users expect — "this is the
+  comp at its working resolution" — and the viewport is purely a
+  presentation transform.
+- **Front-to-back composite with premultiplied "over".** Channel-naming
+  spec mandates premultiplied RGB; the shader assumes it. Samples are
+  assumed pre-sorted by Z (smallest first); v1 does not re-sort. Early
+  termination at `remaining < 1e-4` is the standard optimisation for
+  opaque-heavy scenes (no visible difference, saves cycles).
+- **Two image-binding views in the shader.** GLSL aliases binding 0 with
+  both `r32ui readonly` and `rgba32f writeonly` declarations. Each
+  declaration is a separate "view" but reads / writes go to the same
+  underlying bindless slot — the spec allows aliased declarations as
+  long as you only access slots whose underlying view format matches
+  the declaration. Validation layers verify this at runtime.
+- **`buildDeepFlattenTask` populates both `readDependencies`
+  (count + offset images) and `readBuffers` (samples).** The hazard
+  tracker widening from A.5 covers both kinds in one call; this is the
+  first production node to exercise the buffer-side path.
+- **`pullDeepInput` (added in B.2) is the first production caller.** The
+  typed accessor asserts `Kind::Deep` and unwraps the payload. The
+  headless test `NoUpstreamProducesInvalidOutputRef` pins the empty-
+  upstream early-return so the node can run before its input is wired
+  without crashing.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `shaders/DeepFlatten.comp` | Per-pixel front-to-back deep composite, v1 layout |
+| `tests/core/DeepFlattenNodeTest.cpp` | 4 cases: pin schema, no-upstream early return, wiring approve / reject vs Deep / Image pins |
+
+### Files modified
+
+- `include/gpu/ResourceHandles.hpp` — `DeepRef` gains `width` / `height`.
+- `src/gpu/DeepUpload.cpp` — populates the new fields from `ParsedDeepImage`.
+- `tests/core/ResourceRefTest.cpp` — `FromDeepCarriesPayload` extended
+  to cover `width` / `height`.
+- `include/core/Types.hpp` — `NodeType::DeepFlatten` added.
+- `include/core/Nodes.hpp` — `DeepFlattenNode` class.
+- `src/core/Nodes.cpp` — node implementation; v1 layout check; new
+  `colorSpec(w, h)` helper for non-viewport-sized output images.
+- `include/core/Graph.hpp` — `addNode` and `getDefaultNodeName` dispatch
+  the new node.
+- `include/core/NodeTaskBuilders.hpp` / `src/core/NodeTaskBuilders.cpp`
+  — `buildDeepFlattenTask(ctx, src, out, label)` produces the dispatch.
+- `src/ui/NodeEditorPanel.cpp` — spawn-menu entry "DeepFlatten".
+- `CMakeLists.txt` — `LoomTests` adds `tests/core/DeepFlattenNodeTest.cpp`;
+  shader picked up by the existing `file(GLOB_RECURSE)` over
+  `shaders/*.comp`.
+
+### Verification
+
+- Build: clean. `DeepFlatten.comp.spv` materialises in
+  `build/debug/bin/shaders/` alongside the existing two SPIR-V binaries.
+- `ctest --preset debug` — 122/122 pass (+4 `DeepFlattenNodeTest.*` +1
+  `ResourceRefTest.FromDeepCarriesPayload` change still passes after the
+  width/height extension). Baseline was 118; net +4 new cases.
+- Manual: pin-type compatibility check pins both directions — Deep →
+  Deep works, Image → Deep is rejected at `canAddLink`. This is the
+  first concrete test that exercises the heterogeneous pin-type
+  contract.
+
+### Dependencies
+
+A.4 (`uploadDeepImage`'s `DeepRef` shape, now extended), A.5 (hazard
+tracker covers buffer reads), B.1 (deep reader producing the upstream
+payload), B.2 (`DeepEXRReadNode` + `pullDeepInput`).
+
+### Known follow-ups for later sub-phases
+
+- The first GPU readback test (validation-layer-warning count == 0
+  under Lavapipe per the plan) lands when CI gets a GPU. The headless
+  tests cover the wiring / fallback contracts.
+- Phase D introduces a layout-flexible shader. `buildDeepFlattenTask`
+  will then take a layout argument and push per-channel byte offsets
+  into the constant block.
+- Sample sorting (if a producer ever emits unsorted samples) belongs
+  either in the upload helper (post-interleave sort by Z) or as a
+  separate `DeepSortNode`. Production deep EXRs from path tracers are
+  conventionally sorted, so this is a backlog item, not a v1 gap.
+
+---

@@ -244,6 +244,7 @@ void NodeEditorPanel::handleContextMenu() {
         if (ImGui::MenuItem("Viewer")) spawnNode(core::NodeType::Viewer);
         if (ImGui::MenuItem("Passthrough")) spawnNode(core::NodeType::Passthrough);
         if (ImGui::MenuItem("DeepEXRRead")) spawnNode(core::NodeType::DeepEXRRead);
+        if (ImGui::MenuItem("DeepFlatten")) spawnNode(core::NodeType::DeepFlatten);
 
         ImGui::EndPopup();
     }
