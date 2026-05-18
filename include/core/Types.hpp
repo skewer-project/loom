@@ -34,7 +34,7 @@ enum class PinDirection { Input, Output };
 // — these pins carry image handles, not float scalars). PinType::DeepBuffer
 // corresponds to ResourceRef::Kind::Deep.
 enum class PinType { Float, DeepBuffer };
-enum class NodeType { Constant, Merge, Viewer, Passthrough };
+enum class NodeType { Constant, Merge, Viewer, Passthrough, DeepEXRRead };
 
 // Declarative pin spec returned by Node::getPinSchema(). Replaces the
 // centralised switch on NodeType — adding a new node type is now a single
@@ -169,6 +169,13 @@ struct Node {
     // unwrapped ImageHandle.
     gpu::ImageHandle pullImageInput(EvaluationContext& ctx, const Region& region,
                                     uint32_t inputIndex);
+
+    // Typed accessor for deep-pin inputs. Asserts the upstream payload is
+    // `Kind::Deep` (mismatches caught at evaluation if they slip past
+    // canAddLink) and returns the unwrapped `DeepRef`. Used by deep-image
+    // consumers such as `DeepFlattenNode` and `DeepMergeNode`.
+    gpu::ResourceRef::DeepRef pullDeepInput(EvaluationContext& ctx, const Region& region,
+                                            uint32_t inputIndex);
 };
 
 }  // namespace loom::core

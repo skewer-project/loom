@@ -965,3 +965,114 @@ A.4 (`io::ParsedDeepImage` is the output shape).
   and append the per-channel slices in place rather than rebuilding it.
 
 ---
+
+## Phase B.2 — `DeepEXRReadNode`
+
+### Goal
+
+First production caller of `IDeepReader` and `gpu::uploadDeepImage`. A graph
+node that loads a deep EXR from a `file_path` param and stores the resulting
+`Kind::Deep` payload on its output pin. The chain `DeepEXRRead → Viewer`
+becomes the first end-to-end deep visualisation surface (with B.3's
+`DeepFlattenNode` between them).
+
+### Decisions
+
+- **`EvaluationContext` gains four nullable fields.** `bufferPool`,
+  `stagingArena`, `deepReader` join the existing `imagePool` /
+  `pipelineCache` / etc. All four are nullable: only nodes that need them
+  populate the field. Defaults to null means the existing four toy nodes
+  still execute unchanged in tests that don't construct a Vulkan context.
+- **`io::IDeepReader` is forward-declared in `EvaluationContext.hpp`.**
+  Avoids pulling the `<future>` machinery into every translation unit that
+  touches the eval context. The concrete reader implementation header
+  (`io/DeepReader.hpp`) is included by `Nodes.cpp` and any other consumer.
+- **New `NodeType::DeepEXRRead` + dispatch in `Graph::addNode`.** Same
+  pattern as the existing toy nodes — one entry in the switch, one entry
+  in `getDefaultNodeName`. Spawn menu in the node editor adds a "DeepEXRRead"
+  item so the node is reachable from the UI.
+- **Pin schema is one `DeepBuffer` output, zero inputs.** Reader is a
+  pure source. `markRequiredTiles` is the trivial "insert self" pattern.
+  Region propagation upstream is moot because there is no upstream.
+- **Two params: `file_path: string` and `frame_index: int` (default 0).**
+  Matches the plan verbatim. `frame_index` carries `ParamRange{hasBounds,
+  min=0, max=9999, step=1}` so the UI renders a `SliderInt` rather than a
+  free-form input. Phase C.2's timeline UI will drive `frame_index` from
+  the global playhead.
+- **`Node::pullDeepInput` typed accessor lands here, not at B.3.** B.3's
+  `DeepFlattenNode` is the first consumer, but the accessor mirrors
+  `pullImageInput` and the natural place is next to it. Asserts
+  `Kind::Deep` so any wiring mismatch that slipped past `canAddLink`
+  surfaces at evaluation rather than producing garbage GPU data.
+- **Defensive nullability on the eval context.** Production-time the
+  context always carries reader + pools; tests that construct the node
+  headlessly do not. `execute` checks each before use and returns an
+  invalid `ResourceRef::fromDeep({})` on missing fields, with a warn-
+  level log line per failure case. This is what allows the headless
+  `DeepEXRReadNodeTest` cases to exercise the early-return branches
+  without crashing on null pointer dereference.
+- **`file_path == ""` is treated as "not configured", logged at info, not
+  warn.** A freshly-spawned node has no path; that's a normal first-frame
+  state, not an error. The user types a path; the next frame's evaluation
+  loads.
+- **No cache hash on the node side; rely on `RenderCache`.** The plan
+  hinted at a per-node `m_cache { (path, frame_index) → DeepFrame }` to
+  skip re-parsing when the parameters don't change. v1 trusts the
+  existing `RenderCache (pin × region → ResourceRef)` plus the `isDirty`
+  flag: re-evaluation only happens when the node is dirty, and editing
+  a param via `setParam` flips dirty. The cache hash would be a Phase C
+  concern when sequence playback churns through paths and the per-frame
+  re-parse cost becomes visible.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `tests/core/DeepEXRReadNodeTest.cpp` | 4 cases: pin schema, param defaults, empty-path early return, missing-context handling |
+
+### Files modified
+
+- `include/core/EvaluationContext.hpp` — adds nullable `bufferPool`,
+  `stagingArena`, `deepReader` fields with inline rationale; forward-declares
+  `gpu::TransientBufferPool`, `gpu::StagingArena`, `io::IDeepReader`.
+- `include/core/Types.hpp` — `NodeType` gains `DeepEXRRead`.
+- `include/core/Nodes.hpp` — `DeepEXRReadNode` class declaration.
+- `src/core/Nodes.cpp` — implementation of all `DeepEXRReadNode` virtuals;
+  defensive nullability on `ctx.deepReader` / `bufferPool` / `stagingArena`;
+  `Node::pullDeepInput` typed accessor mirroring `pullImageInput`.
+- `include/core/Graph.hpp` — `addNode` and `getDefaultNodeName` switches
+  extended with the new node type.
+- `src/ui/NodeEditorPanel.cpp` — spawn-menu entry for the new node.
+- `CMakeLists.txt` — `LoomTests` adds `tests/core/DeepEXRReadNodeTest.cpp`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 118/118 pass (+4 `DeepEXRReadNodeTest.*` cases).
+  Baseline was 114; net +4.
+- The four tests cover: pin schema (1 `DeepBuffer` output, no inputs),
+  param defaults (empty `file_path`, `frame_index = 0`, bounds set),
+  empty-path early return (no crash, invalid deep ref stored),
+  missing-context handling (path set but reader/pools null — no crash).
+
+### Dependencies
+
+A.4 (`uploadDeepImage`), A.3 (`Param`), A.1 (`DeepLayout`), B.1 (`IDeepReader`).
+The first node that exercises the full Phase-A toolchain end-to-end.
+
+### Known follow-ups for later sub-phases
+
+- B.3's `DeepFlattenNode` will be the first to call `pullDeepInput`,
+  validating that accessor in the graph evaluator.
+- B.7's `main.cpp` will construct `bufferPool`, `StagingArena`, and a
+  `SyncDeepReader`, populating the four new `EvaluationContext` fields
+  before each `Graph::execute` call.
+- C.2's timeline UI drives `frame_index` from a global playhead param.
+  At that point `DeepEXRReadNode` listens for the
+  `EvaluationContext::frame` change via the same `isDirty` mechanism.
+- The "no per-node frame cache" decision is intentional — but if Phase C
+  finds re-parse-per-frame too costly, the cache hash lands here as
+  `std::optional<{path, frame_index, DeepFrame}>` plus a one-line check
+  at the top of `execute`.
+
+---

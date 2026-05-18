@@ -49,6 +49,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   rather than throwing.
 - `LoomTests` carries a `LOOM_TESTDATA_DIR` compile-time define so tests
   resolve committed-fixture paths from the source tree regardless of cwd.
+- `core::DeepEXRReadNode` — pure-source node with `file_path: string`
+  / `frame_index: int` params and a single `Kind::Deep` output pin.
+  Loads via `IDeepReader` and stages onto the GPU via `uploadDeepImage`.
+- `core::EvaluationContext` extended with nullable `bufferPool`,
+  `stagingArena`, and `deepReader` fields for nodes that need them.
+- `core::Node::pullDeepInput` typed accessor mirrors `pullImageInput`
+  for Deep-pin consumers.
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

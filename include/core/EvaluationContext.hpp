@@ -13,8 +13,14 @@
 
 namespace loom::gpu {
 class TransientImagePool;
+class TransientBufferPool;
 class PipelineCache;
+class StagingArena;
 }  // namespace loom::gpu
+
+namespace loom::io {
+class IDeepReader;
+}
 
 namespace loom::core {
 
@@ -24,10 +30,17 @@ class RenderCache;
 struct EvaluationContext {
     VkExtent2D requestedExtent;
     gpu::TransientImagePool* imagePool;
+    gpu::TransientBufferPool* bufferPool = nullptr;
+    gpu::StagingArena* stagingArena = nullptr;
     gpu::PipelineCache* pipelineCache;
     RenderCache* renderCache;
     VmaAllocator allocator;
     VkCommandBuffer cmd;  // Shared command buffer for this frame
+
+    // File-I/O entry point. Nullable: only nodes that touch the disk
+    // (`DeepEXRReadNode` and friends) require it. Populated by the engine
+    // when it owns a reader; tests can substitute a fake.
+    io::IDeepReader* deepReader = nullptr;
 
     // View parameters threaded from the UI into graph evaluation. Nullable
     // when graph eval doesn't require a camera (flat 2D viewports, headless

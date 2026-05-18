@@ -3,12 +3,19 @@
 #include <glm/vec3.hpp>
 
 #include "core/Assert.hpp"
+#include "core/DeepLayout.hpp"
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
+#include "core/Log.hpp"
 #include "core/NodeTaskBuilders.hpp"
+#include "core/Param.hpp"
 #include "core/RenderCache.hpp"
+#include "gpu/DeepUpload.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "gpu/StagingArena.hpp"
+#include "gpu/TransientBufferPool.hpp"
 #include "gpu/TransientImagePool.hpp"
+#include "io/DeepReader.hpp"
 
 namespace loom::core {
 
@@ -78,6 +85,15 @@ gpu::ImageHandle Node::pullImageInput(EvaluationContext& ctx, const Region& regi
     LOOM_ASSERT(ref.kind == gpu::ResourceRef::Kind::Image,
                 "pullImageInput called on a non-image pin payload");
     return ref.image;
+}
+
+gpu::ResourceRef::DeepRef Node::pullDeepInput(EvaluationContext& ctx, const Region& region,
+                                              uint32_t inputIndex) {
+    gpu::ResourceRef ref = pullInput(ctx, region, inputIndex);
+    if (!ref.isValid()) return {};
+    LOOM_ASSERT(ref.kind == gpu::ResourceRef::Kind::Deep,
+                "pullDeepInput called on a non-deep pin payload");
+    return ref.deep;
 }
 
 // -----------------------------------------------------------------------------
@@ -255,6 +271,90 @@ void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
         ctx.tasks.push_back(buildFillTask(ctx, out, grey, "PassthroughNode.fill"));
     }
     ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(out));
+}
+
+// -----------------------------------------------------------------------------
+// DeepEXRReadNode
+// -----------------------------------------------------------------------------
+
+std::vector<PinSpec> DeepEXRReadNode::getPinSchema() const {
+    return {{PinDirection::Output, PinType::DeepBuffer}};
+}
+
+void DeepEXRReadNode::buildParams() {
+    params.emplace_back("file_path", Param::Value{std::string("")});
+    ParamRange r;
+    r.min = 0.0f;
+    r.max = 9999.0f;
+    r.step = 1.0f;
+    r.hasBounds = true;
+    params.emplace_back("frame_index", Param::Value{0}, r);
+}
+
+void DeepEXRReadNode::markRequiredTiles(const Region& /*requestedRegion*/,
+                                        std::unordered_set<NodeHandle>& activeNodes) {
+    // Pure source — no upstream to mark.
+    activeNodes.insert(id);
+}
+
+namespace {
+
+const std::string& stringParam(const Node& node, const char* name) {
+    static const std::string empty;
+    for (const auto& p : node.params) {
+        if (p.name() != name) continue;
+        if (auto* v = std::get_if<std::string>(&p.value())) return *v;
+        return empty;
+    }
+    return empty;
+}
+
+int intParam(const Node& node, const char* name, int fallback) {
+    for (const auto& p : node.params) {
+        if (p.name() != name) continue;
+        if (auto* v = std::get_if<int>(&p.value())) return *v;
+        return fallback;
+    }
+    return fallback;
+}
+
+}  // namespace
+
+void DeepEXRReadNode::execute(EvaluationContext& ctx, const Region& region) {
+    if (outputs.empty()) return;
+
+    const std::string& path = stringParam(*this, "file_path");
+    const int frameIndex = intParam(*this, "frame_index", 0);
+
+    if (path.empty()) {
+        // No path set — emit an invalid deep ref so downstream nodes know to
+        // fall back to whatever placeholder behaviour they prefer. Logging at
+        // info, not warn: an unconfigured node is a normal first-frame state.
+        log::info("DeepEXRReadNode: file_path is empty, skipping upload");
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromDeep({}));
+        return;
+    }
+
+    if (!ctx.deepReader || !ctx.bufferPool || !ctx.stagingArena) {
+        log::warn(
+            "DeepEXRReadNode: evaluation context missing reader / bufferPool / "
+            "stagingArena — cannot execute");
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromDeep({}));
+        return;
+    }
+
+    // v1 reader is synchronous; .get() returns immediately. Phase C.1 swaps
+    // a worker-thread reader behind this same call.
+    io::DeepFrame frame = ctx.deepReader->readFrame(path, frameIndex).get();
+    if (!frame.isValid()) {
+        log::warn("DeepEXRReadNode: failed to read '", path, "'");
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromDeep({}));
+        return;
+    }
+
+    gpu::ResourceRef ref = gpu::uploadDeepImage(ctx.cmd, *ctx.stagingArena, *ctx.imagePool,
+                                                *ctx.bufferPool, frame.image, *frame.layout);
+    ctx.renderCache->store(outputs[0], region, ref);
 }
 
 }  // namespace loom::core

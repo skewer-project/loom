@@ -243,6 +243,7 @@ void NodeEditorPanel::handleContextMenu() {
         if (ImGui::MenuItem("Merge")) spawnNode(core::NodeType::Merge);
         if (ImGui::MenuItem("Viewer")) spawnNode(core::NodeType::Viewer);
         if (ImGui::MenuItem("Passthrough")) spawnNode(core::NodeType::Passthrough);
+        if (ImGui::MenuItem("DeepEXRRead")) spawnNode(core::NodeType::DeepEXRRead);
 
         ImGui::EndPopup();
     }
