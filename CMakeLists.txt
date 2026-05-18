@@ -236,6 +236,7 @@ add_library(LoomCore STATIC
     src/core/NodeTaskBuilders.cpp
     src/core/Param.cpp
     src/core/RenderCache.cpp
+    src/io/DeepReader.cpp
 )
 if(HAS_SHADER_COMPILER)
     add_dependencies(LoomCore CompileShaders)
@@ -255,6 +256,17 @@ target_link_libraries(LoomCore PUBLIC
     glfw
     glm::glm
     Vulkan::Vulkan
+)
+
+# OpenEXR is an implementation-detail of `loom::io::DeepReader` — header
+# never includes any OpenEXR symbol. PRIVATE keeps that boundary explicit:
+# downstream targets don't see OpenEXR through the LoomCore link interface
+# but, because LoomCore is a static library, the symbol references inside
+# DeepReader.cpp are still resolvable at the executable's final link step
+# via CMake's transitive `INTERFACE_LINK_LIBRARIES_DEP` machinery.
+target_link_libraries(LoomCore PRIVATE
+    OpenEXR::OpenEXR
+    Imath::Imath
 )
 
 # Apple-specific config for MoltenVK
@@ -300,6 +312,7 @@ add_executable(LoomTests
     tests/gpu/ResourcePoolTest.cpp
     tests/gpu/HazardTrackerTest.cpp
     tests/gpu/StagingArenaTest.cpp
+    tests/io/DeepReaderTest.cpp
     tests/gpu/DisplayPassTest.cpp
     tests/core/PushPullTest.cpp
     tests/gpu/ComputeDispatchTest.cpp
@@ -312,6 +325,12 @@ add_executable(LoomTests
 target_link_libraries(LoomTests PRIVATE
     LoomCore
     gtest_main
+)
+
+# Source-tree fixture path. Tests open committed `.exr` fixtures by absolute
+# path so they run regardless of the executable's working directory.
+target_compile_definitions(LoomTests PRIVATE
+    LOOM_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )
 
 include(GoogleTest)

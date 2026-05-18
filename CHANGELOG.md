@@ -42,6 +42,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   proper barriers.
 - `io::ParsedDeepImage` — CPU-side parsed deep-image struct (the
   `IDeepReader::readFrame` output shape, ahead of Phase B.1).
+- `io::IDeepReader` + `io::SyncDeepReader` — async-shaped reader interface
+  (`std::future<DeepFrame> readFrame(path)`) with a v1 synchronous OpenEXR
+  Deep implementation. Builds and interns a `core::DeepLayout` from the EXR
+  header's channel list; returns an invalid `DeepFrame` on read failure
+  rather than throwing.
+- `LoomTests` carries a `LOOM_TESTDATA_DIR` compile-time define so tests
+  resolve committed-fixture paths from the source tree regardless of cwd.
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

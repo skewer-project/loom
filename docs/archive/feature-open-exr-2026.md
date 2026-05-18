@@ -839,3 +839,129 @@ Phase A exit criteria from the plan:
 Phase A is complete.
 
 ---
+
+# Phase B — Deep EXR viewing
+
+First user-facing milestone: load a still deep EXR, see it as 2D and as a 3D
+point cloud. A new git branch `feature/exr-viewing` was carved off Phase A's
+`feature/open-exr` to separate the foundational and user-facing milestones
+logically and give us a clean rollback target if Phase B work needs to be
+unwound.
+
+## Phase B.1 — `IDeepReader` + sync impl
+
+### Goal
+
+Land the file-I/O entry point Loom uses to load deep EXR files. v1 ships a
+synchronous reader behind an async-shaped interface (`std::future<DeepFrame>`)
+so Phase C.1's worker-thread implementation can drop in without changing any
+call site.
+
+### Decisions
+
+- **Interface is async-shaped from day one.** `std::future<DeepFrame>` is the
+  return type even though v1 returns a ready future. The plan was explicit
+  about this: "Phase B implements sync; Phase C swaps in worker-thread impl
+  behind same interface." The future-shaped surface means
+  `DeepEXRReadNode::execute` in B.2 can call `reader->readFrame(path).get()`
+  today and the same line just stops blocking when the worker thread lands.
+- **`DeepFrame` is "parsed image + interned layout pointer".** The plan
+  said "DeepFrame carries the parsed sample data + the resolved DeepLayout
+  pointer." Two fields: `io::ParsedDeepImage image` and `const
+  core::DeepLayout* layout`. `isValid()` keys off the layout — a default-
+  constructed `DeepFrame` is invalid. The reader returns an invalid
+  `DeepFrame` on any error path rather than throwing; callers `.get()` is
+  total-functional.
+- **v1 reader is scalar-only.** Every EXR channel becomes a one-component
+  `DeepChannel`. The NVS coalescing (`world_pos.{x,y,z}` → one `vec3`
+  channel with components=3) is deferred to Phase D.1, where it's the
+  explicit goal of that sub-task. Documenting the scalar floor here so
+  reviewers don't expect coalescing at the B.1 boundary. The
+  channel-naming spec in §19 already treats coalescing as a loader
+  concern, so the contract is unchanged — only the implementation grows.
+- **Channel order is whatever OpenEXR gives us.** OpenEXR's `ChannelList`
+  iterates alphabetically by name. The reader records channels in that
+  order; the resulting `DeepLayout` pointer is stable across two reads of
+  the same file (pinned by `InternedLayoutMatchesAcrossReads`). A future
+  feature that wants a specific order can canonicalise post-hoc.
+- **Per-channel SoA storage with a per-pixel pointer grid.** The OpenEXR
+  deep API takes a `DeepSlice` whose `base` is a pointer-per-pixel grid
+  of `char*` (the per-pixel sample base). We allocate a flat
+  `byteSize * totalSamples` buffer per channel and seed the pointer grid
+  with prefix-sum offsets. This is the natural CPU-side SoA shape that
+  `io::ParsedDeepImage` carries, and what `gpu::uploadDeepImage` (A.4)
+  consumes.
+- **Two passes over the file: sample counts, then full read.** Same trap
+  as the spike (A.0): re-setting the framebuffer drops the input file's
+  internal sample-count cache. The reader calls `readPixelSampleCounts`
+  twice — once on the count-only framebuffer, once on the full
+  framebuffer. The full read both populates per-channel data and re-
+  primes the internal cache for `readPixels` immediately after.
+- **OpenEXR is `PRIVATE` linkage on LoomCore.** The `IDeepReader` header
+  forward-declares only its public types and never includes any OpenEXR
+  header. The implementation includes them. `PRIVATE` keeps the API
+  surface clean (downstream `LoomCore` consumers don't drag OpenEXR
+  through transitive include paths) but, because `LoomCore` is a static
+  library, the symbol references inside `DeepReader.cpp` resolve at the
+  final-executable link step via CMake's transitive
+  `INTERFACE_LINK_LIBRARIES_DEP` machinery. Tools that link `LoomCore`
+  (`Loom`, `LoomTests`) get OpenEXR linked automatically.
+- **`LOOM_TESTDATA_DIR` compile-time define for test fixture paths.**
+  Tests need to open the committed `.exr` fixture regardless of cwd
+  (test runners chdir to the build dir). The CMake target sets
+  `LOOM_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"` once for
+  the whole test binary; tests resolve relative names against it. Same
+  pattern as the `LOOM_FIXTURE_DIR` used by the Phase A.0 tools, but
+  scoped to the test target — production code never sees it.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/io/DeepReader.hpp` | `DeepFrame`, `IDeepReader`, `SyncDeepReader` |
+| `src/io/DeepReader.cpp` | Synchronous OpenEXR Deep parser; builds `DeepLayout` from header channels |
+| `tests/io/DeepReaderTest.cpp` | 5 cases: channel set, sample counts, Z round-trip, missing file, interning stability |
+
+### Files modified
+
+- `CMakeLists.txt` — `LoomCore` adds `src/io/DeepReader.cpp` and a `PRIVATE`
+  link line for `OpenEXR::OpenEXR` / `Imath::Imath`. `LoomTests` adds the
+  new test source and a `LOOM_TESTDATA_DIR` compile-time define pointing at
+  the source-tree fixture dir.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 114/114 pass (+5 `DeepReaderTest.*` cases).
+  Baseline was 109; net +5.
+- The five tests cover: channel-set discovery, exact per-pixel sample-count
+  reconstruction (matches `make_deep_fixture`'s deterministic pattern),
+  per-sample Z value round-trip (the same formula the writer uses,
+  validated sample-by-sample), the missing-file → invalid-frame error
+  path, and pointer-equality interning across two reads of the same file.
+
+### Dependencies
+
+A.0 (OpenEXR fetch + the committed fixture), A.1 (`DeepLayout` + registry),
+A.4 (`io::ParsedDeepImage` is the output shape).
+
+### Known follow-ups for later sub-phases
+
+- Phase B.2's `DeepEXRReadNode` is the first production caller — it
+  constructs a `SyncDeepReader` (or pulls one from a future
+  `EvaluationContext::deepReader` if the engine grows a shared instance)
+  and feeds `DeepFrame` into `gpu::uploadDeepImage`.
+- Phase C.1 replaces the body of `readFrame` with a worker-thread parse
+  and a real (not pre-completed) future. The interface is unchanged so
+  no `DeepEXRReadNode::execute` line moves.
+- Phase D.1 extends `buildLayoutFromHeader` with the `.{x,y,z}` /
+  `.{r,g,b}` coalescer. Until then, NVS deep files load as
+  6+3+3+3 = 15 scalar channels rather than 3+1 vec3+vec3+vec3+vec3 — the
+  layout is still correct, just denormalised.
+- `readPixelSampleCounts` is called twice per `readFrame`. OpenEXR's
+  internal cache means the second call is essentially free (it walks the
+  same compressed chunks already in memory), but if profiling ever shows
+  it as a hotspot, the trick is to keep `fb` alive across the two passes
+  and append the per-channel slices in place rather than rebuilding it.
+
+---
