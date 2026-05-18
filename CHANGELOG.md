@@ -63,6 +63,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `gpu::ResourceRef::DeepRef` carries `width` / `height` so consumers
   can size their dispatch / draw extent from the payload directly.
 - `core::buildDeepFlattenTask` task builder.
+- `gpu::PipelineCache::getOrCreateGraphics(GraphicsPipelineKey)` —
+  graphics-pipeline overload sharing the persistent `VkPipelineCache`
+  with the existing compute path. Enum-permutation key (`VertexInputDesc`,
+  `Topology`, `BlendMode`, `DepthMode`, color/depth format, samples,
+  shaders, layout handle).
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

@@ -1192,3 +1192,106 @@ payload), B.2 (`DeepEXRReadNode` + `pullDeepInput`).
   conventionally sorted, so this is a backlog item, not a v1 gap.
 
 ---
+
+## Phase B.4 — Graphics pipeline support in `PipelineCache`
+
+### Goal
+
+Extend the existing compute-only `PipelineCache` with a graphics-pipeline
+overload. Shares the on-disk `VkPipelineCache` blob between compute and
+graphics so warm-cache loads benefit both stage types. Unblocks Phase B.5's
+`PointCloudPass` and any future graphics passes (UI overlays, splat
+rendering in Phase D).
+
+### Decisions
+
+- **Key shape per the plan.** `GraphicsPipelineKey { vertSpv, fragSpv,
+  layout, vertexInput, topology, blend, depth, colorFormat, depthFormat,
+  samples }`. The plan didn't call out `topology` or `depthFormat`
+  explicitly, but PointCloudPass (B.5) needs `Topology::PointList` and
+  any depth-tested pass needs a depth attachment format. Both additions
+  are small enums; tests pin their distinct-key contracts.
+- **`layout` lives in the key, not the cache.** Each call site (DisplayPass-
+  style fullscreen passes, PointCloudPass) owns its own `VkPipelineLayout`
+  — different push-constant ranges and stage masks. The cache keys on the
+  handle so two passes with the exact same layout dedup their pipelines
+  if every other field matches. Pipeline layouts are stable for the
+  engine's lifetime, so this keying is safe.
+- **Enum-permutation `BlendMode` / `DepthMode` instead of full Vulkan
+  state structs.** The plan was explicit: enum-permutation keying is
+  right-sized for a research compositor. The three blend modes
+  (`Opaque`, `AlphaBlend`, `Additive`) and three depth modes (`None`,
+  `TestWrite`, `TestNoWrite`) cover every v1 use case. Adding a new
+  mode is a switch-statement entry plus a key value.
+- **`AlphaBlend` is premultiplied.** `Csrc + (1 - Asrc) * Cdst`. Matches
+  the channel-naming spec's premultiplied-radiance convention (§19) and
+  the front-to-back composite math in `DeepFlatten.comp`. A
+  straight-alpha mode would be a fourth enum entry; no production caller
+  needs it today.
+- **`VertexInputDesc::None` is the only entry shipped.** Every shader in
+  Loom (fullscreen triangle, point cloud, future splat) pulls data via
+  `gl_VertexIndex` from a bindless SSBO or constant array. There's no
+  per-vertex attribute binding to describe. The enum exists so future
+  mesh-rendering passes have a clean extension point — adding
+  `MeshVertex` is a switch-statement entry that populates the
+  `VkPipelineVertexInputStateCreateInfo` from a hardcoded vertex format.
+- **Existing `DisplayPass` is NOT migrated to use the new API.**
+  DisplayPass predates the cache and owns its pipeline directly. The
+  plan called out templating the body on `DisplayPass::createPipeline`,
+  which the new `getOrCreateGraphics` implementation does morally — same
+  state machinery, parameterised by the key. Migrating the existing
+  DisplayPass would be a churn-only PR; we leave it alone and route new
+  passes through the cache.
+- **Pipeline layout's handle hashed as a `uintptr_t`.** `VkPipelineLayout`
+  is an opaque pointer (typedef of `VkPipelineLayout_T*`). Casting to
+  `uintptr_t` for hashing is portable and produces good distribution.
+  The handle's bit pattern is determined by the driver; we trust it not
+  to be pathologically clustered.
+- **Pipelines destroyed in the destructor.** Both compute and graphics
+  pipelines walk their respective maps and call `vkDestroyPipeline`. The
+  on-disk cache blob is written before the cache itself is destroyed so
+  the cold-boot path on next launch warms both compute and graphics.
+
+### Files modified
+
+- `include/gpu/PipelineCache.hpp` — new `VertexInputDesc`, `Topology`,
+  `BlendMode`, `DepthMode` enums; `GraphicsPipelineKey` struct with
+  `operator==` and `GraphicsPipelineKeyHash`; `PipelineCache::
+  getOrCreateGraphics(key)` declaration; new map member.
+- `src/gpu/PipelineCache.cpp` — `operator==` and hash implementations;
+  destructor extended to clean up graphics pipelines; new
+  `getOrCreateGraphics` body with `blendAttachmentFor` / `depthStateFor`
+  helpers; uses dynamic-rendering (`VkPipelineRenderingCreateInfo`) per
+  the existing engine convention.
+- `tests/gpu/GraphicsPipelineKeyTest.cpp` — new (9 cases, headless): key
+  equality / inequality across every field permutation, hash stability,
+  hash sensitivity.
+- `CMakeLists.txt` — `LoomTests` adds the new test source.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 131/131 pass (+9 `GraphicsPipelineKeyTest.*`).
+  Baseline was 122; net +9. All headless — the actual
+  `vkCreateGraphicsPipelines` path needs a Vulkan device and exercises
+  in CI under Lavapipe (Phase 9) and locally on B.5 once the
+  PointCloudPass is wired through.
+
+### Dependencies
+
+None within Phase B. Unblocks B.5.
+
+### Known follow-ups for later sub-phases
+
+- B.5's `PointCloudPass` is the first production caller. It builds a
+  key with `PointList` topology, `TestWrite` depth, the swapchain's
+  color format. The cache deduplicates if the viewport-mode toggle
+  oscillates the user between Flat2D and PointCloud3D.
+- A future splat-rendering pass (Phase D) adds an entry to the
+  vertex-input enum if it wants explicit per-splat vertex attributes
+  rather than SSBO pulls.
+- Migrating `DisplayPass` to use the cache would unify pipeline
+  ownership but is pure churn — the existing direct-construction path
+  works and predates the cache.
+
+---

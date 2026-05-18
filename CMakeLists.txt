@@ -312,6 +312,7 @@ add_executable(LoomTests
     tests/core/ResourceRefTest.cpp
     tests/core/PinSchemaTest.cpp
     tests/gpu/ResourcePoolTest.cpp
+    tests/gpu/GraphicsPipelineKeyTest.cpp
     tests/gpu/HazardTrackerTest.cpp
     tests/gpu/StagingArenaTest.cpp
     tests/io/DeepReaderTest.cpp
