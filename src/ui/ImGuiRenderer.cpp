@@ -287,7 +287,15 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     ImGui::DockSpaceOverViewport(dockspace_id, ImGui::GetMainViewport());
 
     // Step 4: Viewport Panel & Size Tracking
-    ImGui::Begin("Viewport");
+    //
+    // NoScrollbar + NoScrollWithMouse keep the mouse wheel from being
+    // consumed by ImGui's default panel-scroll handling. Without these
+    // flags the viewport panel intercepts the wheel before `applyOrbitInput`
+    // (under `ImGui::IsItemHovered()`) sees it, so orbit-zoom is silently
+    // dead even though the drag-yaw / drag-pitch branch works. The viewport
+    // image fills the dock; the panel never needs its own scrollbar.
+    ImGui::Begin("Viewport", nullptr,
+                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     // Mode selector. Drawn in the viewport panel header above the image so
     // the user can swap between flat 2D and the point-cloud renderer
