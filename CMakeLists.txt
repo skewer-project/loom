@@ -225,6 +225,7 @@ add_library(LoomCore STATIC
     src/gpu/LayoutTransitions.cpp
     src/gpu/StagingArena.cpp
     src/gpu/DeepUpload.cpp
+    src/gpu/PointCloudPass.cpp
     src/ui/ImGuiRenderer.cpp
     src/ui/NodeEditorPanel.cpp
     src/core/Assert.cpp

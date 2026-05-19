@@ -1295,3 +1295,142 @@ None within Phase B. Unblocks B.5.
   works and predates the cache.
 
 ---
+
+## Phase B.5 — `PointCloudPass` + shaders
+
+### Goal
+
+Render a deep payload as a per-sample point cloud, depth-tested, into an
+arbitrary RGBA color attachment. Sibling to `DisplayPass`. v1 produces a
+height-field-shaped point cloud (XY from source pixel, Z from sample
+depth) because no `world_pos` channel exists yet; Phase D.1 wires the
+NVS extension shader.
+
+### Decisions
+
+- **Per-sample vertex shader + bindless SSBO pull.** Each of the
+  `totalSamples` points is one vertex; `gl_VertexIndex` maps directly
+  to a sample. The shader pulls per-sample bytes from the SSBO at the
+  bindless slot supplied via push constants — same `BindlessUintBuffer`
+  declaration used by `DeepFlatten.comp`. No vertex buffer binding, no
+  index buffer. Topology is `Topology::PointList` (the B.4
+  enum-permutation key carries the choice through to
+  `vkCreateGraphicsPipelines`).
+- **`sampleToPixel: BufferHandle` added to `DeepRef`.** The vertex
+  shader needs the pixel ancestry of each sample to derive a world
+  position. Three options were on the table:
+    1. Linear scan of `offsetImage` per vertex — `O(W·H)` per vertex,
+       embarrassing.
+    2. Binary search of `offsetImage` per vertex — `O(log W·H)` per
+       vertex.
+    3. Precomputed `uint sampleToPixel[totalSamples]` buffer — `O(1)`
+       per vertex, one extra `O(totalSamples)` CPU pass at upload time.
+  v1 ships (3). It's the simplest correct design; the per-sample cost
+  is `sizeof(uint32_t)` extra GPU memory, dwarfed by the sample
+  payload itself.
+- **`DeepRef::totalSamples` exposed too.** Both the draw call
+  (`vkCmdDraw(totalSamples, 1, 0, 0)`) and the future Phase C clustering
+  need it. Cheaper to carry the running sum than re-prefix-summing in
+  the shader.
+- **World-position synthesis without `world_pos`.** v1 lacks NVS
+  channels (Phase D.1's job to surface them). For v1 the vertex shader
+  maps pixel `(px, py)` to centered-unit-square XY and uses scaled Z
+  for depth: `worldPos = vec3(2*px/W − 1, 1 − 2*py/H, -z*zScale)`. The
+  Y flip matches the RH/Y-up convention (pixel row 0 → world +Y).
+  Documented in the shader; replaced wholesale in Phase D.
+- **PointSize via the legacy `gl_PointSize` write.** Modern Vulkan
+  requires the `shaderTessellationAndGeometryPointSize` feature
+  technically, but for non-tess/non-geom shaders the write is
+  supported on every desktop driver and the `Topology::PointList`
+  rasterises one fragment per pixel-sized point by default. v1 ships
+  with a 2.0-pixel point size; future config or per-node param.
+- **PointCloudPass owns its own pipeline layout + camera UBO.** Two
+  descriptor sets: set 0 is the engine's bindless set (passed by
+  caller); set 1 is a dedicated `CameraUbo { mat4 viewProj }` allocated
+  inside the pass. The pass owns its `VkDescriptorPool` /
+  `VkDescriptorSetLayout` / `VkDescriptorSet` and one host-visible
+  mapped buffer for the camera matrices. The plan called for "Camera
+  matrices from `EvaluationContext::camera` → uniform buffer"; this is
+  that wiring.
+- **Lazy depth-image allocation, resized on viewport change.** The
+  pass holds one depth image (`VK_FORMAT_D32_SFLOAT`) sized to the
+  most-recent `record(...)` extent. On size change, destroy and
+  recreate; otherwise reuse. The viewport rarely resizes, so the
+  reallocation cost is negligible. Depth uses `LOAD_OP_CLEAR` (no
+  carry-over from prior frames) and `STORE_OP_DONT_CARE` (one-shot
+  rasterise → fragment lookup, no readback path).
+- **Pre-pass barrier batching.** A single `vkCmdPipelineBarrier2`
+  transitions both the color destination (`UNDEFINED →
+  COLOR_ATTACHMENT_OPTIMAL`) and the depth attachment (`UNDEFINED →
+  DEPTH_ATTACHMENT_OPTIMAL`). One barrier emission instead of two —
+  matches the `DisplayPass::record` pattern.
+- **Post-pass transition to `SHADER_READ_ONLY_OPTIMAL`.** Same
+  contract as `DisplayPass::record`: the viewport image needs to be
+  sampleable by ImGui at the end of the frame. The caller doesn't
+  need to know which pass produced the image.
+- **`uploadDeepImage`'s barrier emission widened.** Was one
+  `VkBufferMemoryBarrier2` for the samples buffer; now a vector that
+  covers both samples and sampleToPixel. The destination stage mask
+  promotes to `ALL_COMMANDS` (was `COMPUTE_SHADER`) so both compute
+  (DeepFlatten) and vertex (PointCloud) consumers are covered without
+  a second barrier emission.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `shaders/PointCloud.vert` | Per-sample vertex shader; bindless SSBO pull; v1 world-pos synthesis |
+| `shaders/PointCloud.frag` | Trivial colour passthrough |
+| `include/gpu/PointCloudPass.hpp` | Pass class declaration |
+| `src/gpu/PointCloudPass.cpp` | Implementation: descriptor / UBO / depth resources + `record` |
+
+### Files modified
+
+- `include/gpu/ResourceHandles.hpp` — `DeepRef` gains `sampleToPixel`
+  buffer and `totalSamples` count.
+- `src/gpu/DeepUpload.cpp` — populates the new fields; widens the
+  per-buffer barrier emission to cover both buffers.
+- `tests/core/ResourceRefTest.cpp` — covers the new fields.
+- `CMakeLists.txt` — `LoomCore` adds `src/gpu/PointCloudPass.cpp`;
+  shaders picked up by the existing `file(GLOB_RECURSE)`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 131/131 (no test count change; the existing
+  `ResourceRefTest.FromDeepCarriesPayload` covers the new fields).
+- Shader compilation: both `PointCloud.vert.spv` and
+  `PointCloud.frag.spv` materialise in `build/debug/bin/shaders/`
+  alongside the existing SPIR-V binaries. `DeepFlatten.comp.spv` still
+  compiles after the layout edit — the binding decoration changed
+  inside DeepUpload (a buffer-barrier emission change, not a shader
+  edit).
+- The pass itself requires a Vulkan device to exercise — the GPU
+  integration test lands when B.6 wires the pass into the engine and
+  a Lavapipe CI matrix entry can run the end-to-end orbit. Headless
+  this branch demonstrates: types compile, shaders parse, key
+  permutations dedupe correctly.
+
+### Dependencies
+
+A.2 (`Camera::viewProj` produces the matrix), A.4 (`uploadDeepImage`),
+A.5 (buffer hazards covered), B.4 (`getOrCreateGraphics` produces the
+backing `VkPipeline`).
+
+### Known follow-ups for later sub-phases
+
+- B.6's `ImGuiRenderer` integration constructs one `PointCloudPass`
+  during init and routes the recording call when the viewport-mode
+  dropdown is `PointCloud3D`. The Camera in `EvaluationContext` is
+  the one the orbit controller mutates.
+- B.7's `main.cpp` constructs the pass with the swapchain's color
+  format and the existing bindless layout.
+- Phase D.1's NVS-aware variant adds a second shader (e.g.
+  `PointCloudNVS.vert`) and a second `GraphicsPipelineKey` permutation.
+  The same `PointCloudPass` class hosts both; the choice is per-frame
+  based on `DeepRef::layout`.
+- A configurable point-size / `zScale` lands when a future
+  `PointCloudViewerNode` exposes them as user params. v1 hardcodes
+  2-pixel points and a unit `zScale`.
+
+---

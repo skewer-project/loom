@@ -61,13 +61,23 @@ struct ResourceRef {
     //   - `width`/`height` — source image dimensions in pixels. Used by
     //                     consumers (`DeepFlattenNode`, point-cloud passes)
     //                     to size their dispatch / draw extent.
+    //   - `sampleToPixel` — flat device-local SSBO of `uint32` length
+    //                     `totalSamples`; entry `i` is the source pixel
+    //                     index (`py * width + px`) for sample `i`. Lets
+    //                     a vertex shader (Phase B.5 `PointCloudPass`) map
+    //                     `gl_VertexIndex` → world position without a
+    //                     binary search over `offsetImage`. Optional —
+    //                     consumers that don't need per-sample pixel
+    //                     ancestry can ignore it.
     struct DeepRef {
         ImageHandle countImage;
         ImageHandle offsetImage;
         BufferHandle samples;
+        BufferHandle sampleToPixel;
         const core::DeepLayout* layout = nullptr;
         uint32_t width = 0;
         uint32_t height = 0;
+        uint64_t totalSamples = 0;
     } deep;
 
     [[nodiscard]] bool isValid() const { return kind != Kind::None; }

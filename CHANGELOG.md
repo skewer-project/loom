@@ -68,6 +68,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   with the existing compute path. Enum-permutation key (`VertexInputDesc`,
   `Topology`, `BlendMode`, `DepthMode`, color/depth format, samples,
   shaders, layout handle).
+- `gpu::PointCloudPass` — depth-tested per-sample point-cloud renderer
+  sibling to `DisplayPass`. Owns its pipeline layout, camera UBO, and
+  lazy-resized depth attachment. Pulls per-sample data from the deep
+  payload via `gl_VertexIndex`. v1 derives world position from source
+  pixel + depth; Phase D.1 swaps to true `world_pos.{x,y,z}`.
+- `shaders/PointCloud.{vert,frag}` — v1 height-field point-cloud shaders.
+- `gpu::ResourceRef::DeepRef` carries `sampleToPixel` (per-sample pixel
+  ancestry) and `totalSamples` so the vertex shader is `O(1)` per draw.
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

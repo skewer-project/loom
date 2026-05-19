@@ -91,10 +91,34 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
         }
     }
 
+    // --- Stage sample-to-pixel map (one uint per sample) ---
+    const VkDeviceSize sampleToPixelBytes =
+        static_cast<VkDeviceSize>(totalSamples) * sizeof(uint32_t);
+    StagingArena::Allocation s2pStaging = sampleToPixelBytes > 0
+                                              ? staging.allocate(sampleToPixelBytes, 16)
+                                              : StagingArena::Allocation{};
+    if (!s2pStaging.isValid() && sampleToPixelBytes > 0) {
+        log::error("uploadDeepImage: staging OOM for sampleToPixel (", sampleToPixelBytes,
+                   " bytes)");
+        return {};
+    }
+    if (sampleToPixelBytes > 0) {
+        auto* dst = static_cast<uint32_t*>(s2pStaging.mapped);
+        uint64_t cursor = 0;
+        for (size_t i = 0; i < pixels; ++i) {
+            const uint32_t pi = static_cast<uint32_t>(i);
+            for (uint32_t s = 0; s < src.sampleCounts[i]; ++s) {
+                dst[cursor++] = pi;
+            }
+        }
+    }
+
     // --- Acquire GPU resources ---
     ImageHandle countImage = imagePool.acquire(countImageSpec(src.width, src.height));
     ImageHandle offsetImage = imagePool.acquire(countImageSpec(src.width, src.height));
     BufferHandle samples = sampleBytes > 0 ? bufferPool.acquire(sampleBytes) : BufferHandle{};
+    BufferHandle sampleToPixel =
+        sampleToPixelBytes > 0 ? bufferPool.acquire(sampleToPixelBytes) : BufferHandle{};
 
     if (!countImage.isValid() || !offsetImage.isValid()) {
         log::error("uploadDeepImage: pool acquire failed");
@@ -128,26 +152,37 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
     imagePool.setLayout(countImage, VK_IMAGE_LAYOUT_GENERAL);
     imagePool.setLayout(offsetImage, VK_IMAGE_LAYOUT_GENERAL);
 
-    if (samples.isValid()) {
+    std::vector<VkBufferMemoryBarrier2> bufBarriers;
+    auto issueBufferCopy = [&](StagingArena::Allocation a, BufferHandle dst, VkDeviceSize size) {
+        if (!dst.isValid() || size == 0) return;
         VkBufferCopy copy{};
-        copy.srcOffset = samplesStaging.offset;
+        copy.srcOffset = a.offset;
         copy.dstOffset = 0;
-        copy.size = sampleBytes;
-        vkCmdCopyBuffer(cmd, samplesStaging.buffer, bufferPool.getBuffer(samples), 1, &copy);
+        copy.size = size;
+        vkCmdCopyBuffer(cmd, a.buffer, bufferPool.getBuffer(dst), 1, &copy);
 
         VkBufferMemoryBarrier2 barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2;
         barrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
         barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        // Both compute and vertex stages consume these buffers (compute for
+        // DeepFlatten, vertex for PointCloudPass). Promote to ALL_COMMANDS
+        // covers both without a second barrier emission.
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
         barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
-        barrier.buffer = bufferPool.getBuffer(samples);
+        barrier.buffer = bufferPool.getBuffer(dst);
         barrier.offset = 0;
-        barrier.size = sampleBytes;
+        barrier.size = size;
+        bufBarriers.push_back(barrier);
+    };
+    issueBufferCopy(samplesStaging, samples, sampleBytes);
+    issueBufferCopy(s2pStaging, sampleToPixel, sampleToPixelBytes);
+
+    if (!bufBarriers.empty()) {
         VkDependencyInfo dep{};
         dep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-        dep.bufferMemoryBarrierCount = 1;
-        dep.pBufferMemoryBarriers = &barrier;
+        dep.bufferMemoryBarrierCount = static_cast<uint32_t>(bufBarriers.size());
+        dep.pBufferMemoryBarriers = bufBarriers.data();
         vkCmdPipelineBarrier2(cmd, &dep);
     }
 
@@ -156,9 +191,11 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
     ref.deep.countImage = countImage;
     ref.deep.offsetImage = offsetImage;
     ref.deep.samples = samples;
+    ref.deep.sampleToPixel = sampleToPixel;
     ref.deep.layout = &layout;
     ref.deep.width = src.width;
     ref.deep.height = src.height;
+    ref.deep.totalSamples = totalSamples;
     return ref;
 }
 
