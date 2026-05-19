@@ -158,6 +158,40 @@ TEST_F(DeepBoundsReduceTest, NVSPathReadsWorldPosDirectly) {
     EXPECT_NEAR(box.max.z, -11.0f, 1e-5f);
 }
 
+TEST_F(DeepBoundsReduceTest, RecommendedZScaleMatchesInverseExtent) {
+    // Z-only payload with depth range [10, 13] → extent.z = 3 (after
+    // negation: min.z = -13, max.z = -10, extent.z = 3). Recommended
+    // scale = 2/3 ≈ 0.667.
+    auto img = makeZOnlyPayload(2, 2, {10.0f, 11.0f, 12.0f, 13.0f});
+    const core::DeepLayout* layout = zOnlyLayout();
+
+    core::AABB box = gpu::reduceSceneBounds(img, *layout);
+    ASSERT_TRUE(box.valid);
+
+    float zScale = gpu::computeRecommendedZScale(box, *layout);
+    EXPECT_NEAR(zScale, 2.0f / 3.0f, 1e-4f);
+}
+
+TEST_F(DeepBoundsReduceTest, RecommendedZScaleIsOneForNVSPayload) {
+    // NVS layout (world_pos present) → real world units, no synthesis.
+    // Scale should default to 1.0 regardless of the AABB extent.
+    auto img = makeNVSPayload(/*w=*/2, /*h=*/1,
+                              /*wpx=*/{10.0f, 14.0f},
+                              /*wpy=*/{-5.0f, -3.0f},
+                              /*wpz=*/{-13.0f, -11.0f},
+                              /*Z=*/{13.0f, 11.0f});
+    const core::DeepLayout* layout = nvsLayout();
+
+    core::AABB box = gpu::reduceSceneBounds(img, *layout);
+    ASSERT_TRUE(box.valid);
+    EXPECT_FLOAT_EQ(gpu::computeRecommendedZScale(box, *layout), 1.0f);
+}
+
+TEST_F(DeepBoundsReduceTest, RecommendedZScaleIsOneOnInvalidBounds) {
+    core::AABB empty{};
+    EXPECT_FLOAT_EQ(gpu::computeRecommendedZScale(empty, *zOnlyLayout()), 1.0f);
+}
+
 TEST_F(DeepBoundsReduceTest, NVSPathFiltersSentinelOnAnyAxis) {
     // Producer emits the sentinel on a single axis (not all three) for a
     // "no hit" sample. The filter still discards.

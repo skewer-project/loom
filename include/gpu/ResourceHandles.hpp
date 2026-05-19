@@ -94,6 +94,20 @@ struct ResourceRef {
         uint32_t height = 0;
         uint64_t totalSamples = 0;
         core::AABB sceneBounds{};
+
+        // Per-payload Z-scaling hint for point-cloud rendering when the
+        // payload has only front-depth (no `world_pos.*` channels). The
+        // shader synthesises XY in centered [-1, 1]; multiplying the raw Z
+        // by `recommendedZScale` normalises the depth range to a
+        // comparable extent, so the synthesised slab is roughly
+        // proportioned and the orbit camera feels natural. Computed by
+        // `gpu::reduceSceneBounds` as `2 / (zMax - zMin)`. NVS payloads
+        // (with `world_pos.*`) ignore this — their positions are in real
+        // world units.
+        //
+        // Default `1.0f` keeps the v1 PointCloud shader's behaviour for
+        // payloads without bounds information.
+        float recommendedZScale = 1.0f;
     } deep;
 
     // CameraRef is a value-type snapshot of a `core::Camera`'s state. Carried

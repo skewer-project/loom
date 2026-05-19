@@ -289,7 +289,19 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
     // path (rather than computed later from the device buffer) because
     // host-side access is free here and the alternative is a GPU readback.
     ref.deep.sceneBounds = reduceSceneBounds(src, layout);
+
+    ref.deep.recommendedZScale = computeRecommendedZScale(ref.deep.sceneBounds, layout);
     return ref;
+}
+
+float computeRecommendedZScale(const core::AABB& sceneBounds, const core::DeepLayout& layout) {
+    // NVS payloads carry world-unit positions; the synthesis path isn't
+    // active so don't scale.
+    if (layout.findChannel("world_pos.x") >= 0) return 1.0f;
+    if (!sceneBounds.valid) return 1.0f;
+    const float zExtent = sceneBounds.extent().z;
+    if (!(zExtent > 1.0e-3f)) return 1.0f;
+    return 2.0f / zExtent;
 }
 
 }  // namespace loom::gpu

@@ -39,6 +39,18 @@ class TransientImagePool;
 [[nodiscard]] core::AABB reduceSceneBounds(const io::ParsedDeepImage& src,
                                            const core::DeepLayout& layout);
 
+// Recommended Z-scale for the `PointCloud.vert` synthesis path. Given a
+// scene AABB (produced by `reduceSceneBounds`) and the deep layout, returns
+// the value to plug into `PointCloud.vert`'s `zScale` push-constant so the
+// synthesised depth range matches the XY range `[-1, 1]`:
+//   - NVS payloads (`world_pos.*` present): `1.0` (no scaling — real units).
+//   - Z-only payloads: `2 / extent.z` if the bounds are valid and the
+//     z-extent is positive; `1.0` otherwise.
+// Surfaced as a free function so the formula is unit-testable without a
+// GPU device (matches the testability pattern used for `reduceSceneBounds`).
+[[nodiscard]] float computeRecommendedZScale(const core::AABB& sceneBounds,
+                                             const core::DeepLayout& layout);
+
 // Upload a CPU-side parsed deep image to GPU resources:
 //
 //   - `countImage`  — R32_UINT 2D image, width × height, per-pixel sample count.
