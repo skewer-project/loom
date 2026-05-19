@@ -67,9 +67,16 @@ class StagingArena {
         [[nodiscard]] bool isValid() const { return buffer != VK_NULL_HANDLE && size > 0; }
     };
 
-    // Default 16 MiB. Production callers explicitly size up for known
-    // workloads (e.g., 256 MiB for a deep-EXR playback session).
-    static constexpr VkDeviceSize kDefaultCapacityBytes = 16ULL * 1024 * 1024;
+    // Default 256 MiB. Sized to comfortably hold one 1080p deep image at
+    // ~8 samples/pixel at the v1 16-byte stride (~264 MB) plus the
+    // count / offset / sampleToPixel auxiliary buffers, or one ~16
+    // megapixel deep frame at modest sample density.
+    //
+    // On Apple Silicon this lives in unified memory; on discrete-GPU
+    // hosts it's a host-visible allocation, still trivial against
+    // modern desktop VRAM. Production callers can pass a smaller value
+    // to the constructor for tight-budget contexts.
+    static constexpr VkDeviceSize kDefaultCapacityBytes = 256ULL * 1024 * 1024;
 
     StagingArena(VmaAllocator allocator, VkDeviceSize capacity = kDefaultCapacityBytes);
     ~StagingArena();

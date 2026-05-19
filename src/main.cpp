@@ -49,6 +49,54 @@ loom::core::NodeHandle buildDeepViewChain(loom::core::Graph& graph, const std::s
     return reader;
 }
 
+// Clear the viewport image to opaque black and leave it in
+// `SHADER_READ_ONLY_OPTIMAL`. Used as the fallback when neither the flat
+// nor the point-cloud pass would otherwise touch the viewport this frame
+// — without it, ImGui samples an `UNDEFINED` image and the validation
+// layers emit a cascade of layout warnings every frame. The clear is
+// cheap (one barrier, one `vkCmdClearColorImage`, one barrier) and
+// produces a clean black panel instead of garbage colours.
+void clearViewportToBlack(VkCommandBuffer cmd, VkImage image) {
+    VkImageMemoryBarrier2 pre{};
+    pre.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    pre.srcStageMask = VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+    pre.dstStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    pre.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    pre.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;  // discard prior contents
+    pre.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    pre.image = image;
+    pre.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkDependencyInfo preDep{};
+    preDep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    preDep.imageMemoryBarrierCount = 1;
+    preDep.pImageMemoryBarriers = &pre;
+    vkCmdPipelineBarrier2(cmd, &preDep);
+
+    VkClearColorValue clear{};
+    clear.float32[0] = 0.0f;
+    clear.float32[1] = 0.0f;
+    clear.float32[2] = 0.0f;
+    clear.float32[3] = 1.0f;
+    VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &range);
+
+    VkImageMemoryBarrier2 post{};
+    post.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    post.srcStageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    post.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    post.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    post.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+    post.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    post.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    post.image = image;
+    post.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    VkDependencyInfo postDep{};
+    postDep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    postDep.imageMemoryBarrierCount = 1;
+    postDep.pImageMemoryBarriers = &post;
+    vkCmdPipelineBarrier2(cmd, &postDep);
+}
+
 // Build the legacy demo chain (`Constant → Viewer`) used when no EXR path
 // was given. Returns an invalid handle since there's no deep reader.
 loom::core::NodeHandle buildDemoChain(loom::core::Graph& graph) {
@@ -228,6 +276,12 @@ int main(int argc, char** argv) {
                                        bindlessSet, viewerOutput.bindlessSlot, vpW, vpH,
                                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
                                        /*exposure=*/1.0f);
+                } else if (vpW > 0 && vpH > 0) {
+                    // Neither pass wrote the viewport this frame (load
+                    // failure, staging OOM, unsupported layout, etc.).
+                    // Without this fallback ImGui samples an UNDEFINED
+                    // image — see `clearViewportToBlack` above.
+                    clearViewportToBlack(cmd, imgui.getViewportImage());
                 }
 
                 vulkan.endFrame(cmd, imgui);
