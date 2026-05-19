@@ -80,6 +80,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the viewport panel header.
 - Orbit-camera controller in `ImGuiRenderer`: mouse drag → yaw/pitch,
   scroll → multiplicative zoom. Viewport resize syncs aspect ratio.
+- `Loom` accepts an optional positional CLI argument — `./Loom
+  path/to/deep.exr` builds the `DeepEXRRead → DeepFlatten → Viewer`
+  chain at startup, defaults to the legacy `Constant → Viewer` demo
+  graph when no path is given.
+- Engine main loop constructs `TransientBufferPool`, `StagingArena`,
+  `SyncDeepReader`, `Camera`, and `PointCloudPass`; populates the
+  new `EvaluationContext` fields; routes per-frame pass selection on
+  `ViewportMode` (`Flat2D` → `DisplayPass`, `PointCloud3D` →
+  `PointCloudPass`).
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
