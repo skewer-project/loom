@@ -3,7 +3,6 @@
 #include <cstring>
 #include <stdexcept>
 
-#include "core/Camera.hpp"
 #include "core/DeepLayout.hpp"
 #include "core/Log.hpp"
 #include "gpu/PipelineCache.hpp"
@@ -210,7 +209,7 @@ void PointCloudPass::ensureDepth(uint32_t width, uint32_t height) {
 
 void PointCloudPass::record(VkCommandBuffer cmd, const ResourceRef::DeepRef& deep, VkImage dstImage,
                             VkImageView dstImageView, VkDescriptorSet bindlessSet, uint32_t width,
-                            uint32_t height, const core::Camera& camera, float zScale,
+                            uint32_t height, const ResourceRef::CameraRef& camera, float zScale,
                             float pointSize) {
     if (!deep.samples.isValid() || !deep.sampleToPixel.isValid() || deep.totalSamples == 0) {
         // Nothing to draw — caller should still have transitioned dstImage
@@ -220,8 +219,8 @@ void PointCloudPass::record(VkCommandBuffer cmd, const ResourceRef::DeepRef& dee
 
     ensureDepth(width, height);
 
-    // Update camera UBO with viewProj.
-    const glm::mat4 viewProj = camera.viewProj();
+    // Update camera UBO with viewProj from the snapshot.
+    const glm::mat4 viewProj = camera.proj * camera.view;
     std::memcpy(m_cameraMapped, &viewProj, sizeof(viewProj));
 
     // Resolve pipeline via the cache.
@@ -321,7 +320,12 @@ void PointCloudPass::record(VkCommandBuffer cmd, const ResourceRef::DeepRef& dee
 
     vkCmdEndRendering(cmd);
 
-    // Transition dst to SHADER_READ_ONLY for ImGui sampling.
+    // Transition dst to SHADER_READ_ONLY_OPTIMAL. This works for both
+    // call sites: (a) `main.cpp` rendering directly onto the viewport
+    // image (ImGui's sampler needs this layout); (b) future
+    // `PointCloudRenderNode` rendering into a transient that `DisplayPass`
+    // then consumes — DisplayPass's pre-barrier expects its `hdrImage`
+    // input in SHADER_READ_ONLY_OPTIMAL too.
     VkImageMemoryBarrier2 post{};
     post.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
     post.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;

@@ -322,9 +322,21 @@ int main(int argc, char** argv) {
                 const uint32_t vpH = static_cast<uint32_t>(imgui.getViewportSize().y);
 
                 if (wantPointCloud && deepRef.samples.isValid() && vpW > 0 && vpH > 0) {
+                    // Snapshot the engine camera into a CameraRef — Step 8
+                    // will switch to pulling this from a CameraNode in the
+                    // graph; for now, materialise from the engine-owned
+                    // Camera so PointCloudPass keeps working under the new
+                    // signature.
+                    loom::gpu::ResourceRef::CameraRef camRef;
+                    camRef.view = camera.viewMatrix();
+                    camRef.proj = camera.projectionMatrix();
+                    camRef.eyePos = camera.position();
+                    camRef.nearPlane = camera.nearPlane();
+                    camRef.farPlane = camera.farPlane();
+                    camRef.fovY = camera.fovY();
                     pointCloudPass.record(cmd, deepRef, imgui.getViewportImage(),
                                           imgui.getViewportImageView(), bindlessSet, vpW, vpH,
-                                          camera);
+                                          camRef);
                 } else if (viewerOutput.isValid()) {
                     const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
                         static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));

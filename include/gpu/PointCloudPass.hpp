@@ -7,10 +7,6 @@
 #include "gpu/ResourceHandles.hpp"
 #include "vk_mem_alloc.h"
 
-namespace loom::core {
-class Camera;
-}
-
 namespace loom::gpu {
 
 class PipelineCache;
@@ -43,19 +39,26 @@ class PointCloudPass {
     PointCloudPass& operator=(const PointCloudPass&) = delete;
 
     // Record one frame's draw. The deep payload's `sampleToPixel` and
-    // `samples` buffers must be in `SHADER_READ` state. `dstImage` must be
-    // in `UNDEFINED` or `SHADER_READ_ONLY_OPTIMAL` on entry; this method
-    // transitions to `COLOR_ATTACHMENT_OPTIMAL`, renders, then transitions
-    // to `SHADER_READ_ONLY_OPTIMAL` (matching `DisplayPass::record`).
+    // `samples` buffers must be in `SHADER_READ` state. `dstImage` must
+    // be in `UNDEFINED` or `SHADER_READ_ONLY_OPTIMAL` on entry; this
+    // method transitions to `COLOR_ATTACHMENT_OPTIMAL`, renders, then
+    // transitions back to `SHADER_READ_ONLY_OPTIMAL`. That layout works
+    // for both call sites: (a) `main.cpp` rendering directly onto the
+    // viewport image (ImGui samples) and (b) `PointCloudRenderNode`
+    // producing a transient that `DisplayPass` consumes (DisplayPass's
+    // pre-barrier expects `SHADER_READ_ONLY_OPTIMAL`).
     //
+    // `camera` is a value-type snapshot of the active view (`view`,
+    // `proj`, `eyePos`) — typically pulled from a `CameraNode`'s output
+    // pin.
     // `pointSize` is in pixels; v1 hardcodes 2.0 at the call site.
     // `zScale` shapes the synthetic world-Z derived from sample depth —
-    // see `PointCloud.vert` for the v1 mapping. Defaults pick a sensible
-    // range for the standard fixture; production callers will expose this
-    // as a node param in a future PR.
+    // see `PointCloud.vert` for the v1 mapping. Production callers should
+    // multiply the user knob by `DeepRef::recommendedZScale` so the
+    // synthesised depth range fits the navigable cube.
     void record(VkCommandBuffer cmd, const ResourceRef::DeepRef& deep, VkImage dstImage,
                 VkImageView dstImageView, VkDescriptorSet bindlessSet, uint32_t width,
-                uint32_t height, const core::Camera& camera, float zScale = 1.0f,
+                uint32_t height, const ResourceRef::CameraRef& camera, float zScale = 1.0f,
                 float pointSize = 2.0f);
 
   private:
