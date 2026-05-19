@@ -40,7 +40,7 @@ gpu::ComputeTask buildFillTask(EvaluationContext& ctx, gpu::ImageHandle out, con
 }
 
 gpu::ComputeTask buildDeepFlattenTask(EvaluationContext& ctx, const gpu::ResourceRef::DeepRef& src,
-                                      gpu::ImageHandle out, const char* label) {
+                                      gpu::ImageHandle out, bool rgbaIsFloat, const char* label) {
     gpu::ComputeTask task{};
     task.label = label;
     task.pipeline = ctx.pipelineCache->getOrCreate("DeepFlatten.comp.spv");
@@ -52,6 +52,8 @@ gpu::ComputeTask buildDeepFlattenTask(EvaluationContext& ctx, const gpu::Resourc
         uint32_t outputSlot;
         uint32_t width;
         uint32_t height;
+        uint32_t strideU;
+        uint32_t rgbaIsFloat;
     } pc{};
     pc.countSlot = src.countImage.bindlessSlot;
     pc.offsetSlot = src.offsetImage.bindlessSlot;
@@ -59,6 +61,8 @@ gpu::ComputeTask buildDeepFlattenTask(EvaluationContext& ctx, const gpu::Resourc
     pc.outputSlot = out.bindlessSlot;
     pc.width = src.width;
     pc.height = src.height;
+    pc.strideU = rgbaIsFloat ? 6u : 4u;
+    pc.rgbaIsFloat = rgbaIsFloat ? 1u : 0u;
     task.setPushConstants(pc);
 
     task.groupCountX = groupCount(src.width);

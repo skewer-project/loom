@@ -30,6 +30,8 @@ layout(push_constant) uniform PushConstants {
     uint height;
     float zScale;
     float pointSize;
+    uint strideU;       // sample stride in uints (4 = half RGBA, 6 = float RGBA)
+    uint rgbaIsFloat;   // 0 = packed half pairs, 1 = four Float32 scalars
 } pc;
 
 layout(location = 0) out vec4 vColor;
@@ -41,15 +43,26 @@ void main() {
     uint px = pixelIdx % pc.width;
     uint py = pixelIdx / pc.width;
 
-    uint baseElement = sIdx * 4u;  // stride = 16 bytes = 4 uints
-    // Alphabetical reader order: AB / GR (halves) / Z / ZBack (floats).
-    uint abPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
-    uint grPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 1u];
-    uint zBits     = bindlessBuffers[pc.samplesSlot].data[baseElement + 2u];
+    uint baseElement = sIdx * pc.strideU;
+    // Alphabetical reader order: A B G R then Z ZBack. Z sits at uint
+    // offset 2 for the half-RGBA layout and at offset 4 for float-RGBA.
+    uint zUintIndex = (pc.rgbaIsFloat == 0u) ? 2u : 4u;
+    float z = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + zUintIndex]);
 
-    float z   = uintBitsToFloat(zBits);
-    vec2  ab  = unpackHalf2x16(abPacked);
-    vec2  gr  = unpackHalf2x16(grPacked);
+    vec4 rgba;
+    if (pc.rgbaIsFloat == 0u) {
+        uint abPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
+        uint grPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 1u];
+        vec2 ab = unpackHalf2x16(abPacked);
+        vec2 gr = unpackHalf2x16(grPacked);
+        rgba = vec4(gr.y, gr.x, ab.y, ab.x);  // R, G, B, A
+    } else {
+        float A = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 0u]);
+        float B = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 1u]);
+        float G = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 2u]);
+        float R = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 3u]);
+        rgba = vec4(R, G, B, A);
+    }
 
     // Map (px, py) into centered [-1, 1] in XY. +Y flipped to match the
     // RH/Y-up world convention (§19) — pixel row 0 is the top of the image,
@@ -61,5 +74,5 @@ void main() {
 
     gl_Position = camera.viewProj * vec4(worldPos, 1.0);
     gl_PointSize = pc.pointSize;
-    vColor = vec4(gr.y, gr.x, ab.y, ab.x);  // R, G, B, A
+    vColor = rgba;
 }

@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "core/Camera.hpp"
+#include "core/DeepLayout.hpp"
 #include "core/Log.hpp"
 #include "gpu/PipelineCache.hpp"
 
@@ -18,7 +19,16 @@ struct PointCloudPC {
     uint32_t height;
     float zScale;
     float pointSize;
+    uint32_t strideU;
+    uint32_t rgbaIsFloat;
 };
+
+// Detect the RGBA scalar format used by the deep payload, by inspecting the
+// layout's per-sample stride. Phase D's layout-flexible shader pulls per-
+// channel byte offsets directly; v1 just distinguishes the two production
+// shapes. Defaults to half-RGBA on layouts we don't recognise so a stray
+// non-standard input still produces *some* output rather than zero.
+bool deepLayoutIsFloatRGBA(const core::DeepLayout& layout) { return layout.stride() == 24; }
 
 }  // namespace
 
@@ -294,6 +304,7 @@ void PointCloudPass::record(VkCommandBuffer cmd, const ResourceRef::DeepRef& dee
                             nullptr);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
+    const bool rgbaIsFloat = deep.layout && deepLayoutIsFloatRGBA(*deep.layout);
     PointCloudPC pcData{};
     pcData.samplesSlot = deep.samples.bindlessSlot;
     pcData.sampleToPixelSlot = deep.sampleToPixel.bindlessSlot;
@@ -301,6 +312,8 @@ void PointCloudPass::record(VkCommandBuffer cmd, const ResourceRef::DeepRef& dee
     pcData.height = deep.height;
     pcData.zScale = zScale;
     pcData.pointSize = pointSize;
+    pcData.strideU = rgbaIsFloat ? 6u : 4u;
+    pcData.rgbaIsFloat = rgbaIsFloat ? 1u : 0u;
     vkCmdPushConstants(cmd, m_pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(pcData),
                        &pcData);
 

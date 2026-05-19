@@ -392,30 +392,43 @@ void DeepFlattenNode::markRequiredTiles(const Region& requestedRegion,
 
 namespace {
 
-// v1 layout check: OpenEXR enumerates header channels alphabetically, so
-// `DeepReader` builds layouts in that order. For the standard 6-channel
-// deep EXR (`A, B, G, R` half + `Z, ZBack` float) the offsets are:
-//   A      offset  0  (Float16, 2 bytes)
-//   B      offset  2  (Float16, 2 bytes)
-//   G      offset  4  (Float16, 2 bytes)
-//   R      offset  6  (Float16, 2 bytes)
-//   Z      offset  8  (Float32, 4 bytes)
-//   ZBack  offset 12  (Float32, 4 bytes)
-//   stride          16
+// v1 layout match. OpenEXR enumerates header channels alphabetically, so
+// `DeepReader` builds layouts in that order. We support the two common
+// production variants — both share alphabetical `A B G R Z ZBack` ordering;
+// they differ only in whether RGBA is Float16 (compact, common in
+// game-engine deep) or Float32 (HDR, common in path-traced deep from
+// Arnold / V-Ray / Skewer / etc.).
 //
-// `DeepFlatten.comp` hardcodes these offsets via the corresponding
-// `uintBitsToFloat` / `unpackHalf2x16` reads. Phase D introduces a
-// layout-flexible shader that takes per-channel byte offsets via push
-// constants — at that point this check goes away.
-bool layoutMatchesV1Flatten(const core::DeepLayout& layout) {
-    if (layout.stride() != 16) return false;
-    if (layout.byteOffset("A") != 0) return false;
-    if (layout.byteOffset("B") != 2) return false;
-    if (layout.byteOffset("G") != 4) return false;
-    if (layout.byteOffset("R") != 6) return false;
-    if (layout.byteOffset("Z") != 8) return false;
-    if (layout.byteOffset("ZBack") != 12) return false;
-    return true;
+//   Half RGBA:  A0 B2 G4 R6 Z8 ZBack12, stride 16
+//   Float RGBA: A0 B4 G8 R12 Z16 ZBack20, stride 24
+//
+// Phase D generalises this to a layout-flexible shader keyed off arbitrary
+// per-channel byte offsets via push constants — at that point this check
+// shrinks to "does the layout name the required channels" and the
+// per-format branch disappears.
+enum class V1FlattenFormat {
+    Unsupported = 0,
+    HalfRGBA = 1,
+    FloatRGBA = 2,
+};
+
+V1FlattenFormat detectV1FlattenFormat(const core::DeepLayout& layout) {
+    if (layout.findChannel("A") < 0 || layout.findChannel("B") < 0 || layout.findChannel("G") < 0 ||
+        layout.findChannel("R") < 0 || layout.findChannel("Z") < 0 ||
+        layout.findChannel("ZBack") < 0) {
+        return V1FlattenFormat::Unsupported;
+    }
+    if (layout.stride() == 16 && layout.byteOffset("A") == 0 && layout.byteOffset("B") == 2 &&
+        layout.byteOffset("G") == 4 && layout.byteOffset("R") == 6 && layout.byteOffset("Z") == 8 &&
+        layout.byteOffset("ZBack") == 12) {
+        return V1FlattenFormat::HalfRGBA;
+    }
+    if (layout.stride() == 24 && layout.byteOffset("A") == 0 && layout.byteOffset("B") == 4 &&
+        layout.byteOffset("G") == 8 && layout.byteOffset("R") == 12 &&
+        layout.byteOffset("Z") == 16 && layout.byteOffset("ZBack") == 20) {
+        return V1FlattenFormat::FloatRGBA;
+    }
+    return V1FlattenFormat::Unsupported;
 }
 
 }  // namespace
@@ -433,10 +446,11 @@ void DeepFlattenNode::execute(EvaluationContext& ctx, const Region& region) {
         return;
     }
 
-    if (!layoutMatchesV1Flatten(*src.layout)) {
+    const V1FlattenFormat fmt = detectV1FlattenFormat(*src.layout);
+    if (fmt == V1FlattenFormat::Unsupported) {
         log::warn(
             "DeepFlattenNode: input layout doesn't match the v1 standard "
-            "(Z + ZBack + RGBA half, stride 16) — skipping dispatch");
+            "(A B G R Z ZBack, half or float RGBA) — skipping dispatch");
         ctx.renderCache->store(outputs[0], region, {});
         return;
     }
@@ -448,7 +462,9 @@ void DeepFlattenNode::execute(EvaluationContext& ctx, const Region& region) {
         return;
     }
 
-    ctx.tasks.push_back(buildDeepFlattenTask(ctx, src, out, "DeepFlattenNode.composite"));
+    const bool rgbaIsFloat = (fmt == V1FlattenFormat::FloatRGBA);
+    ctx.tasks.push_back(
+        buildDeepFlattenTask(ctx, src, out, rgbaIsFloat, "DeepFlattenNode.composite"));
     ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(out));
 }
 

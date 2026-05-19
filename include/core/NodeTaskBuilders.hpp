@@ -18,11 +18,11 @@ gpu::ComputeTask buildPassthroughTask(EvaluationContext& ctx, gpu::ImageHandle i
                                       gpu::ImageHandle out, const char* label);
 
 // Records a DeepFlatten.comp dispatch that walks the deep payload's samples
-// and composites them front-to-back into `out`. v1 hardcodes the standard
-// `Z + ZBack + RGBA-half` layout (stride = 16 bytes); the layout argument
-// is carried for future flexibility but only validated as the expected
-// shape today.
+// and composites them front-to-back into `out`. v1 supports two layouts
+// (both alphabetical `A B G R Z ZBack`): half-RGBA stride 16 and
+// float-RGBA stride 24. `rgbaIsFloat` picks which path the shader takes;
+// the caller derives it from the layout (see `detectV1FlattenFormat`).
 gpu::ComputeTask buildDeepFlattenTask(EvaluationContext& ctx, const gpu::ResourceRef::DeepRef& src,
-                                      gpu::ImageHandle out, const char* label);
+                                      gpu::ImageHandle out, bool rgbaIsFloat, const char* label);
 
 }  // namespace loom::core

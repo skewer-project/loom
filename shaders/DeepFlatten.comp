@@ -1,13 +1,26 @@
 // DeepFlatten — per-pixel front-to-back deep composite into an RGBA32F image.
 //
-// v1 hardcodes the standard deep-EXR layout described in docs/CONVENTIONS.md
-// §19. OpenEXR enumerates header channels alphabetically, so the per-sample
-// record (stride 16 bytes / 4 uints) is laid out as:
+// v1 supports the two common deep-EXR layouts produced by realistic
+// renderers. OpenEXR enumerates header channels alphabetically, so the
+// per-sample record always lays out as `A B G R Z ZBack` (or subsets).
+// The variants differ only in the RGBA scalar type:
 //
-//   uint[0]  = A/B     (two Float16 halves: low = A, high = B)
-//   uint[1]  = G/R     (two Float16 halves: low = G, high = R)
-//   uint[2]  = Z       (Float32; sample-sort ordering, assumed pre-sorted)
-//   uint[3]  = ZBack   (Float32; unused by flatten)
+//   Float16 RGBA (stride 16 / 4 uints):
+//     uint[0]  = A/B     (two Float16 halves: low = A, high = B)
+//     uint[1]  = G/R     (two Float16 halves: low = G, high = R)
+//     uint[2]  = Z       (Float32; sort ordering, assumed pre-sorted)
+//     uint[3]  = ZBack   (Float32; unused by flatten)
+//
+//   Float32 RGBA (stride 24 / 6 uints):
+//     uint[0]  = A   (Float32)
+//     uint[1]  = B   (Float32)
+//     uint[2]  = G   (Float32)
+//     uint[3]  = R   (Float32)
+//     uint[4]  = Z   (Float32; unused by flatten)
+//     uint[5]  = ZBack (Float32; unused by flatten)
+//
+// `rgbaIsFloat` + `strideU` push constants drive the branch. Phase D
+// generalises this to arbitrary per-channel byte offsets.
 //
 // DeepFlattenNode validates the input `DeepLayout` at evaluation time and
 // refuses to dispatch if the layout doesn't match. Phase D will add a
@@ -37,6 +50,8 @@ layout(push_constant) uniform PushConstants {
     uint outputSlot;
     uint width;
     uint height;
+    uint strideU;       // sample stride measured in uints (4 for half, 6 for float)
+    uint rgbaIsFloat;   // 0 = packed half pairs, 1 = four Float32 scalars
 } pc;
 
 void main() {
@@ -51,19 +66,27 @@ void main() {
     float remaining = 1.0;
 
     for (uint i = 0u; i < count; ++i) {
-        uint baseElement = (baseOff + i) * 4u;  // stride = 16 bytes = 4 uints
+        uint baseElement = (baseOff + i) * pc.strideU;
 
-        // Alphabetical channel order from the reader: A, B, G, R (Float16),
-        // then Z, ZBack (Float32). The first two uints carry RGBA halves
-        // packed AB / GR; unpackHalf2x16 returns vec2(low16, high16).
-        uint abPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
-        uint grPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 1u];
-
-        vec2 ab = unpackHalf2x16(abPacked);
-        vec2 gr = unpackHalf2x16(grPacked);
-
-        vec3  rgb = vec3(gr.y, gr.x, ab.y);  // R, G, B
-        float a   = ab.x;                    // A
+        vec3  rgb;
+        float a;
+        if (pc.rgbaIsFloat == 0u) {
+            // Float16 RGBA: AB / GR packed as half2 in uint[0] / uint[1].
+            uint abPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
+            uint grPacked = bindlessBuffers[pc.samplesSlot].data[baseElement + 1u];
+            vec2 ab = unpackHalf2x16(abPacked);
+            vec2 gr = unpackHalf2x16(grPacked);
+            rgb = vec3(gr.y, gr.x, ab.y);  // R, G, B
+            a   = ab.x;                    // A
+        } else {
+            // Float32 RGBA: one scalar per uint, alphabetical A B G R.
+            float A = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 0u]);
+            float B = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 1u]);
+            float G = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 2u]);
+            float R = uintBitsToFloat(bindlessBuffers[pc.samplesSlot].data[baseElement + 3u]);
+            rgb = vec3(R, G, B);
+            a   = A;
+        }
 
         // Premultiplied "over" composite. `rgb` is already premultiplied
         // (the channel-naming spec mandates this); see §19.
