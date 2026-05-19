@@ -8,7 +8,22 @@
 #include "imgui.h"
 #include "vk_mem_alloc.h"
 
+namespace loom::core {
+class Camera;
+}
+
 namespace loom::ui {
+
+// Which renderer drives the viewport panel for this frame.
+//   - Flat2D — the existing DisplayPass path: a viewer ImageHandle gets
+//     tone-mapped + display-encoded into the viewport image.
+//   - PointCloud3D — Phase B.5's PointCloudPass: the upstream deep payload
+//     gets rasterised as a depth-tested per-sample point cloud, with the
+//     orbit camera providing view/proj.
+enum class ViewportMode : uint8_t {
+    Flat2D = 0,
+    PointCloud3D = 1,
+};
 
 struct ImGuiRendererCreateInfo {
     GLFWwindow* window;
@@ -41,13 +56,20 @@ class ImGuiRenderer {
     void shutdown();
 
     // Establishes a fullscreen dockspace and generates the default layout
-    // if no persistent state exists in imgui.ini.
-    void drawDockspace();
+    // if no persistent state exists in imgui.ini. Optionally accepts a
+    // pointer to the engine `Camera`: when supplied, the viewport mode
+    // dropdown is drawn in the panel header and mouse drag / scroll over
+    // the viewport region drive the camera's orbit / zoom. Pass `nullptr`
+    // for the existing flat-only behaviour.
+    void drawDockspace(core::Camera* orbitCamera = nullptr);
 
     ImVec2 getViewportSize() const { return m_viewportSize; }
 
     VkImage getViewportImage() const { return m_viewportImage; }
     VkImageView getViewportImageView() const { return m_viewportImageView; }
+
+    ViewportMode getViewportMode() const { return m_viewportMode; }
+    void setViewportMode(ViewportMode mode) { m_viewportMode = mode; }
 
   private:
     void createSampler();
@@ -66,6 +88,18 @@ class ImGuiRenderer {
     VkImage m_viewportImage = VK_NULL_HANDLE;
     VkImageView m_viewportImageView = VK_NULL_HANDLE;
     VmaAllocation m_viewportAllocation = VK_NULL_HANDLE;
+
+    ViewportMode m_viewportMode = ViewportMode::Flat2D;
+
+    // Orbit-camera state. Spherical coordinates around the camera target.
+    // Initialised lazily on first mutation so unedited cameras keep their
+    // explicit `setPosition` / `setTarget` configuration.
+    void applyOrbitInput(core::Camera& camera);
+
+    bool m_orbitInitialised = false;
+    float m_orbitYaw = 0.0f;     // radians, around world +Y
+    float m_orbitPitch = 0.0f;   // radians, around camera-right
+    float m_orbitRadius = 3.0f;  // distance from target, meters
 };
 
 }  // namespace loom::ui

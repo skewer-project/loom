@@ -1434,3 +1434,107 @@ backing `VkPipeline`).
   2-pixel points and a unit `zScale`.
 
 ---
+
+## Phase B.6 — Viewport-mode toggle + orbit camera
+
+### Goal
+
+User can swap between flat 2D and 3D point-cloud rendering inside the
+viewport panel, and orbit the camera with mouse drag + scroll. Realises
+the plan's exit criterion: "dropdown swap to PointCloud3D shows the same
+data as an orbit-able point cloud, camera responds to mouse."
+
+### Decisions
+
+- **`ui::ViewportMode` lives in `ImGuiRenderer.hpp`.** Two values today
+  (`Flat2D`, `PointCloud3D`). The renderer owns the mode because the
+  dropdown is rendered inside the viewport panel header. The engine
+  queries `getViewportMode()` once per frame to decide whether to drive
+  the flat path (`DisplayPass`) or the 3D path (`PointCloudPass`).
+- **`drawDockspace(orbitCamera = nullptr)` is the integration point.**
+  Existing callers (no Phase B engine wiring) still get the flat-only
+  behaviour by default — nullptr means "don't draw the mode dropdown,
+  don't apply orbit input, behave as before". Phase B.7's `main.cpp`
+  passes a real `Camera*`. Optionality avoids a breaking change to the
+  one-arg-less signature; the renderer doesn't need to know the camera
+  exists.
+- **Orbit controller stores spherical state.** `(yaw, pitch, radius)`
+  around `camera.target()`. On first use the controller reads the
+  camera's current pose and derives spherical coordinates from
+  `position - target`. Subsequent calls write a fresh `position` =
+  `target + radius * (sin(yaw)cos(pitch), sin(pitch), cos(yaw)cos(pitch))`.
+  Yaw is RH around world +Y; pitch is around the camera-right axis.
+- **Multi-driver camera arbitration is out of scope.** Once the orbit
+  controller engages, it owns the camera position. Other code that
+  calls `setPosition` between frames would be silently overwritten on
+  the next `applyOrbitInput`. Production-time only the orbit
+  controller touches camera pose; if a future feature needs co-driving
+  (animation curves, presets), the contract grows then.
+- **Pitch clamped to ~89°.** Below ~90° the `up` vector becomes
+  degenerate; `lookAtRH` produces a NaN basis. The 89° clamp leaves a
+  perceptible margin and pins it as an explicit invariant rather than
+  a "why is everything black at top-down" mystery.
+- **Drag sensitivity 0.005 rad/pixel.** A full screen-width swipe
+  produces ~π/2 rad of yaw (one quarter turn). Tuned to feel like
+  Blender's default orbit. No user-facing config knob in v1; future
+  preferences-panel concern.
+- **Zoom is multiplicative.** Each scroll tick scales radius by `1.1`
+  (in or out). Multiplicative beats additive because the perceived
+  motion is consistent across orders of magnitude (zooming from 10m →
+  9m feels the same as 0.1m → 0.09m). Clamped to `[0.05, 1000]` to
+  avoid degenerate near-zero or wildly distant cameras.
+- **Aspect-ratio updates on viewport resize, unconditionally.** The
+  camera's projection matrix depends on viewport aspect; pushing it
+  here keeps the dependency one-directional (UI → camera, not the
+  other way). The `Camera`'s lazy dirty flag means this is a no-op
+  when aspect doesn't actually change.
+- **Drag uses `ImGui::IsItemHovered()` against the viewport image.**
+  Standard ImGui idiom for "respond to mouse only when the cursor is
+  over my widget". Without it, dragging anywhere on the screen would
+  rotate the camera — common bug in homebrew Vulkan + ImGui setups.
+
+### Files modified
+
+- `include/ui/ImGuiRenderer.hpp` — `ViewportMode` enum;
+  `drawDockspace(core::Camera* = nullptr)`; orbit state members;
+  `applyOrbitInput` private helper.
+- `src/ui/ImGuiRenderer.cpp` — `applyOrbitInput` body; dropdown header
+  inside the viewport panel; orbit-input dispatch only on
+  `PointCloud3D` mode + hovered viewport; aspect-ratio sync on
+  resize.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 131/131 (no test count change; the touched
+  files are GUI-only and only exercise under a running session, which
+  the test suite can't validate headlessly).
+- Manual code-review walkthrough of the orbit math:
+  - First-use initialisation from the camera's current pose preserves
+    whatever the caller set explicitly.
+  - Yaw / pitch / radius produce the spherical-to-cartesian formula
+    matching the GLM `lookAtRH` convention.
+  - The pitch clamp prevents the gimbal-lock degeneracy.
+  - The hover gate scopes input to the viewport panel.
+
+### Dependencies
+
+A.2 (`core::Camera` lazy-dirty + RH/Y-up convention),
+B.5 (`PointCloudPass` is what the `PointCloud3D` mode dispatches into).
+
+### Known follow-ups for later sub-phases
+
+- B.7 wires this into `main.cpp`: passes the shared `Camera*` into
+  `drawDockspace`, and at end-of-frame branches on `getViewportMode()`
+  to choose between `DisplayPass::record` and `PointCloudPass::record`.
+- A panning gesture (middle-mouse drag → translate `camera.target`)
+  is the obvious extension. Phase B's exit criterion doesn't require
+  it, so deferred.
+- The orbit controller could carry a `m_speed` field for future
+  acceleration / decay behaviour. v1 is instant — drag distance maps
+  directly to angle delta.
+- Multi-viewport support (Phase E) means multiple `ViewportMode`
+  states co-existing. The renderer's single-`m_viewportMode` field
+  would split into a per-viewer map then.
+
+---

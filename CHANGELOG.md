@@ -76,6 +76,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `shaders/PointCloud.{vert,frag}` — v1 height-field point-cloud shaders.
 - `gpu::ResourceRef::DeepRef` carries `sampleToPixel` (per-sample pixel
   ancestry) and `totalSamples` so the vertex shader is `O(1)` per draw.
+- `ui::ViewportMode` enum (`Flat2D` / `PointCloud3D`) with dropdown in
+  the viewport panel header.
+- Orbit-camera controller in `ImGuiRenderer`: mouse drag → yaw/pitch,
+  scroll → multiplicative zoom. Viewport resize syncs aspect ratio.
 
 ### Changed
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours

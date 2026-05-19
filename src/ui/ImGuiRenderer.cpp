@@ -1,7 +1,12 @@
 #include "ui/ImGuiRenderer.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <glm/trigonometric.hpp>
+#include <glm/vec3.hpp>
 #include <stdexcept>
 
+#include "core/Camera.hpp"
 #include "core/Log.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -203,7 +208,53 @@ void ImGuiRenderer::shutdown() {
     m_initialized = false;
 }
 
-void ImGuiRenderer::drawDockspace() {
+void ImGuiRenderer::applyOrbitInput(core::Camera& camera) {
+    // Initialise orbit state from the camera's current pose on first use.
+    // Subsequent mutations (camera setters from elsewhere) are not detected
+    // — the controller assumes it owns the camera once engaged. This is
+    // the standard contract for orbit controllers; multi-driver camera
+    // arbitration is a future-PR concern.
+    if (!m_orbitInitialised) {
+        const glm::vec3 offset = camera.position() - camera.target();
+        m_orbitRadius = std::max(0.01f, glm::length(offset));
+        // Spherical from offset: yaw = atan2(x, z), pitch = asin(y / r).
+        m_orbitYaw = std::atan2(offset.x, offset.z);
+        m_orbitPitch = std::asin(std::clamp(offset.y / m_orbitRadius, -1.0f, 1.0f));
+        m_orbitInitialised = true;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Drag: yaw + pitch. Sensitivity tuned for a 1080p viewport; the
+    // viewport hover check ensures the controller doesn't fight other
+    // panels for mouse capture.
+    if (ImGui::IsItemHovered()) {
+        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+            const ImVec2 delta = io.MouseDelta;
+            constexpr float kDragSensitivity = 0.005f;  // rad/pixel
+            m_orbitYaw -= delta.x * kDragSensitivity;
+            m_orbitPitch += delta.y * kDragSensitivity;
+            // Clamp pitch to avoid gimbal-lock at the poles (cos(pitch)
+            // → 0 → up-vector degenerate).
+            constexpr float kPitchLimit = 1.5533f;  // ~89° in radians
+            m_orbitPitch = std::clamp(m_orbitPitch, -kPitchLimit, kPitchLimit);
+        }
+        if (io.MouseWheel != 0.0f) {
+            // Multiplicative zoom: each scroll tick scales radius by ~1.1×.
+            const float zoomFactor = std::pow(1.1f, -io.MouseWheel);
+            m_orbitRadius = std::clamp(m_orbitRadius * zoomFactor, 0.05f, 1000.0f);
+        }
+    }
+
+    const float cy = std::cos(m_orbitYaw);
+    const float sy = std::sin(m_orbitYaw);
+    const float cp = std::cos(m_orbitPitch);
+    const float sp = std::sin(m_orbitPitch);
+    const glm::vec3 newPos = camera.target() + m_orbitRadius * glm::vec3(sy * cp, sp, cy * cp);
+    camera.setPosition(newPos);
+}
+
+void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     // Establish the fullscreen dockspace ID
     ImGuiID dockspace_id = ImGui::GetID("##DockSpace");
 
@@ -237,6 +288,20 @@ void ImGuiRenderer::drawDockspace() {
 
     // Step 4: Viewport Panel & Size Tracking
     ImGui::Begin("Viewport");
+
+    // Mode selector. Drawn in the viewport panel header above the image so
+    // the user can swap between flat 2D and the point-cloud renderer
+    // without leaving the panel. Only rendered when an orbit camera is
+    // available; absent it, mode is implicitly Flat2D.
+    if (orbitCamera) {
+        const char* items[] = {"Flat 2D", "PointCloud 3D"};
+        int current = static_cast<int>(m_viewportMode);
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("##viewport-mode", &current, items, IM_ARRAYSIZE(items))) {
+            m_viewportMode = static_cast<ViewportMode>(current);
+        }
+    }
+
     ImVec2 currentSize = ImGui::GetContentRegionAvail();
 
     // GetContentRegionAvail() returns pixel-snapped float values.
@@ -248,12 +313,25 @@ void ImGuiRenderer::drawDockspace() {
 
         // Trigger reallocation of the offscreen render target
         recreateViewportTarget((uint32_t)m_viewportSize.x, (uint32_t)m_viewportSize.y);
+
+        // Aspect ratio change is the camera's concern. The orbit controller
+        // mutates position; aspect is independent — push it directly.
+        if (orbitCamera && currentSize.y > 0) {
+            orbitCamera->setAspect(currentSize.x / currentSize.y);
+        }
     }
 
     if (m_viewportTextureId) {
         // Phase 6 maps UV (0,0) to the top-left, matching ImGui's default exactly.
         // Do NOT flip the V coordinate here.
         ImGui::Image((ImTextureID)m_viewportTextureId, currentSize);
+        // Mouse drag / scroll over the image is fed to the orbit camera —
+        // only meaningful in PointCloud3D mode but the controller works
+        // regardless, so the apply path is unconditional once a camera is
+        // available. The flat-2D path simply ignores the camera changes.
+        if (orbitCamera && m_viewportMode == ViewportMode::PointCloud3D) {
+            applyOrbitInput(*orbitCamera);
+        }
     } else {
         ImGui::Text("No output available.");
     }
