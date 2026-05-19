@@ -24,16 +24,24 @@ BindlessHeap::BindlessHeap(VkDevice device) : m_device(device) {
     }
 
     // 2. Create Descriptor Set Layout
+    // Stage flags cover every shader stage that reads from the bindless heap.
+    // PointCloud.vert (B.5) reads storage buffers in the vertex stage; the
+    // existing compute + fragment paths read both bindings. Widening both
+    // bindings to all three stages is conservative and free — descriptor
+    // visibility is a per-stage gate, not a runtime cost.
+    constexpr VkShaderStageFlags kBindlessStages =
+        VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutBinding bindings[2]{};
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     bindings[0].descriptorCount = MAX_RESOURCES;
-    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[0].stageFlags = kBindlessStages;
 
     bindings[1].binding = 1;
     bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     bindings[1].descriptorCount = MAX_RESOURCES;
-    bindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].stageFlags = kBindlessStages;
 
     VkDescriptorBindingFlags bindingFlags[] = {
         VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT,

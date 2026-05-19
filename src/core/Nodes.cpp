@@ -392,18 +392,29 @@ void DeepFlattenNode::markRequiredTiles(const Region& requestedRegion,
 
 namespace {
 
-// v1 layout check: Z (Float32, offset 0) + ZBack (Float32, offset 4) +
-// RGBA (Float16, offset 8). Stride 16. The shader hardcodes these offsets;
-// any mismatch produces wrong-looking output silently. Phase D introduces
-// a layout-flexible shader keyed off DeepLayout offsets.
+// v1 layout check: OpenEXR enumerates header channels alphabetically, so
+// `DeepReader` builds layouts in that order. For the standard 6-channel
+// deep EXR (`A, B, G, R` half + `Z, ZBack` float) the offsets are:
+//   A      offset  0  (Float16, 2 bytes)
+//   B      offset  2  (Float16, 2 bytes)
+//   G      offset  4  (Float16, 2 bytes)
+//   R      offset  6  (Float16, 2 bytes)
+//   Z      offset  8  (Float32, 4 bytes)
+//   ZBack  offset 12  (Float32, 4 bytes)
+//   stride          16
+//
+// `DeepFlatten.comp` hardcodes these offsets via the corresponding
+// `uintBitsToFloat` / `unpackHalf2x16` reads. Phase D introduces a
+// layout-flexible shader that takes per-channel byte offsets via push
+// constants — at that point this check goes away.
 bool layoutMatchesV1Flatten(const core::DeepLayout& layout) {
     if (layout.stride() != 16) return false;
-    if (layout.byteOffset("Z") != 0) return false;
-    if (layout.byteOffset("ZBack") != 4) return false;
-    if (layout.byteOffset("R") != 8) return false;
-    if (layout.byteOffset("G") != 10) return false;
-    if (layout.byteOffset("B") != 12) return false;
-    if (layout.byteOffset("A") != 14) return false;
+    if (layout.byteOffset("A") != 0) return false;
+    if (layout.byteOffset("B") != 2) return false;
+    if (layout.byteOffset("G") != 4) return false;
+    if (layout.byteOffset("R") != 6) return false;
+    if (layout.byteOffset("Z") != 8) return false;
+    if (layout.byteOffset("ZBack") != 12) return false;
     return true;
 }
 

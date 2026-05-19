@@ -42,13 +42,14 @@ void main() {
     uint py = pixelIdx / pc.width;
 
     uint baseElement = sIdx * 4u;  // stride = 16 bytes = 4 uints
-    uint zBits     = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
-    uint rgPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 2u];
-    uint baPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 3u];
+    // Alphabetical reader order: AB / GR (halves) / Z / ZBack (floats).
+    uint abPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 0u];
+    uint grPacked  = bindlessBuffers[pc.samplesSlot].data[baseElement + 1u];
+    uint zBits     = bindlessBuffers[pc.samplesSlot].data[baseElement + 2u];
 
     float z   = uintBitsToFloat(zBits);
-    vec2  rg  = unpackHalf2x16(rgPacked);
-    vec2  ba  = unpackHalf2x16(baPacked);
+    vec2  ab  = unpackHalf2x16(abPacked);
+    vec2  gr  = unpackHalf2x16(grPacked);
 
     // Map (px, py) into centered [-1, 1] in XY. +Y flipped to match the
     // RH/Y-up world convention (§19) — pixel row 0 is the top of the image,
@@ -60,5 +61,5 @@ void main() {
 
     gl_Position = camera.viewProj * vec4(worldPos, 1.0);
     gl_PointSize = pc.pointSize;
-    vColor = vec4(rg.x, rg.y, ba.x, ba.y);
+    vColor = vec4(gr.y, gr.x, ab.y, ab.x);  // R, G, B, A
 }
