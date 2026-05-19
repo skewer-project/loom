@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <glm/vec3.hpp>
+
 #include "gpu/ResourceHandles.hpp"
 
 namespace gpu = loom::gpu;
@@ -49,6 +51,33 @@ TEST(ResourceRefTest, DeepSlotReservedButZeroByDefault) {
     EXPECT_FALSE(ref.deep.offsetImage.isValid());
     EXPECT_FALSE(ref.deep.samples.isValid());
     EXPECT_EQ(ref.deep.layout, nullptr);
+}
+
+TEST(ResourceRefTest, FromCameraCarriesPayload) {
+    gpu::ResourceRef::CameraRef c;
+    c.eyePos = glm::vec3(1.0f, 2.0f, 3.0f);
+    c.nearPlane = 0.5f;
+    c.farPlane = 250.0f;
+    c.fovY = 0.7853981f;  // 45° in radians
+
+    auto ref = gpu::ResourceRef::fromCamera(c);
+    EXPECT_EQ(ref.kind, gpu::ResourceRef::Kind::Camera);
+    EXPECT_TRUE(ref.isValid());
+    EXPECT_FLOAT_EQ(ref.camera.eyePos.x, 1.0f);
+    EXPECT_FLOAT_EQ(ref.camera.eyePos.y, 2.0f);
+    EXPECT_FLOAT_EQ(ref.camera.eyePos.z, 3.0f);
+    EXPECT_FLOAT_EQ(ref.camera.nearPlane, 0.5f);
+    EXPECT_FLOAT_EQ(ref.camera.farPlane, 250.0f);
+    EXPECT_FLOAT_EQ(ref.camera.fovY, 0.7853981f);
+}
+
+TEST(ResourceRefTest, KindCameraReservedButZeroByDefault) {
+    gpu::ResourceRef ref;
+    ref.kind = gpu::ResourceRef::Kind::Camera;
+    EXPECT_TRUE(ref.isValid());
+    EXPECT_FLOAT_EQ(ref.camera.eyePos.x, 0.0f);
+    EXPECT_FLOAT_EQ(ref.camera.nearPlane, 0.1f);
+    EXPECT_FLOAT_EQ(ref.camera.farPlane, 100.0f);
 }
 
 TEST(ResourceRefTest, FromDeepCarriesPayload) {

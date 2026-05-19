@@ -100,6 +100,15 @@ gpu::ResourceRef::DeepRef Node::pullDeepInput(EvaluationContext& ctx, const Regi
     return ref.deep;
 }
 
+gpu::ResourceRef::CameraRef Node::pullCameraInput(EvaluationContext& ctx, const Region& region,
+                                                  uint32_t inputIndex) {
+    gpu::ResourceRef ref = pullInput(ctx, region, inputIndex);
+    if (!ref.isValid()) return {};
+    LOOM_ASSERT(ref.kind == gpu::ResourceRef::Kind::Camera,
+                "pullCameraInput called on a non-camera pin payload");
+    return ref.camera;
+}
+
 // -----------------------------------------------------------------------------
 // ConstantNode
 // -----------------------------------------------------------------------------

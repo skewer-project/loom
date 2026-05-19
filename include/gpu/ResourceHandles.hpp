@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <glm/mat4x4.hpp>
+#include <glm/vec3.hpp>
 
 #include "core/AABB.hpp"
 
@@ -42,7 +44,7 @@ struct BufferHandle {
 // node types (geometry buffers, motion vectors, OpenEXR deep compositing) can
 // land without touching call sites.
 struct ResourceRef {
-    enum class Kind : uint8_t { None, Image, Buffer, Deep };
+    enum class Kind : uint8_t { None, Image, Buffer, Deep, Camera };
     Kind kind = Kind::None;
 
     ImageHandle image;
@@ -94,6 +96,21 @@ struct ResourceRef {
         core::AABB sceneBounds{};
     } deep;
 
+    // CameraRef is a value-type snapshot of a `core::Camera`'s state. Carried
+    // through the graph by `Kind::Camera` pins (typically produced by
+    // `core::CameraNode` and consumed by 3D renderers such as
+    // `PointCloudRenderNode`). The snapshot model avoids pointer-lifetime
+    // questions through `RenderCache` — same shape as `DeepRef`. All fields
+    // are scene-referred (RH / Y-up / meters per CONVENTIONS §19).
+    struct CameraRef {
+        glm::mat4 view{1.0f};
+        glm::mat4 proj{1.0f};
+        glm::vec3 eyePos{0.0f};
+        float nearPlane = 0.1f;
+        float farPlane = 100.0f;
+        float fovY = 1.047197551f;  // 60° in radians
+    } camera;
+
     [[nodiscard]] bool isValid() const { return kind != Kind::None; }
 
     [[nodiscard]] static ResourceRef fromImage(ImageHandle h) {
@@ -112,6 +129,12 @@ struct ResourceRef {
         ResourceRef r;
         r.kind = Kind::Deep;
         r.deep = d;
+        return r;
+    }
+    [[nodiscard]] static ResourceRef fromCamera(CameraRef c) {
+        ResourceRef r;
+        r.kind = Kind::Camera;
+        r.camera = c;
         return r;
     }
 };

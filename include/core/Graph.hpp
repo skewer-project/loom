@@ -288,6 +288,9 @@ class Graph {
             case PinType::DeepBuffer:
                 label = "[Deep] ";
                 break;
+            case PinType::Camera:
+                label = "[Cam] ";
+                break;
         }
 
         // Simple heuristic for labels if not explicitly named

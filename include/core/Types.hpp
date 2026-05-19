@@ -29,12 +29,23 @@ inline uint32_t decodeIndex(uint64_t id) {
 }
 
 enum class PinDirection { Input, Output };
-// PinType is the edit-time type checked by canAddLink. PinType::Float
-// corresponds to ResourceRef::Kind::Image at runtime (the name is historical
-// — these pins carry image handles, not float scalars). PinType::DeepBuffer
-// corresponds to ResourceRef::Kind::Deep.
-enum class PinType { Float, DeepBuffer };
-enum class NodeType { Constant, Merge, Viewer, Passthrough, DeepEXRRead, DeepFlatten };
+// PinType is the edit-time type checked by canAddLink. The mapping to
+// runtime `ResourceRef::Kind`:
+//   - PinType::Float       → Kind::Image  (the name is historical — these
+//                            pins carry image handles, not float scalars)
+//   - PinType::DeepBuffer  → Kind::Deep
+//   - PinType::Camera      → Kind::Camera
+enum class PinType { Float, DeepBuffer, Camera };
+enum class NodeType {
+    Constant,
+    Merge,
+    Viewer,
+    Passthrough,
+    DeepEXRRead,
+    DeepFlatten,
+    Camera,
+    PointCloudRender,
+};
 
 // Declarative pin spec returned by Node::getPinSchema(). Replaces the
 // centralised switch on NodeType — adding a new node type is now a single
@@ -176,6 +187,13 @@ struct Node {
     // consumers such as `DeepFlattenNode` and `DeepMergeNode`.
     gpu::ResourceRef::DeepRef pullDeepInput(EvaluationContext& ctx, const Region& region,
                                             uint32_t inputIndex);
+
+    // Typed accessor for camera-pin inputs. Asserts the upstream payload is
+    // `Kind::Camera` and returns the unwrapped `CameraRef`. Used by 3D
+    // renderers (`PointCloudRenderNode`) that need the active view / proj
+    // matrices for the frame.
+    gpu::ResourceRef::CameraRef pullCameraInput(EvaluationContext& ctx, const Region& region,
+                                                uint32_t inputIndex);
 };
 
 }  // namespace loom::core
