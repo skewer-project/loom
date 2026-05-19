@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include "core/AABB.hpp"
+
 namespace loom::core {
 class DeepLayout;
 }
@@ -69,6 +71,17 @@ struct ResourceRef {
     //                     binary search over `offsetImage`. Optional —
     //                     consumers that don't need per-sample pixel
     //                     ancestry can ignore it.
+    //   - `sceneBounds`  — world-space AABB of the deep payload's sample
+    //                     positions. Computed by `gpu::uploadDeepImage`
+    //                     during its CPU-side interleave pass. Drives the
+    //                     viewport's auto-frame (Phase B.8.2) so the
+    //                     orbit camera reads a sensible starting pose
+    //                     regardless of how far the producer placed the
+    //                     scene from the origin. `valid == false` when
+    //                     the payload had no usable position samples
+    //                     (background-sentinel-only file, Float16 Z that
+    //                     v1 can't reduce, etc.). Consumers must check
+    //                     before trusting `center` / `radius`.
     struct DeepRef {
         ImageHandle countImage;
         ImageHandle offsetImage;
@@ -78,6 +91,7 @@ struct ResourceRef {
         uint32_t width = 0;
         uint32_t height = 0;
         uint64_t totalSamples = 0;
+        core::AABB sceneBounds{};
     } deep;
 
     [[nodiscard]] bool isValid() const { return kind != Kind::None; }

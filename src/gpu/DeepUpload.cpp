@@ -1,8 +1,10 @@
 #include "gpu/DeepUpload.hpp"
 
+#include <cmath>
 #include <cstring>
 #include <numeric>
 
+#include "core/AABB.hpp"
 #include "core/Assert.hpp"
 #include "core/DeepLayout.hpp"
 #include "core/Log.hpp"
@@ -23,7 +25,93 @@ ImageSpec countImageSpec(uint32_t width, uint32_t height) {
                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
 }
 
+// Background-sentinel cutoff for Z reduction. Producers (Skewer, others)
+// emit `Z = 1e+10` for "no hit" samples — see docs/CONVENTIONS.md §19. We
+// also discard non-finite values defensively. `1e9` is well below the
+// known sentinel (1e10) and well above any physically plausible scene
+// depth in meters, so it catches the sentinel without clipping real data.
+constexpr float kBackgroundZCutoff = 1.0e9f;
+
+[[nodiscard]] bool isValidSceneZ(float z) noexcept {
+    return std::isfinite(z) && z < kBackgroundZCutoff;
+}
+
 }  // namespace
+
+core::AABB reduceSceneBounds(const io::ParsedDeepImage& src, const core::DeepLayout& layout) {
+    core::AABB out{};
+    const uint64_t totalSamples = src.totalSamples();
+    if (totalSamples == 0) return out;
+
+    const int32_t wpxIdx = layout.findChannel("world_pos.x");
+    const int32_t wpyIdx = layout.findChannel("world_pos.y");
+    const int32_t wpzIdx = layout.findChannel("world_pos.z");
+    const bool hasWorldPos = (wpxIdx >= 0 && wpyIdx >= 0 && wpzIdx >= 0);
+
+    auto isFloat32 = [&](int32_t idx) {
+        return idx >= 0 &&
+               layout.channels()[static_cast<size_t>(idx)].type == core::ChannelType::Float32;
+    };
+
+    if (hasWorldPos && isFloat32(wpxIdx) && isFloat32(wpyIdx) && isFloat32(wpzIdx)) {
+        const auto* xs =
+            reinterpret_cast<const float*>(src.channelData[static_cast<size_t>(wpxIdx)].data());
+        const auto* ys =
+            reinterpret_cast<const float*>(src.channelData[static_cast<size_t>(wpyIdx)].data());
+        const auto* zs =
+            reinterpret_cast<const float*>(src.channelData[static_cast<size_t>(wpzIdx)].data());
+        for (uint64_t s = 0; s < totalSamples; ++s) {
+            const float x = xs[s], y = ys[s], z = zs[s];
+            if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) continue;
+            // Filter background-sentinel hits using the depth as a proxy.
+            // Producers tend to emit the sentinel on _all_ position
+            // channels (1e10, 1e10, 1e10), so any one being above the
+            // cutoff is enough to flag.
+            if (std::abs(x) >= kBackgroundZCutoff || std::abs(y) >= kBackgroundZCutoff ||
+                std::abs(z) >= kBackgroundZCutoff) {
+                continue;
+            }
+            out.expand({x, y, z});
+        }
+        return out;
+    }
+
+    // Fallback path. Front-depth-only synthesis matches `PointCloud.vert`
+    // at `zScale = 1.0`: XY centered in [-1, 1] from pixel index, Z is
+    // negated front depth (RH/Y-up: into-screen is -Z).
+    const int32_t zIdx = layout.findChannel("Z");
+    if (zIdx < 0 || !isFloat32(zIdx)) {
+        if (zIdx < 0) {
+            loom::log::info("uploadDeepImage: no 'Z' channel — sceneBounds left invalid");
+        } else {
+            loom::log::info(
+                "uploadDeepImage: 'Z' is not Float32 — sceneBounds left invalid (v1 "
+                "skips half-Z reduction)");
+        }
+        return out;
+    }
+
+    const auto* zs =
+        reinterpret_cast<const float*>(src.channelData[static_cast<size_t>(zIdx)].data());
+    const float invW = (src.width > 0) ? 1.0f / static_cast<float>(src.width) : 0.0f;
+    const float invH = (src.height > 0) ? 1.0f / static_cast<float>(src.height) : 0.0f;
+    uint64_t cursor = 0;
+    const uint64_t pixels = static_cast<uint64_t>(src.width) * src.height;
+    for (uint64_t p = 0; p < pixels; ++p) {
+        const uint32_t n = src.sampleCounts[p];
+        if (n == 0) continue;
+        const uint32_t px = static_cast<uint32_t>(p % src.width);
+        const uint32_t py = static_cast<uint32_t>(p / src.width);
+        const float fx = ((static_cast<float>(px) + 0.5f) * invW) * 2.0f - 1.0f;
+        const float fy = 1.0f - ((static_cast<float>(py) + 0.5f) * invH) * 2.0f;
+        for (uint32_t s = 0; s < n; ++s, ++cursor) {
+            const float z = zs[cursor];
+            if (!isValidSceneZ(z)) continue;
+            out.expand({fx, fy, -z});
+        }
+    }
+    return out;
+}
 
 ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
                             TransientImagePool& imagePool, TransientBufferPool& bufferPool,
@@ -196,6 +284,11 @@ ResourceRef uploadDeepImage(VkCommandBuffer cmd, StagingArena& staging,
     ref.deep.width = src.width;
     ref.deep.height = src.height;
     ref.deep.totalSamples = totalSamples;
+    // Bounds reduction runs CPU-side on the same SoA data the interleave
+    // pass already touched — no extra GPU work. Folded into the upload
+    // path (rather than computed later from the device buffer) because
+    // host-side access is free here and the alternative is a GPU readback.
+    ref.deep.sceneBounds = reduceSceneBounds(src, layout);
     return ref;
 }
 

@@ -132,3 +132,59 @@ TEST(CameraTest, ChangingAspectDoesNotInvalidateView) {
 
     EXPECT_TRUE(matNear(viewBefore, viewAfter));
 }
+
+TEST(CameraTest, FrameToBoundsRecentersTargetAndPositionsOnPositiveZ) {
+    core::Camera cam;
+    cam.setFovY(glm::radians(60.0f));
+    const glm::vec3 center(10.0f, -5.0f, -13.0f);
+    cam.frameToBounds(center, /*radius=*/2.0f);
+
+    EXPECT_EQ(cam.target(), center);
+    EXPECT_FLOAT_EQ(cam.position().x, center.x);
+    EXPECT_FLOAT_EQ(cam.position().y, center.y);
+    EXPECT_GT(cam.position().z, center.z);
+}
+
+TEST(CameraTest, FrameToBoundsDistanceScalesWithRadius) {
+    // Double the radius → double the framing distance for the same FOV /
+    // padding. Pin the linear relationship so a future refactor that
+    // conflates padding and distance breaks the test.
+    core::Camera cam;
+    cam.setFovY(glm::radians(60.0f));
+
+    cam.frameToBounds(glm::vec3(0.0f), 1.0f);
+    const float dist1 = cam.position().z;
+
+    cam.frameToBounds(glm::vec3(0.0f), 2.0f);
+    const float dist2 = cam.position().z;
+
+    EXPECT_NEAR(dist2, 2.0f * dist1, 1e-4f);
+}
+
+TEST(CameraTest, FrameToBoundsWidensClipPlanes) {
+    // A scene at world Z = -50 with radius 5 should fall inside the post-
+    // framing near / far planes — the original (0.1, 100) defaults would
+    // clip everything.
+    core::Camera cam;
+    cam.frameToBounds(glm::vec3(0.0f, 0.0f, -50.0f), 5.0f);
+
+    EXPECT_LT(cam.nearPlane(), cam.farPlane());
+    // Camera sits at center + (0, 0, distance), so distance = position.z - center.z.
+    const float distance = cam.position().z - cam.target().z;
+    EXPECT_LE(cam.nearPlane(), distance - 5.0f + 1e-3f);  // near pulls inside the sphere
+    EXPECT_GE(cam.farPlane(), distance + 5.0f);           // far past the sphere
+}
+
+TEST(CameraTest, FrameToBoundsIgnoresZeroOrNegativeRadius) {
+    core::Camera cam;
+    const glm::vec3 origPos = cam.position();
+    const glm::vec3 origTgt = cam.target();
+
+    cam.frameToBounds(glm::vec3(100.0f), 0.0f);
+    EXPECT_EQ(cam.position(), origPos);
+    EXPECT_EQ(cam.target(), origTgt);
+
+    cam.frameToBounds(glm::vec3(100.0f), -3.0f);
+    EXPECT_EQ(cam.position(), origPos);
+    EXPECT_EQ(cam.target(), origTgt);
+}

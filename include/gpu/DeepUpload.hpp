@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include "core/AABB.hpp"
 #include "gpu/ResourceHandles.hpp"
 
 namespace loom::core {
@@ -17,6 +18,26 @@ namespace loom::gpu {
 class StagingArena;
 class TransientBufferPool;
 class TransientImagePool;
+
+// Reduce a parsed deep payload to its world-space AABB. Pure CPU work,
+// no Vulkan dependency — exposed alongside `uploadDeepImage` so tests
+// can pin the reduction behaviour without spinning up a GPU device.
+//
+// Behaviour:
+//   - NVS files (layout carries Float32 `world_pos.{x,y,z}`): reduce
+//     over per-sample world position directly. Samples whose position
+//     hits the background sentinel (|x|, |y|, or |z| >= 1e9, or any
+//     non-finite component) are discarded.
+//   - Non-NVS files (only Float32 `Z`): synthesise XYZ to match
+//     `PointCloud.vert`'s height-field rendering — XY in centered
+//     [-1, 1] from pixel index, Z = -frontDepth — and reduce over
+//     that. Same background-Z gate.
+//   - Layout missing the required channels (or Z is not Float32, or
+//     there are no samples): returns an `AABB{}` with `valid = false`.
+//     The caller treats this as "do not auto-frame" — never as a
+//     degenerate zero-extent box at the origin.
+[[nodiscard]] core::AABB reduceSceneBounds(const io::ParsedDeepImage& src,
+                                           const core::DeepLayout& layout);
 
 // Upload a CPU-side parsed deep image to GPU resources:
 //

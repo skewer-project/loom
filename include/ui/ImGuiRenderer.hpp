@@ -71,6 +71,13 @@ class ImGuiRenderer {
     ViewportMode getViewportMode() const { return m_viewportMode; }
     void setViewportMode(ViewportMode mode) { m_viewportMode = mode; }
 
+    // Re-derive orbit state (yaw / pitch / radius) from the camera's
+    // current pose. Call after externally repositioning the camera (e.g.
+    // `Camera::frameToBounds`) so the orbit controller picks the new
+    // pose up cleanly instead of snapping back to its prior orbit state
+    // on the next mouse event.
+    void resyncOrbitFromCamera(const core::Camera& camera);
+
   private:
     void createSampler();
     void recreateViewportTarget(uint32_t width, uint32_t height);

@@ -208,32 +208,40 @@ void ImGuiRenderer::shutdown() {
     m_initialized = false;
 }
 
+void ImGuiRenderer::resyncOrbitFromCamera(const core::Camera& camera) {
+    const glm::vec3 offset = camera.position() - camera.target();
+    m_orbitRadius = std::max(0.01f, glm::length(offset));
+    m_orbitYaw = std::atan2(offset.x, offset.z);
+    m_orbitPitch = std::asin(std::clamp(offset.y / m_orbitRadius, -1.0f, 1.0f));
+    m_orbitInitialised = true;
+}
+
 void ImGuiRenderer::applyOrbitInput(core::Camera& camera) {
     // Initialise orbit state from the camera's current pose on first use.
-    // Subsequent mutations (camera setters from elsewhere) are not detected
-    // — the controller assumes it owns the camera once engaged. This is
-    // the standard contract for orbit controllers; multi-driver camera
-    // arbitration is a future-PR concern.
+    // External setters (e.g. `Camera::frameToBounds` from the main loop's
+    // auto-frame hook) call `resyncOrbitFromCamera` explicitly so the
+    // controller picks up the new pose without losing user-driven yaw /
+    // pitch outside of that hand-off.
     if (!m_orbitInitialised) {
-        const glm::vec3 offset = camera.position() - camera.target();
-        m_orbitRadius = std::max(0.01f, glm::length(offset));
-        // Spherical from offset: yaw = atan2(x, z), pitch = asin(y / r).
-        m_orbitYaw = std::atan2(offset.x, offset.z);
-        m_orbitPitch = std::asin(std::clamp(offset.y / m_orbitRadius, -1.0f, 1.0f));
-        m_orbitInitialised = true;
+        resyncOrbitFromCamera(camera);
     }
 
     ImGuiIO& io = ImGui::GetIO();
 
-    // Drag: yaw + pitch. Sensitivity tuned for a 1080p viewport; the
-    // viewport hover check ensures the controller doesn't fight other
-    // panels for mouse capture.
+    // Drag yaw / pitch: scale sensitivity by `tan(fovY/2)` so a one-screen-
+    // -width drag always produces ~a quarter-turn regardless of zoom level.
+    // The 1.5× factor reproduces the prior 0.005 rad/pixel feel at the
+    // engine's default 60° FOV on a 1080p viewport.
     if (ImGui::IsItemHovered()) {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
             const ImVec2 delta = io.MouseDelta;
-            constexpr float kDragSensitivity = 0.005f;  // rad/pixel
-            m_orbitYaw -= delta.x * kDragSensitivity;
-            m_orbitPitch += delta.y * kDragSensitivity;
+            const float kDragBase = 1.5f * std::tan(0.5f * camera.fovY());
+            // Normalise by viewport height: a full-height vertical drag
+            // always rotates by the same angle regardless of window size.
+            const float viewH = std::max(m_viewportSize.y, 1.0f);
+            const float dragScale = kDragBase / viewH;
+            m_orbitYaw -= delta.x * dragScale;
+            m_orbitPitch += delta.y * dragScale;
             // Clamp pitch to avoid gimbal-lock at the poles (cos(pitch)
             // → 0 → up-vector degenerate).
             constexpr float kPitchLimit = 1.5533f;  // ~89° in radians
@@ -241,8 +249,11 @@ void ImGuiRenderer::applyOrbitInput(core::Camera& camera) {
         }
         if (io.MouseWheel != 0.0f) {
             // Multiplicative zoom: each scroll tick scales radius by ~1.1×.
+            // Scale-invariant by construction — no FOV factor needed.
+            // Upper bound widened to 1e6 so scenes whose bounding sphere
+            // sits a kilometer out from origin remain reachable.
             const float zoomFactor = std::pow(1.1f, -io.MouseWheel);
-            m_orbitRadius = std::clamp(m_orbitRadius * zoomFactor, 0.05f, 1000.0f);
+            m_orbitRadius = std::clamp(m_orbitRadius * zoomFactor, 0.001f, 1.0e6f);
         }
     }
 

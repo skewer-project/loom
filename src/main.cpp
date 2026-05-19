@@ -203,6 +203,12 @@ int main(int argc, char** argv) {
         const loom::core::NodeHandle deepReaderHandle =
             deepPath.empty() ? buildDemoChain(graph) : buildDeepViewChain(graph, deepPath);
 
+        // Tracks the most-recently-auto-framed deep samples buffer. An
+        // invalid handle means "no frame has been taken yet" — the
+        // per-frame check below fires the first auto-frame as soon as a
+        // valid deep payload with non-empty bounds reaches the cache.
+        loom::gpu::BufferHandle lastFramedSamples;
+
         loom::log::info("Loom initialized successfully.");
 
         while (!window.shouldClose()) {
@@ -253,6 +259,28 @@ int main(int argc, char** argv) {
                         node && !node->outputs.empty()) {
                         auto ref = renderCache.retrieve(node->outputs[0], region);
                         if (ref.kind == loom::gpu::ResourceRef::Kind::Deep) deepRef = ref.deep;
+                    }
+                }
+
+                // Auto-frame the camera the first time a valid deep payload
+                // appears, and again whenever the payload's identity
+                // changes (a re-read after edit, an animation frame swap,
+                // ...). Identity is the (`poolIndex`, `generation`) of the
+                // samples buffer — `uploadDeepImage` always acquires a
+                // fresh buffer per call, so the pair flips on every real
+                // re-upload. Skip if the bounds reduction came back
+                // invalid (background-sentinel-only file, half-Z fallback):
+                // the camera keeps its prior pose rather than snapping to
+                // a degenerate fit.
+                if (deepRef.samples.isValid() && deepRef.sceneBounds.valid) {
+                    const bool changed =
+                        (deepRef.samples.poolIndex != lastFramedSamples.poolIndex ||
+                         deepRef.samples.generation != lastFramedSamples.generation);
+                    if (changed) {
+                        camera.frameToBounds(deepRef.sceneBounds.center(),
+                                             deepRef.sceneBounds.radius());
+                        imgui.resyncOrbitFromCamera(camera);
+                        lastFramedSamples = deepRef.samples;
                     }
                 }
 

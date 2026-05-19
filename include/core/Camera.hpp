@@ -80,6 +80,19 @@ class Camera {
     // the cost of one mat4 multiply per frame is below profiling noise.
     [[nodiscard]] glm::mat4 viewProj() const;
 
+    // Reframe the camera to fit a world-space sphere of given center +
+    // radius into the FOV with `padding` headroom (1.0 = exact fit).
+    // The camera ends up at `center + (0, 0, distance)` looking at
+    // `center`; the orbit controller (Phase B.6) picks the pose up
+    // verbatim on its next initialise-from-camera tick. Near / far
+    // planes are widened to comfortably contain the sphere so default
+    // clipping does not hide the geometry.
+    //
+    // No-op if `radius <= 0` — an unbounded or degenerate AABB is the
+    // caller's responsibility (see `core::AABB::valid`). Used by Phase
+    // B.8.2 to auto-frame the first valid deep payload's `sceneBounds`.
+    void frameToBounds(glm::vec3 center, float radius, float padding = 2.5f) noexcept;
+
   private:
     void rebuildIfDirty() const;
 
