@@ -45,6 +45,12 @@ class Graph {
             case NodeType::DeepFlatten:
                 node = std::make_unique<DeepFlattenNode>(nodeHandle, name);
                 break;
+            case NodeType::Camera:
+                node = std::make_unique<CameraNode>(nodeHandle, name);
+                break;
+            case NodeType::PointCloudRender:
+                node = std::make_unique<PointCloudRenderNode>(nodeHandle, name);
+                break;
             default:
                 throw std::runtime_error("Unknown node type");
         }
@@ -444,9 +450,24 @@ class Graph {
                 return "DeepEXRRead";
             case NodeType::DeepFlatten:
                 return "DeepFlatten";
+            case NodeType::Camera:
+                return "Camera";
+            case NodeType::PointCloudRender:
+                return "PointCloudRender";
             default:
                 return "Unknown";
         }
+    }
+
+    // Camera-node lookup. Mirrors `getViewers()`. v1 is single-camera by
+    // convention (CONVENTIONS §21); orbit + auto-frame writes target
+    // `getCameras()[0]`. Multi-camera selection lands with multi-viewer UI.
+    [[nodiscard]] std::vector<NodeHandle> getCameras() const {
+        std::vector<NodeHandle> result;
+        forEachNode([&](NodeHandle h, const Node& node) {
+            if (node.type == NodeType::Camera) result.push_back(h);
+        });
+        return result;
     }
 
     void setupNodePins(Node* node) {

@@ -86,4 +86,57 @@ class DeepFlattenNode : public Node {
     void execute(EvaluationContext& ctx, const Region& region) override;
 };
 
+// Camera-as-node. Pure source: zero input pins, one output pin of type
+// `Kind::Camera`. Materialises a `core::Camera` snapshot from the node's
+// param values each frame and stores the resulting `CameraRef` in the render
+// cache for 3D renderer nodes (`PointCloudRenderNode`) to consume.
+//
+// Params (knob-editable in the node editor, JSON-serialisable):
+//   - `position` (vec3): camera world position.
+//   - `target`   (vec3): point the camera is looking at.
+//   - `fov_y_deg` (float, [5, 150]): vertical field of view in degrees.
+//   - `near`     (float, [0.001, 1000]): near clip plane.
+//   - `far`      (float, [0.01, 100000]): far clip plane.
+//
+// Aspect ratio is auto-derived from `EvaluationContext::requestedExtent`
+// (not a knob) so the camera always matches the active viewport.
+// See docs/CONVENTIONS.md §21 for the camera-as-node pattern.
+class CameraNode : public Node {
+  public:
+    CameraNode(NodeHandle h, std::string n) : Node(h, NodeType::Camera, std::move(n)) {}
+    [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
+    void markRequiredTiles(const Region& requestedRegion,
+                           std::unordered_set<NodeHandle>& activeNodes) override;
+    void execute(EvaluationContext& ctx, const Region& region) override;
+};
+
+// Renders a deep payload as a depth-tested point cloud, driven by an
+// upstream `CameraNode`. Input pins: `Kind::Deep` + `Kind::Camera`. Output
+// pin: `Kind::Image` (RGBA32F at `EvaluationContext::requestedExtent`).
+//
+// Params:
+//   - `z_scale`    (float, [0.01, 10], default 1.0): multiplies the
+//                  synthesised Z when no `world_pos.*` channels are
+//                  available. Ignored on NVS deep payloads (those have
+//                  real world positions). Per-payload auto-normalisation
+//                  uses `DeepRef::recommendedZScale` so default 1.0 fits
+//                  the navigable cube cleanly.
+//   - `point_size` (float, [1, 20], default 2.0): pixel-space point size
+//                  for the splat.
+//
+// Internally delegates to `gpu::PointCloudPass` (stored on
+// `EvaluationContext::pointCloudPass`) — see CONVENTIONS §21 for the
+// "node delegates to engine pass" pattern.
+class PointCloudRenderNode : public Node {
+  public:
+    PointCloudRenderNode(NodeHandle h, std::string n)
+        : Node(h, NodeType::PointCloudRender, std::move(n)) {}
+    [[nodiscard]] std::vector<PinSpec> getPinSchema() const override;
+    void buildParams() override;
+    void markRequiredTiles(const Region& requestedRegion,
+                           std::unordered_set<NodeHandle>& activeNodes) override;
+    void execute(EvaluationContext& ctx, const Region& region) override;
+};
+
 }  // namespace loom::core

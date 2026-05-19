@@ -1,8 +1,10 @@
 #include "core/Nodes.hpp"
 
+#include <glm/trigonometric.hpp>
 #include <glm/vec3.hpp>
 
 #include "core/Assert.hpp"
+#include "core/Camera.hpp"
 #include "core/DeepLayout.hpp"
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
@@ -37,6 +39,15 @@ glm::vec3 vec3Param(const Node& node, const char* name, glm::vec3 fallback) {
     for (const auto& p : node.params) {
         if (p.name() != name) continue;
         if (auto* v = std::get_if<glm::vec3>(&p.value())) return *v;
+        return fallback;
+    }
+    return fallback;
+}
+
+float floatParam(const Node& node, const char* name, float fallback) {
+    for (const auto& p : node.params) {
+        if (p.name() != name) continue;
+        if (auto* v = std::get_if<float>(&p.value())) return *v;
         return fallback;
     }
     return fallback;
@@ -475,6 +486,144 @@ void DeepFlattenNode::execute(EvaluationContext& ctx, const Region& region) {
     ctx.tasks.push_back(
         buildDeepFlattenTask(ctx, src, out, rgbaIsFloat, "DeepFlattenNode.composite"));
     ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(out));
+}
+
+// -----------------------------------------------------------------------------
+// CameraNode
+// -----------------------------------------------------------------------------
+
+std::vector<PinSpec> CameraNode::getPinSchema() const {
+    return {{PinDirection::Output, PinType::Camera}};
+}
+
+void CameraNode::buildParams() {
+    // Position / target: vec3 with no bounds (camera can be placed anywhere).
+    // Treating these as `ColorEdit3` would be wrong (vec3 with hasBounds opens
+    // the colour picker); leave hasBounds=false so the param widget renders
+    // as three drag-floats — appropriate for spatial coordinates.
+    ParamRange unbounded;
+    unbounded.hasBounds = false;
+    params.emplace_back("position", Param::Value{glm::vec3(0.0f, 0.0f, 3.0f)}, unbounded);
+    params.emplace_back("target", Param::Value{glm::vec3(0.0f, 0.0f, 0.0f)}, unbounded);
+
+    ParamRange fovRange;
+    fovRange.min = 5.0f;
+    fovRange.max = 150.0f;
+    fovRange.step = 0.5f;
+    fovRange.hasBounds = true;
+    params.emplace_back("fov_y_deg", Param::Value{60.0f}, fovRange);
+
+    ParamRange nearRange;
+    nearRange.min = 0.001f;
+    nearRange.max = 1000.0f;
+    nearRange.step = 0.01f;
+    nearRange.hasBounds = true;
+    params.emplace_back("near", Param::Value{0.1f}, nearRange);
+
+    ParamRange farRange;
+    farRange.min = 0.01f;
+    farRange.max = 100000.0f;
+    farRange.step = 1.0f;
+    farRange.hasBounds = true;
+    params.emplace_back("far", Param::Value{100.0f}, farRange);
+}
+
+void CameraNode::markRequiredTiles(const Region& /*requestedRegion*/,
+                                   std::unordered_set<NodeHandle>& activeNodes) {
+    // Pure source: no inputs to recurse into. Just mark self active.
+    activeNodes.insert(id);
+}
+
+void CameraNode::execute(EvaluationContext& ctx, const Region& region) {
+    if (outputs.empty()) return;
+
+    const glm::vec3 position = vec3Param(*this, "position", glm::vec3(0.0f, 0.0f, 3.0f));
+    const glm::vec3 target = vec3Param(*this, "target", glm::vec3(0.0f));
+    const float fovDeg = floatParam(*this, "fov_y_deg", 60.0f);
+    const float nearP = floatParam(*this, "near", 0.1f);
+    const float farP = floatParam(*this, "far", 100.0f);
+
+    // Aspect ratio is not a knob — it auto-derives from the active viewport
+    // so the camera always matches what the user sees. Default to 1.0 if
+    // the eval context hasn't supplied a sensible extent yet (test harness,
+    // first-frame).
+    float aspect = 1.0f;
+    if (ctx.requestedExtent.height > 0) {
+        aspect = static_cast<float>(ctx.requestedExtent.width) /
+                 static_cast<float>(ctx.requestedExtent.height);
+    }
+
+    Camera cam;
+    cam.setPosition(position);
+    cam.setTarget(target);
+    cam.setFovY(glm::radians(fovDeg));
+    cam.setClipPlanes(nearP, farP);
+    cam.setAspect(aspect);
+
+    gpu::ResourceRef::CameraRef snapshot;
+    snapshot.view = cam.viewMatrix();
+    snapshot.proj = cam.projectionMatrix();
+    snapshot.eyePos = position;
+    snapshot.nearPlane = nearP;
+    snapshot.farPlane = farP;
+    snapshot.fovY = glm::radians(fovDeg);
+
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromCamera(snapshot));
+}
+
+// -----------------------------------------------------------------------------
+// PointCloudRenderNode
+// -----------------------------------------------------------------------------
+//
+// v1 implementation is a stub that emits an invalid Image — Step 6 fills
+// this in once `PointCloudPass` has been pivoted to render onto an
+// arbitrary target image (Step 5). Keeping the type registered now means
+// the addNode switch + spawn menu can land alongside CameraNode without a
+// forward dependency on the GPU pivot.
+
+std::vector<PinSpec> PointCloudRenderNode::getPinSchema() const {
+    return {{PinDirection::Input, PinType::DeepBuffer},
+            {PinDirection::Input, PinType::Camera},
+            {PinDirection::Output, PinType::Float}};
+}
+
+void PointCloudRenderNode::buildParams() {
+    ParamRange zRange;
+    zRange.min = 0.01f;
+    zRange.max = 10.0f;
+    zRange.step = 0.01f;
+    zRange.hasBounds = true;
+    params.emplace_back("z_scale", Param::Value{1.0f}, zRange);
+
+    ParamRange sizeRange;
+    sizeRange.min = 1.0f;
+    sizeRange.max = 20.0f;
+    sizeRange.step = 0.5f;
+    sizeRange.hasBounds = true;
+    params.emplace_back("point_size", Param::Value{2.0f}, sizeRange);
+}
+
+void PointCloudRenderNode::markRequiredTiles(const Region& requestedRegion,
+                                             std::unordered_set<NodeHandle>& activeNodes) {
+    if (activeNodes.count(id)) return;
+    activeNodes.insert(id);
+
+    for (auto inPinHandle : inputs) {
+        Pin* inPin = graph->getPin(inPinHandle);
+        if (inPin && inPin->link.isValid()) {
+            Link* link = graph->getLink(inPin->link);
+            Pin* srcPin = graph->getPin(link->startPin);
+            Node* srcNode = graph->getNode(srcPin->node);
+            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+        }
+    }
+}
+
+void PointCloudRenderNode::execute(EvaluationContext& ctx, const Region& region) {
+    // Step 6 fills this in. v1 stub stores an invalid Image so downstream
+    // ViewerNodes don't see undefined behaviour while the GPU pivot lands.
+    if (outputs.empty()) return;
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage({}));
 }
 
 }  // namespace loom::core

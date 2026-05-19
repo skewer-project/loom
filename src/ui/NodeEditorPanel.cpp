@@ -301,6 +301,8 @@ void NodeEditorPanel::handleContextMenu() {
         if (ImGui::MenuItem("Passthrough")) spawnNode(core::NodeType::Passthrough);
         if (ImGui::MenuItem("DeepEXRRead")) spawnNode(core::NodeType::DeepEXRRead);
         if (ImGui::MenuItem("DeepFlatten")) spawnNode(core::NodeType::DeepFlatten);
+        if (ImGui::MenuItem("Camera")) spawnNode(core::NodeType::Camera);
+        if (ImGui::MenuItem("PointCloudRender")) spawnNode(core::NodeType::PointCloudRender);
 
         ImGui::EndPopup();
     }
