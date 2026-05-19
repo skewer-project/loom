@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "core/Camera.hpp"
+#include "core/Graph.hpp"
 #include "core/Log.hpp"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -263,6 +264,19 @@ void ImGuiRenderer::applyOrbitInput(core::Camera& camera) {
     const float sp = std::sin(m_orbitPitch);
     const glm::vec3 newPos = camera.target() + m_orbitRadius * glm::vec3(sy * cp, sp, cy * cp);
     camera.setPosition(newPos);
+
+    // Push the new position into the active CameraNode's `position`
+    // param so the graph re-evaluates with the user's view next frame.
+    // The local Camera mutation above keeps the controller's orbit
+    // state coherent within the current frame; the param write drives
+    // downstream renderers (PointCloudRenderNode). `setParam` flips the
+    // node's dirty flag, which cascades through Graph::markDirty when
+    // the graph executes next.
+    if (m_cameraGraph && m_cameraNode.isValid()) {
+        if (auto* node = m_cameraGraph->getNode(m_cameraNode)) {
+            node->setParam(m_cameraPositionParamIndex, newPos);
+        }
+    }
 }
 
 void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {

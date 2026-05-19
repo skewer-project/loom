@@ -5,12 +5,14 @@
 
 #include <cstdint>
 
+#include "core/Handle.hpp"
 #include "imgui.h"
 #include "vk_mem_alloc.h"
 
 namespace loom::core {
 class Camera;
-}
+class Graph;
+}  // namespace loom::core
 
 namespace loom::ui {
 
@@ -84,6 +86,20 @@ class ImGuiRenderer {
     // on the next mouse event.
     void resyncOrbitFromCamera(const core::Camera& camera);
 
+    // Register the active CameraNode so orbit gestures push the new
+    // position through `Node::setParam` — that flips the node's dirty
+    // flag and re-evaluates downstream renderers (`PointCloudRenderNode`)
+    // next frame. Pass `nullptr` to disconnect (orbit then mutates only
+    // the local Camera reference). The `param-index` arguments are
+    // typically 0 (position) and 1 (target) per `CameraNode::buildParams`.
+    void setActiveCameraNode(core::Graph* graph, core::NodeHandle handle,
+                             size_t positionParamIndex = 0, size_t targetParamIndex = 1) {
+        m_cameraGraph = graph;
+        m_cameraNode = handle;
+        m_cameraPositionParamIndex = positionParamIndex;
+        m_cameraTargetParamIndex = targetParamIndex;
+    }
+
   private:
     void createSampler();
     void recreateViewportTarget(uint32_t width, uint32_t height);
@@ -113,6 +129,15 @@ class ImGuiRenderer {
     float m_orbitYaw = 0.0f;     // radians, around world +Y
     float m_orbitPitch = 0.0f;   // radians, around camera-right
     float m_orbitRadius = 3.0f;  // distance from target, meters
+
+    // Active CameraNode hook. Orbit gestures call `graph->getNode(handle)->
+    // setParam(positionParamIndex, newPos)` so the graph re-evaluates with
+    // the user's new view. All three default to "inactive" — orbit then
+    // mutates only the local `core::Camera` reference (legacy fallback).
+    core::Graph* m_cameraGraph = nullptr;
+    core::NodeHandle m_cameraNode{};
+    size_t m_cameraPositionParamIndex = 0;
+    size_t m_cameraTargetParamIndex = 1;
 
     // Flat-2D pan / zoom state, applied via ImGui::Image custom UV
     // coords. `m_view2DCenter` is the UV coordinate at the viewport

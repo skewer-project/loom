@@ -26,30 +26,63 @@
 
 namespace {
 
-// Build the default `DeepEXRRead → DeepFlatten → Viewer` chain. Returns the
-// handle of the DeepEXRRead node so the per-frame code can fish its deep
-// output out of the render cache for the PointCloud path.
-loom::core::NodeHandle buildDeepViewChain(loom::core::Graph& graph, const std::string& path) {
-    auto reader = graph.addNode(loom::core::NodeType::DeepEXRRead);
-    auto flatten = graph.addNode(loom::core::NodeType::DeepFlatten);
-    auto viewer = graph.addNode(loom::core::NodeType::Viewer);
+// Aggregated handles of the startup-graph nodes. main.cpp tracks these so
+// the orbit controller can mutate the CameraNode's params and so the
+// per-frame loop can fish the upstream `Kind::Deep` payload (used for
+// auto-frame bounds + per-frame clip-plane refresh) without graph traversal.
+struct StartupGraphHandles {
+    loom::core::NodeHandle deepReader;
+    loom::core::NodeHandle cameraNode;
+    loom::core::NodeHandle pointCloudRender;
+    loom::core::NodeHandle viewer;
+};
 
-    if (auto* r = graph.getNode(reader)) {
+// Build the compositor-style startup graph:
+//
+//   DeepEXRRead ───┬─→ DeepFlatten ───→ Viewer   (initial wire — flat 2D)
+//                  │
+//                  └─→ PointCloudRender  (Camera ─┐)
+//                                                  └─→ Output disconnected
+//                                                      (user wires to Viewer
+//                                                      for 3D view).
+//
+// User toggles between 2D and 3D by re-wiring the Viewer's input pin in
+// the node editor — picks whichever upstream output they want to display.
+// The CameraNode + PointCloudRender chain is pre-wired (Deep + Camera ⇒
+// PointCloudRender) so all the user has to do is drag a link from
+// PointCloudRender's output to the Viewer's input.
+StartupGraphHandles buildDeepViewChain(loom::core::Graph& graph, const std::string& path) {
+    StartupGraphHandles h;
+    h.deepReader = graph.addNode(loom::core::NodeType::DeepEXRRead);
+    auto flatten = graph.addNode(loom::core::NodeType::DeepFlatten);
+    h.cameraNode = graph.addNode(loom::core::NodeType::Camera);
+    h.pointCloudRender = graph.addNode(loom::core::NodeType::PointCloudRender);
+    h.viewer = graph.addNode(loom::core::NodeType::Viewer);
+
+    if (auto* r = graph.getNode(h.deepReader)) {
         r->setParam(0, path);  // file_path
     }
 
-    auto* readerNode = graph.getNode(reader);
+    auto* readerNode = graph.getNode(h.deepReader);
     auto* flattenNode = graph.getNode(flatten);
-    auto* viewerNode = graph.getNode(viewer);
-    if (readerNode && flattenNode && viewerNode) {
+    auto* cameraNode = graph.getNode(h.cameraNode);
+    auto* pcrNode = graph.getNode(h.pointCloudRender);
+    auto* viewerNode = graph.getNode(h.viewer);
+    if (readerNode && flattenNode && cameraNode && pcrNode && viewerNode) {
         if (!graph.tryAddLink(readerNode->outputs[0], flattenNode->inputs[0])) {
             loom::log::warn("startup: failed to wire DeepEXRRead -> DeepFlatten");
         }
         if (!graph.tryAddLink(flattenNode->outputs[0], viewerNode->inputs[0])) {
             loom::log::warn("startup: failed to wire DeepFlatten -> Viewer");
         }
+        if (!graph.tryAddLink(readerNode->outputs[0], pcrNode->inputs[0])) {
+            loom::log::warn("startup: failed to wire DeepEXRRead -> PointCloudRender");
+        }
+        if (!graph.tryAddLink(cameraNode->outputs[0], pcrNode->inputs[1])) {
+            loom::log::warn("startup: failed to wire Camera -> PointCloudRender");
+        }
     }
-    return reader;
+    return h;
 }
 
 // Clear the viewport image to opaque black and leave it in
@@ -101,18 +134,19 @@ void clearViewportToBlack(VkCommandBuffer cmd, VkImage image) {
 }
 
 // Build the legacy demo chain (`Constant → Viewer`) used when no EXR path
-// was given. Returns an invalid handle since there's no deep reader.
-loom::core::NodeHandle buildDemoChain(loom::core::Graph& graph) {
+// was given. Returns invalid handles (no deep reader, no camera node).
+StartupGraphHandles buildDemoChain(loom::core::Graph& graph) {
+    StartupGraphHandles h;
     auto constant = graph.addNode(loom::core::NodeType::Constant);
-    auto viewer = graph.addNode(loom::core::NodeType::Viewer);
+    h.viewer = graph.addNode(loom::core::NodeType::Viewer);
     auto* c = graph.getNode(constant);
-    auto* v = graph.getNode(viewer);
+    auto* v = graph.getNode(h.viewer);
     if (c && v) {
         if (!graph.tryAddLink(c->outputs[0], v->inputs[0])) {
             loom::log::warn("startup: failed to wire Constant -> Viewer");
         }
     }
-    return {};
+    return h;
 }
 
 }  // namespace
@@ -203,8 +237,16 @@ int main(int argc, char** argv) {
         loom::core::RenderCache renderCache;
         loom::ui::NodeEditorPanel nodeEditor(&graph);
 
-        const loom::core::NodeHandle deepReaderHandle =
+        const StartupGraphHandles startupHandles =
             deepPath.empty() ? buildDemoChain(graph) : buildDeepViewChain(graph, deepPath);
+        const loom::core::NodeHandle deepReaderHandle = startupHandles.deepReader;
+        const loom::core::NodeHandle cameraNodeHandle = startupHandles.cameraNode;
+
+        // Register the active CameraNode with the orbit controller so
+        // drag gestures push the new position through `setParam`. Param
+        // index 0 is `position` per `CameraNode::buildParams`. The demo
+        // chain has no camera node — registration is a no-op then.
+        imgui.setActiveCameraNode(&graph, cameraNodeHandle);
 
         // Tracks the most-recently-auto-framed deep samples buffer. An
         // invalid handle means "no frame has been taken yet" — the
@@ -242,6 +284,8 @@ int main(int argc, char** argv) {
                 evalCtx.cmd = cmd;
                 evalCtx.deepReader = &deepReader;
                 evalCtx.camera = &camera;
+                evalCtx.pointCloudPass = &pointCloudPass;
+                evalCtx.bindlessSet = bindlessSet;
                 evalCtx.frame = vulkan.currentFrameValue();
 
                 loom::core::Region region;
@@ -290,6 +334,17 @@ int main(int argc, char** argv) {
                     if (changed) {
                         camera.frameToBounds(deepRef.sceneBounds.center(),
                                              deepRef.sceneBounds.radius());
+                        // Mirror the auto-frame into the CameraNode's
+                        // params so the graph re-evaluates with the new
+                        // pose. CameraNode params (per buildParams):
+                        //   0 = position, 1 = target, 2 = fov_y_deg,
+                        //   3 = near, 4 = far.
+                        if (auto* camNode = graph.getNode(cameraNodeHandle)) {
+                            camNode->setParam(0, camera.position());
+                            camNode->setParam(1, camera.target());
+                            camNode->setParam(3, camera.nearPlane());
+                            camNode->setParam(4, camera.farPlane());
+                        }
                         imgui.resyncOrbitFromCamera(camera);
                         lastFramedSamples = deepRef.samples;
                         lastFramedCenter = deepRef.sceneBounds.center();
@@ -311,46 +366,31 @@ int main(int argc, char** argv) {
                     const float nearP = std::max(distance - lastFramedSceneRadius - margin, 0.001f);
                     const float farP = distance + lastFramedSceneRadius + margin;
                     camera.setClipPlanes(nearP, farP);
+                    // Mirror onto the CameraNode so the next graph
+                    // evaluation produces a CameraRef with matching
+                    // clip planes. setParam guards against duplicate
+                    // writes (the dirty flag is set, but the value
+                    // comparison happens inside Param::setValue).
+                    if (auto* camNode = graph.getNode(cameraNodeHandle)) {
+                        camNode->setParam(3, nearP);
+                        camNode->setParam(4, farP);
+                    }
                 }
 
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
                                        pipelineLayout, &imagePool);
 
-                // Bridge during the migration: while Step 8 hasn't yet
-                // wired the CameraNode + PointCloudRenderNode chain,
-                // selecting Orbit 3D from the input-mode dropdown still
-                // engages the engine-managed PointCloudPass call below.
-                // Step 8 deletes this branch once the node graph drives
-                // the render.
-                const bool wantPointCloud =
-                    imgui.getViewportInputMode() == loom::ui::ViewportInputMode::Orbit3D;
                 const uint32_t vpW = static_cast<uint32_t>(imgui.getViewportSize().x);
                 const uint32_t vpH = static_cast<uint32_t>(imgui.getViewportSize().y);
 
-                if (wantPointCloud && deepRef.samples.isValid() && vpW > 0 && vpH > 0) {
-                    // Snapshot the engine camera into a CameraRef — Step 8
-                    // will switch to pulling this from a CameraNode in the
-                    // graph; for now, materialise from the engine-owned
-                    // Camera so PointCloudPass keeps working under the new
-                    // signature.
-                    loom::gpu::ResourceRef::CameraRef camRef;
-                    camRef.view = camera.viewMatrix();
-                    camRef.proj = camera.projectionMatrix();
-                    camRef.eyePos = camera.position();
-                    camRef.nearPlane = camera.nearPlane();
-                    camRef.farPlane = camera.farPlane();
-                    camRef.fovY = camera.fovY();
-                    pointCloudPass.record(cmd, deepRef, imgui.getViewportImage(),
-                                          imgui.getViewportImageView(), bindlessSet, vpW, vpH,
-                                          camRef);
-                } else if (viewerOutput.isValid()) {
+                // The viewer always shows the result of `DisplayPass` on
+                // whatever Image is wired to it. Whether that image came
+                // from `DeepFlatten` (2D) or `PointCloudRenderNode` (3D
+                // splat) is a graph-wiring decision, not an engine
+                // toggle. See CONVENTIONS §21.
+                if (viewerOutput.isValid()) {
                     const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
                         static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));
-                    // Source extent (the viewer's HDR image native size) is
-                    // queried from the pool so DisplayPass can aspect-fit
-                    // the source into the viewport regardless of EXR
-                    // resolution — fixes the unrendered-region glitch where
-                    // an out-of-range imageLoad returned garbage.
                     const VkExtent2D srcExtent = imagePool.getExtent(viewerOutput);
                     displayPass.record(cmd, imagePool.getImage(viewerOutput),
                                        imgui.getViewportImage(), imgui.getViewportImageView(),
@@ -359,10 +399,10 @@ int main(int argc, char** argv) {
                                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
                                        /*exposure=*/1.0f);
                 } else if (vpW > 0 && vpH > 0) {
-                    // Neither pass wrote the viewport this frame (load
-                    // failure, staging OOM, unsupported layout, etc.).
-                    // Without this fallback ImGui samples an UNDEFINED
-                    // image — see `clearViewportToBlack` above.
+                    // Viewer's input is disconnected (user is mid-wire or
+                    // the upstream chain failed). Without this fallback
+                    // ImGui samples an UNDEFINED image — see
+                    // `clearViewportToBlack` above.
                     clearViewportToBlack(cmd, imgui.getViewportImage());
                 }
 
