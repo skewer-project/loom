@@ -347,3 +347,88 @@ Adding a new alternative to the variant is a single line plus a branch in
 - Overrides should construct each `Param` with its default value and any
   `ParamRange` metadata. The default value drives both first-frame behaviour
   and the JSON load fallback when a saved value is malformed.
+
+---
+
+## 21. Camera + renderer node pattern
+
+The compositor model treats **cameras and renderers as graph nodes**;
+viewport-panel controls are reserved for **input-gesture interpretation**
+(pan vs orbit). Industry parallel: Nuke's `Camera` / `ScanlineRender`,
+Fusion's `Camera 3D` / `Renderer 3D`, Houdini's `/obj/cam1` /
+`Karma Render`. This is the v1 implementation of that pattern; it
+deliberately stops short of a full `GraphicsTask` abstraction (deferred
+to Phase D).
+
+### `core::CameraNode`
+
+- Pure source — zero input pins, one `Kind::Camera` output.
+- Knob params (declared in `buildParams`):
+  - `position: vec3` — world-space camera position.
+  - `target: vec3` — point the camera looks at.
+  - `fov_y_deg: float` (range `[5, 150]`) — vertical FOV in degrees.
+  - `near: float` (range `[0.001, 1000]`) — near clip.
+  - `far: float` (range `[0.01, 100000]`) — far clip.
+- Aspect ratio is **not a knob** — it derives from
+  `EvaluationContext::requestedExtent` each frame so the camera always
+  matches the active viewport.
+- `execute()` materialises a `core::Camera`, snapshots `view` / `proj` /
+  `eyePos` / `nearPlane` / `farPlane` / `fovY` into a `CameraRef`, and
+  stores it in the render cache. The snapshot model (value type,
+  not `const Camera*`) avoids pointer-lifetime questions through the
+  cache — same shape as `DeepRef`.
+
+### `core::PointCloudRenderNode`
+
+- Input pins: `Kind::Deep` (deep payload), `Kind::Camera` (view).
+- Output pin: `Kind::Image` (`R32G32B32A32_SFLOAT` at
+  `requestedExtent`, layout `SHADER_READ_ONLY_OPTIMAL` post-record).
+- Knob params: `z_scale` (`[0.01, 10]`), `point_size` (`[1, 20]`).
+- `execute()` delegates to the engine-owned `gpu::PointCloudPass`
+  (`EvaluationContext::pointCloudPass`). The node bypasses the
+  `ComputeTask` queue and records graphics directly into the frame's
+  command buffer — documented v1 architectural debt that the Phase D
+  `GraphicsTask` work pays down.
+- Multiplies the user's `z_scale` knob by `DeepRef::recommendedZScale`
+  (computed at upload from the scene's Z range) so non-NVS deep files
+  with extreme depth ranges navigate cleanly at the default knob
+  value.
+
+### Single-active-camera v1 constraint
+
+- `Graph::getCameras()` returns every `CameraNode` in the graph.
+  Orbit + auto-frame target `getCameras()[0]` — the first one added.
+- Multi-camera UI (picker per Viewer, animated camera bake) is out of
+  scope alongside multi-viewer UI (§18). The CameraNode pattern is
+  forward-compatible with multi-camera; the v1 restriction is purely
+  UI-side.
+
+### Pin-type compatibility
+
+- `PinType::Camera ↔ Kind::Camera` is the runtime / edit-time pairing.
+- `canAddLink` rejects mismatched types — a `Kind::Camera` pin cannot
+  connect to a `Kind::Image` or `Kind::Deep` pin.
+
+### Viewport input mode
+
+- `ui::ViewportInputMode` chooses how mouse gestures over the viewport
+  panel are interpreted:
+  - `Pan2D` — drag pans the displayed 2D image; wheel zooms.
+  - `Orbit3D` — drag yaw/pitch the active CameraNode's `position`
+    param; wheel adjusts orbit radius. Cursor-anchored.
+- The mode does **not** control which renderer runs. That's
+  graph-wiring (which upstream pin is connected to the Viewer).
+
+### Default startup graph
+
+When `./Loom path/to/file.exr` opens an EXR, the engine spawns:
+
+```
+DeepEXRRead ───┬─→ DeepFlatten ───→ Viewer     (initial 2D wire)
+               │
+               └─→ PointCloudRender   (Camera ─┐)
+                                                └─→ (disconnected)
+```
+
+The user toggles between 2D and 3D by rewiring the Viewer's input in
+the node editor.

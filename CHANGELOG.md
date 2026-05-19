@@ -138,6 +138,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   from the current orbit distance + the most-recently-framed scene
   radius. The point-cloud no longer clips at the back when the user
   zooms in past the original framing distance.
+- `core::CameraNode` — first-class graph node carrying view params as
+  knob-editable values (position, target, fov_y_deg, near, far).
+  Auto-aspect from the active viewport. Output pin: `Kind::Camera`.
+  JSON-serialisable via the existing `Param` infrastructure.
+- `core::PointCloudRenderNode` — pulls `Kind::Deep` + `Kind::Camera`,
+  produces `Kind::Image` (RGBA32F). Knobs: `z_scale`, `point_size`.
+  Delegates rendering to the engine-owned `gpu::PointCloudPass` via
+  `EvaluationContext::pointCloudPass`.
+- `Kind::Camera` + `CameraRef` value-type payload on `ResourceRef`.
+  Pin compatibility extended (`PinType::Camera`); the canonical wire
+  is `CameraNode → PointCloudRenderNode`.
+- `gpu::computeRecommendedZScale` + `DeepRef::recommendedZScale` —
+  per-payload auto-scale for the `PointCloud.vert` synthesis path so
+  scenes with extreme depth ranges navigate cleanly at `z_scale = 1`.
+- `DisplayPass.frag` aspect-fits the source image into the viewport
+  with a black letterbox. Fixes the "garbage outside rendered region"
+  glitch surfaced by non-square deep EXRs.
+- `TransientImagePool::getExtent` accessor lets `DisplayPass` query
+  the source image's native dimensions for aspect-fit math.
+- `gpu::PointCloudPass::record` now takes a `ResourceRef::CameraRef`
+  value snapshot (replacing the previous `const core::Camera&`),
+  matching the cache-carried camera payload.
+- `Graph::getCameras()` mirrors `getViewers()`. v1 is single-camera;
+  orbit + auto-frame target `getCameras()[0]`.
+
+### Changed
+- The viewport-panel dropdown is now an **input mode** selector
+  (Pan 2D / Orbit 3D), not a render-mode toggle. The choice of 2D vs
+  3D is a graph-wiring decision — wire `DeepFlatten → Viewer` for
+  flat 2D, or `PointCloudRender → Viewer` for the 3D point cloud.
+  `ViewportMode` renamed to `ViewportInputMode`.
+- Startup graph (`./Loom path/to/file.exr`) now spawns CameraNode +
+  PointCloudRenderNode pre-wired (Deep + Camera ⇒ PointCloudRender).
+  Initial Viewer input is `DeepFlatten` (2D); user drags
+  PointCloudRender's output onto the Viewer's input in the node
+  editor to swap to 3D.
+- Orbit gestures over the viewport mutate the active CameraNode's
+  `position` param via `setParam`, not an engine-singleton Camera.
+  Auto-frame writes through the same path. The graph re-evaluates
+  with the user's view next frame.
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
   are now editable in the UI rather than hardcoded.
 - `gpu::HazardTracker` widened from image-only keys to `ResourceKey

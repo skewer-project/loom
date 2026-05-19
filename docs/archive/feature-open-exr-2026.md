@@ -2112,3 +2112,265 @@ plumbing in `drawDockspace`).
 - Live smoke (user session): all three resolved.
 
 ---
+
+## Phase B.8 — Follow-up #3: CameraNode + PointCloudRenderNode
+
+User smoke-tested Phase B.8 and surfaced three concerns:
+
+1. The 2D viewport's flat path glitched outside the rendered region on
+   non-square EXRs.
+2. The point cloud's depth perspective felt extreme — hardcoded FOV +
+   synthesised XY ∈ [-1,1] vs depth in raw EXR units made for a thin
+   slab that was hard to orbit.
+3. Architecturally: should the viewport modes / camera be **nodes** in
+   the graph (compositor pattern) or **UI settings** (engine pattern)?
+   Industry compositors (Nuke / Fusion / Houdini) make cameras +
+   renderers nodes; only pure viewing controls are settings.
+
+The follow-up commits this tier:
+- **2D glitch fix** in `DisplayPass.frag` with aspect-fit + black
+  letterbox.
+- **CameraNode** with knob-editable view params.
+- **PointCloudRenderNode** delegating to the engine's PointCloudPass.
+- **Auto-normalised z-scale** so the synthesis path's slab is
+  proportioned correctly out of the box.
+- **`ViewportMode` → `ViewportInputMode`** rename — the dropdown now
+  controls input-gesture interpretation only.
+- **Orbit gestures route through `CameraNode.setParam`**.
+
+The full design lives in `~/.claude/plans/shiny-waddling-finch.md`
+(private — not committed). CONVENTIONS §21 documents the
+camera-as-node pattern + the single-active-camera v1 constraint.
+
+### Step 1 — 2D glitch fix (commit c942d0f)
+
+**Root cause** confirmed at `shaders/DisplayPass.frag:51-54` and
+`src/main.cpp:331`. The shader was using `pc.width / pc.height` (the
+**viewport extent**) to compute the texel index into a source image
+at the **EXR's native resolution** (e.g. 1024×1024). Out-of-range
+`imageLoad()` returned undefined garbage for any pixel outside the
+source's bounding rect within the viewport.
+
+**Fix:** extend the push-constant struct with `srcWidth` / `srcHeight`,
+compute aspect-fit math in the fragment shader (letterbox the source
+into the viewport at native aspect), and fill the leftover strip with
+opaque black.
+
+- `shaders/DisplayPass.frag`, `include/gpu/DisplayPass.hpp`,
+  `src/gpu/DisplayPass.cpp` — shader update + plumbing.
+- `include/gpu/TransientImagePool.hpp` / `.cpp` — `getExtent()`
+  accessor so `main.cpp` can query the viewer image's native size.
+- `tests/gpu/DisplayPassTest.cpp` — `LetterboxesWiderSource` +
+  `LetterboxesTallerSource` cases (4:1 source onto a 1:1 viewport,
+  and 1:4 source onto a 1:1 viewport).
+
+Aspect-fit math (in GLSL):
+```glsl
+float srcAspect = float(pc.srcWidth) / float(pc.srcHeight);
+float vpAspect  = float(pc.width)    / float(pc.height);
+vec2 letterbox = vec2(0.0);
+if (srcAspect > vpAspect) letterbox.y = (1.0 - vpAspect/srcAspect) * 0.5;
+else                       letterbox.x = (1.0 - srcAspect/vpAspect) * 0.5;
+vec2 srcUV = (inUV - letterbox) / (vec2(1.0) - 2.0 * letterbox);
+if (any(lessThan(srcUV, vec2(0))) || any(greaterThanEqual(srcUV, vec2(1))))
+    outColor = vec4(0,0,0,1);  // letterbox strip
+else
+    // sample source at srcUV.
+```
+
+Tests: 146 → 148 (+2 letterbox cases).
+
+### Step 2 — Kind::Camera + CameraRef (commit fbfb438)
+
+**Decisions.**
+
+- **Snapshot model, not pointer.** `CameraRef` is a value type
+  carrying `view` / `proj` / `eyePos` / near / far / fovY. Avoids the
+  pointer-lifetime question that would arise from carrying a
+  `const Camera*` through the render cache. Same shape as `DeepRef`.
+- **`PinType::Camera`** added to the edit-time type-check enum;
+  `canAddLink`'s existing `startType == endType` check handles
+  it without code change.
+- **`pullCameraInput` helper** on `Node` mirrors `pullImageInput` /
+  `pullDeepInput`. The asserted-on-mismatch contract catches a
+  miswired graph at evaluation time.
+
+Tests: 148 → 150 (+2 ResourceRef cases).
+
+### Step 3 — CameraNode (commit ebebf7c)
+
+**Decisions.**
+
+- **Knobs match `core::Camera`'s field set.** Position + target as
+  vec3 with no bounds (the colour picker would render bounded vec3s
+  inappropriately). FOV in **degrees** for the knob, converted to
+  radians internally — degree numbers are friendlier in the UI
+  ("60°" reads cleaner than "1.047"). Near / far separate so the user
+  can widen the clip range for kilometer-scale scenes.
+- **Aspect is auto-derived, not a knob.** Each frame's `execute()`
+  reads `EvaluationContext::requestedExtent` so the camera always
+  matches the active viewport.
+- **No input pins.** Pure source node; downstream renderers pull from
+  the `Kind::Camera` output.
+- **No `ComputeTask` emitted.** The node's only side-effect is the
+  cache store; renderers do the actual GPU work using the snapshot.
+
+Tests: 150 → 155 (+5 CameraNode cases — schema, params, execute at
+default values, knob round-trip, JSON round-trip).
+
+### Step 4 — DeepRef::recommendedZScale (commit c7da1c8)
+
+**Decision.** Adding `recommendedZScale` to `DeepRef` is "free" from
+the AABB already computed in `reduceSceneBounds` — the formula is
+`2 / extent.z`, surfacing the per-payload depth normalisation that
+makes non-NVS files feel right with `z_scale = 1.0`. NVS payloads
+(world_pos present) get `1.0` since their positions are in real
+world units.
+
+Pulled the formula into a `computeRecommendedZScale` free function so
+it's headlessly unit-testable. The upload pass calls the function and
+stashes the result on the ref.
+
+Tests: 155 → 158 (+3 cases — Z-only payload, NVS payload, invalid
+bounds).
+
+### Step 5 — PointCloudPass signature pivot (commit 3498064)
+
+**Decisions.**
+
+- **Accept `CameraRef` instead of `const core::Camera&`.** Matches
+  the cache-carried payload. The pass derives `viewProj = proj * view`
+  inline; no behavioural change.
+- **Layout stays `SHADER_READ_ONLY_OPTIMAL` on exit.** The original
+  plan called for `GENERAL` ("transient image convention"), but on
+  reflection `SHADER_READ_ONLY_OPTIMAL` works for *both* call sites:
+  - Existing `main.cpp` rendering directly onto the viewport image
+    (ImGui samples need `SHADER_READ_ONLY_OPTIMAL`).
+  - Step 6's `PointCloudRenderNode` producing a transient that
+    `DisplayPass` then consumes — DisplayPass's pre-barrier expects
+    `SHADER_READ_ONLY_OPTIMAL` for its HDR input.
+  Picking the layout the next consumer expects is simpler than
+  picking `GENERAL` and adding a transition before each consumer.
+
+Tests unchanged (still 158); pass-internal signature change is
+exercised by the existing call site smoke test.
+
+### Step 6 — PointCloudRenderNode (commit c9ae016)
+
+**Decisions.**
+
+- **Delegates to engine-owned `PointCloudPass`.** Each
+  `PointCloudRenderNode` doesn't own its own pipeline / depth
+  attachment — that would duplicate per-node Vulkan resources. The
+  shared pass lives on `EvaluationContext::pointCloudPass` (added in
+  this commit).
+- **Bypasses the `ComputeTask` queue.** The node records graphics
+  commands directly in `execute()` rather than enqueuing a task.
+  Honest v1 architectural debt — documented in CONVENTIONS §21. The
+  hazard tracker doesn't see the graphics dispatch, but the pass
+  manages its own barriers (as it has since Phase B.5).
+- **Bindless set threaded through `EvaluationContext`.** Compute
+  tasks get the bindless set from `DispatchManager::submit`; graphics-
+  pass-as-node call sites bind it themselves. Added `bindlessSet`
+  field to `EvaluationContext`.
+- **Effective z-scale = user knob × `recommendedZScale`.** Non-NVS
+  payloads carry the auto-scale on `DeepRef::recommendedZScale`;
+  multiplying makes the user's knob act on top of the
+  per-payload-normalised slab. NVS payloads carry `1.0` so the knob
+  acts unscaled on real-world units.
+- **Output layout setLayout to `SHADER_READ_ONLY_OPTIMAL`.** The pool
+  needs to track the actual layout the pass left the image in
+  (otherwise the next pool-acquire of the same slot would receive
+  wrong `currentLayout`).
+
+Tests: 158 → 161 (+3 cases — pin schema, knobs, missing-input
+fallback).
+
+### Step 7 — ViewportMode → ViewportInputMode (commit 8a51fc7)
+
+**Mechanical rename + semantic shift.** The dropdown that previously
+chose "Flat 2D" vs "PointCloud 3D" render mode now chooses "Pan 2D"
+vs "Orbit 3D" **input mode**. The render mode is the graph's
+concern.
+
+`main.cpp` keeps the bridge (`if (input == Orbit3D) wantPointCloud =
+true`) for a single commit so users don't lose 3D between Steps 7
+and 8.
+
+### Step 8 — main.cpp wiring + orbit → setParam (commit c06d7bd)
+
+**The biggest change.** The compositor flow is finally in place.
+
+**Decisions.**
+
+- **Default startup graph spawns all four production nodes plus
+  Camera:** `DeepEXRRead`, `DeepFlatten`, `CameraNode`,
+  `PointCloudRender`, `Viewer`. The 2D wire (`DeepFlatten → Viewer`)
+  is set initially; the 3D chain (`Deep + Camera → PointCloudRender`)
+  is pre-wired but the user manually drags the PointCloudRender →
+  Viewer link in the node editor to swap to 3D. Document this is
+  intentional — it preserves the prior 2D-default behaviour and the
+  re-wire gesture is the compositor-native interaction.
+- **`ImGuiRenderer::setActiveCameraNode(graph, handle)`** registers
+  the camera node with the orbit controller. `applyOrbitInput`
+  mutates BOTH the local Camera reference (for orbit-state coherence
+  within the frame) AND calls `node->setParam(positionIdx, newPos)`
+  to drive next frame's graph evaluation.
+- **Auto-frame writes through `setParam`.** When a new deep payload
+  arrives and `Camera::frameToBounds` reframes the engine Camera,
+  we mirror position / target / near / far onto the CameraNode's
+  params. The next graph evaluation produces a `CameraRef` matching
+  the framed pose.
+- **Per-frame clip-plane refresh also writes through `setParam`.**
+  Same pattern: compute near / far from current orbit distance and
+  scene radius, push to CameraNode params.
+- **`wantPointCloud` branch deleted.** The viewer always shows
+  `DisplayPass(viewerOutput → viewport image)`. The choice of
+  whether `viewerOutput` carries a flat-2D image or a 3D-splat image
+  is graph-wiring.
+- **Single-frame latency on auto-frame / clip-plane updates.** Since
+  these write to CameraNode params AFTER `graph.execute()` ran, the
+  effect lands on the NEXT frame. Invisible at 60fps.
+
+Tests unchanged (still 161). The Step 8 changes are GUI-driven and
+exercised by live smoke.
+
+### Step 9 — Documentation (this commit)
+
+CHANGELOG `[Unreleased]` describes the user-visible additions;
+CONVENTIONS §21 covers the camera-as-node pattern + the
+single-active-camera v1 constraint. This archive entry captures the
+implementation history.
+
+### Phase B.8 follow-up #3 — exit criteria
+
+- ✅ 2D glitch fixed: aspect-fit + letterbox.
+- ✅ CameraNode with editable FOV / position / target / near / far
+  knobs.
+- ✅ PointCloudRenderNode wired to receive Deep + Camera, produce
+  Image.
+- ✅ Auto-normalised z-scale: synthesis depth matches XY range out
+  of the box.
+- ✅ Architecturally: cameras + renderers are graph nodes; viewport
+  controls are input-mode settings.
+
+Test count: 146 → 161 (+15 new tests across CameraNode,
+PointCloudRenderNode, ResourceRef Kind::Camera, DisplayPass
+letterbox, recommendedZScale). All headless or `GTEST_SKIP` cleanly
+on this machine; GPU paths exercised under Lavapipe in CI.
+
+Phase B.8 follow-up #3 is complete. The user-visible workflow:
+
+1. `./Loom path/to/deep.exr` — opens with 2D Flat in the viewport.
+2. Open the node editor; drag the `PointCloudRender` node's output
+   onto the Viewer's input → 3D point cloud renders.
+3. Click the "Orbit 3D" input mode in the viewport panel.
+4. Drag inside the viewport → camera orbits; scroll → zoom.
+5. Edit the CameraNode's `fov_y_deg` knob to widen the perspective.
+6. Edit `PointCloudRender.z_scale` or `.point_size` to taste.
+
+Architectural debt deferred to Phase D: `GraphicsTask` abstraction
+(so the hazard tracker sees graphics dispatches), multi-camera UI,
+camera-node animation curves.
+
+---
