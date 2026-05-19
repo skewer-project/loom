@@ -90,6 +90,21 @@ bool renderParamWidget(core::Node& node, size_t paramIndex) {
 NodeEditorPanel::NodeEditorPanel(core::Graph* graph) : m_graph(graph) {
     ed::Config config;
     config.SettingsFile = "config/node_editor.json";
+
+    // Finer-grained zoom stops than imgui-node-editor's defaults
+    // (0.1, 0.15, 0.2, 0.25, 0.33, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, ...) —
+    // each default step is roughly 50 %, which makes a single mouse-wheel
+    // tick over-zoom past the target scale. The editor casts
+    // `io.MouseWheel` to an int and indexes one stop per integer click, so
+    // shrinking the per-stop ratio (~12 % here) is the direct knob; tries
+    // at wheel-rate smoothing in our wrapper get re-truncated by that cast.
+    // 26 stops cover [0.1, 8.0] continuously and survive a JSON
+    // round-trip via the editor's settings file.
+    static const float kZoomLevels[] = {
+        0.10f, 0.12f, 0.14f, 0.16f, 0.20f, 0.25f, 0.30f, 0.40f, 0.50f, 0.60f, 0.70f, 0.85f, 1.00f,
+        1.15f, 1.30f, 1.50f, 1.75f, 2.00f, 2.30f, 2.60f, 3.00f, 3.50f, 4.00f, 5.00f, 6.00f, 8.00f};
+    for (float z : kZoomLevels) config.CustomZoomLevels.push_back(z);
+
     m_context = ed::CreateEditor(&config);
 }
 
@@ -100,7 +115,11 @@ NodeEditorPanel::~NodeEditorPanel() {
 }
 
 void NodeEditorPanel::draw(const char* title) {
-    ImGui::Begin(title);
+    // Suppress the panel-level wheel scroll. The node-editor canvas owns
+    // the wheel for zoom; without this flag the outer ImGui panel can
+    // intercept the scroll before the editor's navigate action sees it
+    // (same class of bug as B.8.1's viewport mouse-wheel capture).
+    ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
     ed::SetCurrentEditor(m_context);
     ed::Begin("Node Editor");
