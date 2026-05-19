@@ -226,6 +226,7 @@ TEST_F(DisplayPassTest, LinearPassthrough) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
+                            width, height,
                             /*toneMapMode=*/0, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
     }
@@ -299,6 +300,7 @@ TEST_F(DisplayPassTest, ToneMapModes) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
+                            width, height,
                             /*toneMapMode=*/1, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
 
@@ -314,6 +316,7 @@ TEST_F(DisplayPassTest, ToneMapModes) {
         VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
         displayPass->record(cmd, hdrImage, dstImage, dstImageView,
                             ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, width, height,
+                            width, height,
                             /*toneMapMode=*/2, kDisplayTransformSRGB, kExposure);
         ctx->endSingleTimeCommands(cmd);
 
@@ -322,6 +325,165 @@ TEST_F(DisplayPassTest, ToneMapModes) {
         EXPECT_GT(pixels[0], 0);
         EXPECT_LT(pixels[0], 255);
     }
+
+    vkDestroyImageView(ctx->getDevice(), dstImageView, nullptr);
+    vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);
+    imagePool->release(hdrHandle);
+}
+
+// Aspect-fit letterboxing — the fix for the "garbage outside rendered
+// region" glitch surfaced in Phase B.8 follow-up. When the source HDR
+// image's aspect ratio differs from the destination viewport's, the
+// fragment shader fits the source inside the viewport at native aspect
+// and fills the leftover strip with opaque black.
+TEST_F(DisplayPassTest, LetterboxesWiderSource) {
+    // Source 64×16 (4:1), destination 64×64 (1:1) — source is "wider," so
+    // letterbox top + bottom. Center row sees source; top/bottom rows
+    // see black.
+    constexpr uint32_t srcW = 64, srcH = 16;
+    constexpr uint32_t dstW = 64, dstH = 64;
+
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT,
+                        {srcW, srcH},
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    gpu::ImageHandle hdrHandle = imagePool->acquire(spec);
+    VkImage hdrImage = imagePool->getImage(hdrHandle);
+    uint32_t hdrSlot = hdrHandle.bindlessSlot;
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        VkClearColorValue clearColor = {{1.0f, 0.0f, 0.0f, 1.0f}};  // red
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, hdrImage, VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    VkImage dstImage;
+    VkImageView dstImageView;
+    VmaAllocation dstAlloc;
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.extent = {dstW, dstH, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaCreateImage(ctx->getVmaAllocator(), &imageInfo, &allocInfo, &dstImage, &dstAlloc, nullptr);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = dstImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCreateImageView(ctx->getDevice(), &viewInfo, nullptr, &dstImageView);
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        displayPass->record(cmd, hdrImage, dstImage, dstImageView,
+                            ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, dstW, dstH, srcW,
+                            srcH, /*toneMapMode=*/0, kDisplayTransformSRGB, kExposure);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    std::vector<uint8_t> pixels = readBackImage(dstImage, dstW, dstH);
+    auto px = [&](uint32_t x, uint32_t y) -> const uint8_t* { return &pixels[(y * dstW + x) * 4]; };
+
+    // Row 32 (vertical center): fitted source → red.
+    EXPECT_GE(px(32, 32)[0], 230);
+    EXPECT_LE(px(32, 32)[1], 10);
+    EXPECT_LE(px(32, 32)[2], 10);
+
+    // Row 0 (top edge): outside fitted rect → black.
+    EXPECT_LE(px(32, 0)[0], 5);
+    EXPECT_LE(px(32, 0)[1], 5);
+    EXPECT_LE(px(32, 0)[2], 5);
+    EXPECT_GE(px(32, 0)[3], 250);
+
+    // Row 63 (bottom edge): outside fitted rect → black.
+    EXPECT_LE(px(32, 63)[0], 5);
+
+    vkDestroyImageView(ctx->getDevice(), dstImageView, nullptr);
+    vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);
+    imagePool->release(hdrHandle);
+}
+
+TEST_F(DisplayPassTest, LetterboxesTallerSource) {
+    // Source 16×64 (1:4), destination 64×64 (1:1) — source is "taller,"
+    // so letterbox left + right.
+    constexpr uint32_t srcW = 16, srcH = 64;
+    constexpr uint32_t dstW = 64, dstH = 64;
+
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT,
+                        {srcW, srcH},
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    gpu::ImageHandle hdrHandle = imagePool->acquire(spec);
+    VkImage hdrImage = imagePool->getImage(hdrHandle);
+    uint32_t hdrSlot = hdrHandle.bindlessSlot;
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        VkClearColorValue clearColor = {{0.0f, 1.0f, 0.0f, 1.0f}};  // green
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, hdrImage, VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    VkImage dstImage;
+    VkImageView dstImageView;
+    VmaAllocation dstAlloc;
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.extent = {dstW, dstH, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaCreateImage(ctx->getVmaAllocator(), &imageInfo, &allocInfo, &dstImage, &dstAlloc, nullptr);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = dstImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCreateImageView(ctx->getDevice(), &viewInfo, nullptr, &dstImageView);
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        displayPass->record(cmd, hdrImage, dstImage, dstImageView,
+                            ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, dstW, dstH, srcW,
+                            srcH, /*toneMapMode=*/0, kDisplayTransformSRGB, kExposure);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    std::vector<uint8_t> pixels = readBackImage(dstImage, dstW, dstH);
+    auto px = [&](uint32_t x, uint32_t y) -> const uint8_t* { return &pixels[(y * dstW + x) * 4]; };
+
+    // Column 32 (horizontal center): fitted source → green.
+    EXPECT_LE(px(32, 32)[0], 10);
+    EXPECT_GE(px(32, 32)[1], 230);
+    EXPECT_LE(px(32, 32)[2], 10);
+
+    // Column 0 (left edge): outside fitted rect → black.
+    EXPECT_LE(px(0, 32)[0], 5);
+    EXPECT_LE(px(0, 32)[1], 5);
+    EXPECT_LE(px(0, 32)[2], 5);
+
+    // Column 63 (right edge): outside fitted rect → black.
+    EXPECT_LE(px(63, 32)[1], 5);
 
     vkDestroyImageView(ctx->getDevice(), dstImageView, nullptr);
     vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);

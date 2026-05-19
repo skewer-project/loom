@@ -141,6 +141,11 @@ VkImage TransientImagePool::getImage(ImageHandle handle) const {
     return m_images[handle.poolIndex].image;
 }
 
+VkExtent2D TransientImagePool::getExtent(ImageHandle handle) const {
+    assert(handle.isValid() && handle.poolIndex < m_images.size());
+    return m_images[handle.poolIndex].spec.extent;
+}
+
 uint32_t TransientImagePool::DEBUG_getFreeSlotCount() const {
     uint32_t count = 0;
     for (const auto& entry : m_images) {

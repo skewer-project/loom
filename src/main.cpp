@@ -328,9 +328,16 @@ int main(int argc, char** argv) {
                 } else if (viewerOutput.isValid()) {
                     const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
                         static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));
+                    // Source extent (the viewer's HDR image native size) is
+                    // queried from the pool so DisplayPass can aspect-fit
+                    // the source into the viewport regardless of EXR
+                    // resolution — fixes the unrendered-region glitch where
+                    // an out-of-range imageLoad returned garbage.
+                    const VkExtent2D srcExtent = imagePool.getExtent(viewerOutput);
                     displayPass.record(cmd, imagePool.getImage(viewerOutput),
                                        imgui.getViewportImage(), imgui.getViewportImageView(),
                                        bindlessSet, viewerOutput.bindlessSlot, vpW, vpH,
+                                       srcExtent.width, srcExtent.height,
                                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
                                        /*exposure=*/1.0f);
                 } else if (vpW > 0 && vpH > 0) {

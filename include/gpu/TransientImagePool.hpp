@@ -50,6 +50,12 @@ class TransientImagePool {
 
     [[nodiscard]] VkImageView getView(ImageHandle handle) const;
     [[nodiscard]] VkImage getImage(ImageHandle handle) const;
+
+    // Source-extent accessor — needed by `DisplayPass` to aspect-fit the
+    // viewer's HDR image onto the viewport regardless of native EXR
+    // resolution. Returns the `ImageSpec::extent` the slot was acquired
+    // with. Asserts on an invalid / freed handle.
+    [[nodiscard]] VkExtent2D getExtent(ImageHandle handle) const;
     [[nodiscard]] uint32_t DEBUG_getBindlessSlot(ImageHandle handle) const {
         return handle.bindlessSlot;
     }

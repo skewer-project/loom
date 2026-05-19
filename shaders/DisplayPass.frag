@@ -6,17 +6,22 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0, rgba32f) uniform readonly image2D bindlessImages[];
 
-// Layout matches loom::color::DisplayParams and the C++ PushConstants struct
-// in DisplayPass.hpp. Extending this requires updating all three in lockstep.
+// Layout matches the C++ PushConstants struct in DisplayPass.hpp. Extending
+// this requires updating both in lockstep. The viewer's HDR source image may
+// have a different resolution and aspect ratio than the destination viewport
+// (e.g. a 1024² deep EXR composited onto a 1280×720 panel) — `width / height`
+// are the destination viewport extent; `srcWidth / srcHeight` are the source
+// image's native extent. The fragment shader aspect-fits the source into the
+// viewport with a black letterbox.
 layout(push_constant) uniform PushConstants {
     uint  inputSlotIndex;
-    uint  width;
-    uint  height;
-    uint  toneMapMode;        // 0 = Linear, 1 = Reinhard, 2 = ACES (Narkowicz)
-    uint  displayTransform;   // 0 = None, 1 = sRGB OETF, 2 = Rec.709 Gamma 2.2
+    uint  width;             // destination viewport width
+    uint  height;            // destination viewport height
+    uint  srcWidth;          // source HDR image width
+    uint  srcHeight;         // source HDR image height
+    uint  toneMapMode;       // 0 = Linear, 1 = Reinhard, 2 = ACES (Narkowicz)
+    uint  displayTransform;  // 0 = None, 1 = sRGB OETF, 2 = Rec.709 Gamma 2.2
     float exposure;
-    float _pad0;
-    float _pad1;
 }
 pc;
 
@@ -48,9 +53,33 @@ vec3 applyDisplayTransform(vec3 c) {
 }
 
 void main() {
-    ivec2 texel = ivec2(clamp(inUV * vec2(pc.width, pc.height),
-                              vec2(0.0),
-                              vec2(pc.width - 1, pc.height - 1)));
+    // Aspect-fit math. Compute the half-padding (in 0..1 viewport coords)
+    // along the axis where the source is "smaller". The other axis fits the
+    // viewport edge-to-edge.
+    float srcAspect = float(pc.srcWidth) / float(pc.srcHeight);
+    float vpAspect  = float(pc.width)    / float(pc.height);
+    vec2 letterbox = vec2(0.0);
+    if (srcAspect > vpAspect) {
+        // Source is wider than viewport → letterbox top + bottom.
+        float h = vpAspect / srcAspect;
+        letterbox.y = (1.0 - h) * 0.5;
+    } else {
+        // Source is taller / square → letterbox left + right.
+        float w = srcAspect / vpAspect;
+        letterbox.x = (1.0 - w) * 0.5;
+    }
+
+    // Remap viewport UV → source UV by stripping the letterbox margins.
+    vec2 srcUV = (inUV - letterbox) / (vec2(1.0) - 2.0 * letterbox);
+    if (any(lessThan(srcUV, vec2(0.0))) || any(greaterThanEqual(srcUV, vec2(1.0)))) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    // Sample the source at its native resolution. The clamp guards against
+    // float rounding pushing the texel one past the last valid index.
+    ivec2 texel = ivec2(srcUV * vec2(pc.srcWidth, pc.srcHeight));
+    texel = clamp(texel, ivec2(0), ivec2(int(pc.srcWidth) - 1, int(pc.srcHeight) - 1));
     vec4 hdr = imageLoad(bindlessImages[pc.inputSlotIndex], texel);
 
     vec3 color = hdr.rgb * pc.exposure;

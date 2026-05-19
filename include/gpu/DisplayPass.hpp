@@ -13,9 +13,17 @@ class DisplayPass {
     DisplayPass(VkDevice device, VkFormat swapchainFormat, VkDescriptorSetLayout bindlessLayout);
     ~DisplayPass();
 
+    // `width` / `height` are the destination viewport dimensions; `srcWidth`
+    // / `srcHeight` are the source HDR image's native dimensions. The
+    // fragment shader aspect-fits the source into the destination viewport
+    // with a black letterbox so EXRs whose aspect doesn't match the
+    // viewport render cleanly (no undefined-load garbage in the unused
+    // strip — see docs/archive/feature-open-exr-2026.md "Phase B.8
+    // follow-up #2").
     void record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage, VkImageView dstImageView,
                 VkDescriptorSet bindlessSet, uint32_t bindlessSlot, uint32_t width, uint32_t height,
-                uint32_t toneMapMode, uint32_t displayTransform, float exposure);
+                uint32_t srcWidth, uint32_t srcHeight, uint32_t toneMapMode,
+                uint32_t displayTransform, float exposure);
 
   private:
     void createPipeline(VkFormat swapchainFormat, VkDescriptorSetLayout bindlessLayout);
@@ -30,13 +38,13 @@ class DisplayPass {
     // three in lockstep.
     struct PushConstants {
         uint32_t inputSlotIndex;
-        uint32_t width;
-        uint32_t height;
+        uint32_t width;      // destination viewport width
+        uint32_t height;     // destination viewport height
+        uint32_t srcWidth;   // source HDR image width
+        uint32_t srcHeight;  // source HDR image height
         uint32_t toneMapMode;
         uint32_t displayTransform;
         float exposure;
-        float _pad0;
-        float _pad1;
     };
 };
 
