@@ -1991,3 +1991,124 @@ worker-thread reader, deep merge / transform — starts on this
 foundation.
 
 ---
+
+## Phase B.8 — Post-merge follow-ups
+
+A live-GUI smoke pass after Phase B.8 landed surfaced three issues that
+the headless test environment couldn't catch. Folded back into the
+B.8 archive because they patch B.8's own seams; each is a small change
+delivered as its own commit.
+
+### Follow-up 1 — Point-cloud clipping at zoom-in (commit `2e1895b`)
+
+**Symptom.** Zooming the orbit camera in past the initial framing
+distance clipped the back of the point cloud — the scene's far surface
+disappeared into the far plane.
+
+**Root cause.** `Camera::frameToBounds` sets near / far *once* at
+framing time using the framing distance as the anchor. The orbit
+controller then mutates `camera.position()` every frame to react to
+mouse drag / wheel, but never touches `m_near` / `m_far`. As soon as
+the orbit radius differs from the original framing distance, the clip
+planes no longer enclose the bounding sphere.
+
+**Fix.** Remember the scene center + radius alongside
+`lastFramedSamples`. After `drawDockspace` (which runs the orbit
+controller) but before `dispatchManager.submit`, recompute near / far
+from `||camera.position() − sceneCenter||` and the cached radius —
+plus a 10 % margin so the sphere boundary doesn't sit on the plane.
+The update is unconditional whenever the engine has a valid framed
+scene; for the demo `Constant → Viewer` graph the cached radius stays
+at 0 and the camera keeps its default planes.
+
+**Files.** `src/main.cpp` only — single tracked state pair
+(`lastFramedCenter`, `lastFramedSceneRadius`) plus a six-line per-frame
+update.
+
+### Follow-up 2 — Node-editor wheel accumulator (commit `4d07b50`)
+
+**Symptom.** Small scroll inputs (trackpad gestures, hi-res mouse
+fractional ticks) didn't zoom the canvas. Symptom worsened after a
+RMB-pan gesture — the editor seemed to "stick" at the current zoom
+for several extra ticks before resuming.
+
+**Root cause.** `imgui-node-editor`'s `NavigateAction::Action_Navigate`
+contains `auto steps = (int)io.MouseWheel;`. The cast truncates toward
+zero, so `(int)0.3 == 0` — a fractional wheel event produces no zoom
+step. The earlier B.8.3 fix (`CustomZoomLevels`) addressed step *size*
+but not the truncation; finer levels can't help if you never reach a
+single integer step.
+
+**Why the original plan's option-1 ("multi-tick smoothing in our
+wrapper") was the wrong recipe.** The plan framed option 1 as *slowing
+down* the wheel — accumulate input, forward a tick when accumulator
+crosses a threshold. The actual problem is the opposite: the editor
+*loses* fractional input, so we need to *concentrate* sub-tick events
+into integer pulses, not throttle them.
+
+**Fix.** Add `float m_zoomAccum` to `NodeEditorPanel`. When the panel
+is hovered, rewrite `io.MouseWheel` in place: accumulate, and when
+`|accum| >= 1.0` emit `±1.0` and decrement; otherwise zero out the
+wheel for this frame. The rewrite is safe because the viewport panel
+(the other wheel consumer) is drawn *before* `nodeEditor.draw` in
+`main.cpp`'s per-frame ordering, so its hover branch has already
+finished reading the original wheel value. Stale-accumulator decay
+prevents a small mouse wobble from leaving residue that mis-aligns a
+later deliberate scroll.
+
+**Files.** `include/ui/NodeEditorPanel.hpp` (field), `src/ui/NodeEditorPanel.cpp`
+(rewrite block ahead of `ed::Begin`).
+
+### Follow-up 3 — Flat 2D pan + zoom (commit `948d6a6`)
+
+**Status.** Plan B.8 framed Flat 2D as carrying forward the existing
+non-interactive image. The user's smoke confirmed this matched the
+plan but felt asymmetric next to PointCloud 3D's orbit camera.
+Treating this as missing functionality (rather than an unfiled
+feature) was the right call — pan + zoom is the baseline-expected UX
+for a 2D image viewer.
+
+**Approach.** Apply pan + zoom as UV-coord transforms on the
+`ImGui::Image` call. The viewport image *is* the rendered output of
+`DisplayPass` at the panel's exact pixel resolution; pan / zoom is
+therefore a screen-space crop into that texture, not a re-render with
+different camera. Pros: zero compute cost (UV passed to ImGui's
+draw-list), zero plumbing into `DisplayPass`, instant
+"interactivity-feels-good" response. Cons: at high zoom the user sees
+single-pixel magnification rather than a re-render at finer
+resolution — acceptable for v1 since the alternative is wiring a 2D
+zoom transform into the entire viewer chain.
+
+**Math.**
+- `m_view2DCenter` is the UV coord at the viewport center
+  (`(0.5, 0.5)` = image center, default).
+- `m_view2DZoom` is the magnification factor.
+- UV span: `uv0 = center - 0.5/zoom`, `uv1 = center + 0.5/zoom`.
+- Drag → `center -= delta / (viewportSize * zoom)`.
+- Wheel → cursor-anchored zoom: the UV at the cursor position before
+  and after the zoom change is held invariant by adjusting `center`.
+  Without anchoring, every zoom recenters on the image middle, which
+  feels wrong for a viewer that's already been panned.
+- Zoom clamp `[0.05, 64]`. Below 0.05 the image becomes pixel-sized;
+  above 64 we're sampling a single source texel many times.
+
+**State preserves across mode toggles.** Switching to PointCloud 3D
+and back keeps the user's framing. The pan / zoom state is *not*
+reset on a new deep payload — the auto-frame is a 3D-only concept;
+the 2D view stays where the user last left it.
+
+**Files.** `include/ui/ImGuiRenderer.hpp` (two fields + handler
+declaration), `src/ui/ImGuiRenderer.cpp` (`applyView2DInput` + UV
+plumbing in `drawDockspace`).
+
+### Verification (all three follow-ups)
+
+- Build: clean on each commit.
+- `ctest --preset debug` — 146/146 passing throughout. No new tests
+  added: clip-plane refresh and 2D UV math are GUI-driven and best
+  smoked live; the wheel-accumulator is an `io.MouseWheel`
+  read-modify-write that would test the ImGui IO stub more than the
+  behaviour.
+- Live smoke (user session): all three resolved.
+
+---

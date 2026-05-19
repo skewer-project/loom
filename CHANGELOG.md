@@ -126,6 +126,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `NodeEditorPanel` config now sets a 26-step `CustomZoomLevels`
   array (~12 % per stop) replacing imgui-node-editor's default ~50 %
   stops. A single wheel tick no longer skips past target scale.
+- `NodeEditorPanel` additionally accumulates fractional
+  `io.MouseWheel` events. imgui-node-editor casts the wheel to int
+  before zooming, so trackpad / hi-res-mouse sub-tick events (~0.1
+  per frame) used to drop on the floor; we synthesise integer ±1
+  pulses once the accumulator crosses 1.0.
+- Flat 2D viewport supports drag-to-pan and wheel-zoom (cursor
+  anchored). Applied via custom UV coords on the `ImGui::Image`;
+  state persists across mode toggles.
+- Engine main loop updates `Camera` near / far planes every frame
+  from the current orbit distance + the most-recently-framed scene
+  radius. The point-cloud no longer clips at the back when the user
+  zooms in past the original framing distance.
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
   are now editable in the UI rather than hardcoded.
 - `gpu::HazardTracker` widened from image-only keys to `ResourceKey
