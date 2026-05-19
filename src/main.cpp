@@ -316,8 +316,14 @@ int main(int argc, char** argv) {
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
                                        pipelineLayout, &imagePool);
 
+                // Bridge during the migration: while Step 8 hasn't yet
+                // wired the CameraNode + PointCloudRenderNode chain,
+                // selecting Orbit 3D from the input-mode dropdown still
+                // engages the engine-managed PointCloudPass call below.
+                // Step 8 deletes this branch once the node graph drives
+                // the render.
                 const bool wantPointCloud =
-                    imgui.getViewportMode() == loom::ui::ViewportMode::PointCloud3D;
+                    imgui.getViewportInputMode() == loom::ui::ViewportInputMode::Orbit3D;
                 const uint32_t vpW = static_cast<uint32_t>(imgui.getViewportSize().x);
                 const uint32_t vpH = static_cast<uint32_t>(imgui.getViewportSize().y);
 

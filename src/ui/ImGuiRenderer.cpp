@@ -308,16 +308,18 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     ImGui::Begin("Viewport", nullptr,
                  ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    // Mode selector. Drawn in the viewport panel header above the image so
-    // the user can swap between flat 2D and the point-cloud renderer
-    // without leaving the panel. Only rendered when an orbit camera is
-    // available; absent it, mode is implicitly Flat2D.
+    // Input-mode selector. Drawn in the viewport panel header above the
+    // image so the user can swap drag-pans-2D vs drag-orbits-3D-camera
+    // without leaving the panel. The choice controls *gesture
+    // interpretation*, not which renderer runs (that's a graph-wiring
+    // decision now per CONVENTIONS §21). Only rendered when an orbit
+    // camera is available; absent it, mode is implicitly Pan2D.
     if (orbitCamera) {
-        const char* items[] = {"Flat 2D", "PointCloud 3D"};
-        int current = static_cast<int>(m_viewportMode);
+        const char* items[] = {"Pan 2D", "Orbit 3D"};
+        int current = static_cast<int>(m_viewportInputMode);
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::Combo("##viewport-mode", &current, items, IM_ARRAYSIZE(items))) {
-            m_viewportMode = static_cast<ViewportMode>(current);
+        if (ImGui::Combo("##viewport-input-mode", &current, items, IM_ARRAYSIZE(items))) {
+            m_viewportInputMode = static_cast<ViewportInputMode>(current);
         }
     }
 
@@ -341,14 +343,13 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     }
 
     if (m_viewportTextureId) {
-        // UV mapping: at zoom = 1 and center = (0.5, 0.5) we draw the full
-        // image (uv0 = (0,0), uv1 = (1,1)) — preserves the existing Flat 2D
-        // behaviour. Zooming in halves the UV span; panning shifts the
-        // center. Outside Flat 2D mode the UV is forced back to the
-        // identity so the point-cloud framebuffer renders edge-to-edge.
+        // UV mapping: in Pan2D mode the 2D pan/zoom state controls which
+        // sub-rect of the source image is shown. In Orbit3D mode the UV
+        // is the identity (orbit gestures don't touch the framebuffer
+        // crop — they mutate the camera, which re-renders next frame).
         ImVec2 uv0(0.0f, 0.0f);
         ImVec2 uv1(1.0f, 1.0f);
-        if (m_viewportMode == ViewportMode::Flat2D) {
+        if (m_viewportInputMode == ViewportInputMode::Pan2D) {
             const float half = 0.5f / std::max(m_view2DZoom, 1.0e-3f);
             uv0 = {m_view2DCenter.x - half, m_view2DCenter.y - half};
             uv1 = {m_view2DCenter.x + half, m_view2DCenter.y + half};
@@ -357,13 +358,12 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
         // exactly. Do NOT flip the V coordinate here.
         ImGui::Image((ImTextureID)m_viewportTextureId, currentSize, uv0, uv1);
 
-        // Route mouse drag / scroll over the image to the active mode's
-        // input handler. Flat 2D consumes drag → pan and wheel → zoom;
-        // PointCloud 3D feeds the orbit camera. Modes are mutually
-        // exclusive — only one handler runs per frame.
-        if (m_viewportMode == ViewportMode::Flat2D) {
+        // Route mouse drag / scroll over the image to the active input-
+        // mode's handler. Modes are mutually exclusive — only one
+        // handler runs per frame.
+        if (m_viewportInputMode == ViewportInputMode::Pan2D) {
             applyView2DInput();
-        } else if (orbitCamera && m_viewportMode == ViewportMode::PointCloud3D) {
+        } else if (orbitCamera && m_viewportInputMode == ViewportInputMode::Orbit3D) {
             applyOrbitInput(*orbitCamera);
         }
     } else {

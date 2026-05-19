@@ -14,15 +14,21 @@ class Camera;
 
 namespace loom::ui {
 
-// Which renderer drives the viewport panel for this frame.
-//   - Flat2D — the existing DisplayPass path: a viewer ImageHandle gets
-//     tone-mapped + display-encoded into the viewport image.
-//   - PointCloud3D — Phase B.5's PointCloudPass: the upstream deep payload
-//     gets rasterised as a depth-tested per-sample point cloud, with the
-//     orbit camera providing view/proj.
-enum class ViewportMode : uint8_t {
-    Flat2D = 0,
-    PointCloud3D = 1,
+// How mouse gestures over the viewport panel are interpreted.
+//   - Pan2D — drag pans the displayed image; scroll wheel zooms (cursor-
+//     anchored). Suitable for any 2D viewer flow.
+//   - Orbit3D — drag yaw/pitch the active CameraNode; scroll wheel
+//     adjusts the orbit radius. Suitable when the viewer shows the output
+//     of a 3D renderer (`PointCloudRenderNode`, future splat passes).
+//
+// Note: this enum no longer chooses *which renderer runs*; that's a graph-
+// wiring decision now (per CONVENTIONS §21). It only routes input
+// gestures. A user who chooses Orbit3D against a flat 2D output gets
+// harmless no-ops (no camera node in the chain to mutate); a user who
+// chooses Pan2D against a 3D render pans the rendered framebuffer pixels.
+enum class ViewportInputMode : uint8_t {
+    Pan2D = 0,
+    Orbit3D = 1,
 };
 
 struct ImGuiRendererCreateInfo {
@@ -68,8 +74,8 @@ class ImGuiRenderer {
     VkImage getViewportImage() const { return m_viewportImage; }
     VkImageView getViewportImageView() const { return m_viewportImageView; }
 
-    ViewportMode getViewportMode() const { return m_viewportMode; }
-    void setViewportMode(ViewportMode mode) { m_viewportMode = mode; }
+    ViewportInputMode getViewportInputMode() const { return m_viewportInputMode; }
+    void setViewportInputMode(ViewportInputMode mode) { m_viewportInputMode = mode; }
 
     // Re-derive orbit state (yaw / pitch / radius) from the camera's
     // current pose. Call after externally repositioning the camera (e.g.
@@ -96,7 +102,7 @@ class ImGuiRenderer {
     VkImageView m_viewportImageView = VK_NULL_HANDLE;
     VmaAllocation m_viewportAllocation = VK_NULL_HANDLE;
 
-    ViewportMode m_viewportMode = ViewportMode::Flat2D;
+    ViewportInputMode m_viewportInputMode = ViewportInputMode::Pan2D;
 
     // Orbit-camera state. Spherical coordinates around the camera target.
     // Initialised lazily on first mutation so unedited cameras keep their
