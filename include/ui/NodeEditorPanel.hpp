@@ -29,6 +29,14 @@ class NodeEditorPanel {
     core::Graph* m_graph;
     ax::NodeEditor::EditorContext* m_context;
     std::unordered_map<core::NodeHandle, UINodeState> m_nodeStates;
+
+    // Fractional-wheel accumulator. imgui-node-editor truncates
+    // `io.MouseWheel` to int before zooming, so trackpad-style events
+    // (typical magnitude 0.1-0.3 per frame) get dropped on the floor.
+    // We accumulate in this float and synthesise integer ±1 pulses when
+    // the magnitude crosses 1.0 — see the comment in `draw()` for the
+    // full rationale.
+    float m_zoomAccum = 0.0f;
 };
 
 }  // namespace loom::ui

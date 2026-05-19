@@ -2,6 +2,7 @@
 
 #include <imgui.h>
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <variant>
@@ -120,6 +121,42 @@ void NodeEditorPanel::draw(const char* title) {
     // intercept the scroll before the editor's navigate action sees it
     // (same class of bug as B.8.1's viewport mouse-wheel capture).
     ImGui::Begin(title, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+    // Fractional-wheel handling. imgui-node-editor's NavigateAction does
+    // `auto steps = (int)io.MouseWheel;` so any single-frame wheel value
+    // with magnitude < 1 truncates to zero steps. Macbook trackpads and
+    // hi-res mice emit fractional events (typically 0.1-0.3 per tick);
+    // without this accumulator, scrolling those input devices produces
+    // no zoom at all. Also explains the "after panning, zoom stops
+    // working" symptom — RMB-drag-to-pan leaves the wheel handler at a
+    // sub-tick residual that takes several frames to recover from.
+    //
+    // We rewrite `io.MouseWheel` in place (then let it propagate into the
+    // editor) when this panel is hovered. Other panels read the wheel
+    // *before* this point (`drawDockspace` runs before `nodeEditor.draw`
+    // in `main.cpp`) so the rewrite has no effect on viewport orbit
+    // zoom. Once accumulator magnitude crosses 1, we pulse ±1 to the
+    // editor and decrement; sub-threshold scrolls accumulate silently.
+    ImGuiIO& io = ImGui::GetIO();
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+        std::abs(io.MouseWheel) > 0.0f) {
+        m_zoomAccum += io.MouseWheel;
+        if (m_zoomAccum >= 1.0f) {
+            io.MouseWheel = 1.0f;
+            m_zoomAccum -= 1.0f;
+        } else if (m_zoomAccum <= -1.0f) {
+            io.MouseWheel = -1.0f;
+            m_zoomAccum += 1.0f;
+        } else {
+            io.MouseWheel = 0.0f;
+        }
+    } else if (std::abs(m_zoomAccum) < 1.0f) {
+        // Reset stale accumulator when the user releases scroll without
+        // ever crossing the threshold. Without this the residue from a
+        // small mouse wobble persists across frames and a later
+        // deliberate scroll feels mis-aligned.
+        m_zoomAccum = 0.0f;
+    }
 
     ed::SetCurrentEditor(m_context);
     ed::Begin("Node Editor");
