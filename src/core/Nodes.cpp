@@ -14,6 +14,7 @@
 #include "core/RenderCache.hpp"
 #include "gpu/DeepUpload.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "gpu/PointCloudPass.hpp"
 #include "gpu/StagingArena.hpp"
 #include "gpu/TransientBufferPool.hpp"
 #include "gpu/TransientImagePool.hpp"
@@ -574,12 +575,6 @@ void CameraNode::execute(EvaluationContext& ctx, const Region& region) {
 // -----------------------------------------------------------------------------
 // PointCloudRenderNode
 // -----------------------------------------------------------------------------
-//
-// v1 implementation is a stub that emits an invalid Image — Step 6 fills
-// this in once `PointCloudPass` has been pivoted to render onto an
-// arbitrary target image (Step 5). Keeping the type registered now means
-// the addNode switch + spawn menu can land alongside CameraNode without a
-// forward dependency on the GPU pivot.
 
 std::vector<PinSpec> PointCloudRenderNode::getPinSchema() const {
     return {{PinDirection::Input, PinType::DeepBuffer},
@@ -620,10 +615,56 @@ void PointCloudRenderNode::markRequiredTiles(const Region& requestedRegion,
 }
 
 void PointCloudRenderNode::execute(EvaluationContext& ctx, const Region& region) {
-    // Step 6 fills this in. v1 stub stores an invalid Image so downstream
-    // ViewerNodes don't see undefined behaviour while the GPU pivot lands.
     if (outputs.empty()) return;
-    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage({}));
+
+    gpu::ResourceRef::DeepRef deep = pullDeepInput(ctx, region, 0);
+    gpu::ResourceRef::CameraRef cam = pullCameraInput(ctx, region, 1);
+
+    // Bail to an invalid Image output when either input is missing or the
+    // engine context lacks the shared graphics pass / image pool. Matches
+    // the "store invalid downstream" pattern used by `DeepEXRReadNode` and
+    // `DeepFlattenNode`: downstream nodes see an unconnected upstream and
+    // produce their own placeholders.
+    if (!deep.samples.isValid() || deep.totalSamples == 0 || !ctx.pointCloudPass ||
+        !ctx.imagePool) {
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage({}));
+        return;
+    }
+
+    // Allocate an RGBA32F transient at the requested viewport extent.
+    // Usage matches the other image-producing nodes (`DeepFlatten`) plus
+    // `COLOR_ATTACHMENT_BIT` because PointCloudPass binds it as a colour
+    // attachment via `vkCmdBeginRendering`.
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT, ctx.requestedExtent,
+                        VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+    gpu::ImageHandle target = ctx.imagePool->acquire(spec);
+    if (!target.isValid()) {
+        log::warn("PointCloudRenderNode: imagePool exhausted");
+        ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage({}));
+        return;
+    }
+
+    // Combine the per-payload Z-scale hint (computed CPU-side at upload)
+    // with the user knob so non-NVS files navigate cleanly out of the box.
+    // NVS payloads carry `recommendedZScale = 1.0` so the knob acts on
+    // real units; non-NVS files multiply by `2 / extent.z` so the
+    // synthesised cube fits.
+    const float userZScale = floatParam(*this, "z_scale", 1.0f);
+    const float effectiveZScale = userZScale * deep.recommendedZScale;
+    const float pointSize = floatParam(*this, "point_size", 2.0f);
+
+    // PointCloudPass leaves the image in SHADER_READ_ONLY_OPTIMAL — fine
+    // for the downstream `DisplayPass` consumer (its pre-barrier expects
+    // SHADER_READ_ONLY). We must reflect that to the pool so a subsequent
+    // re-acquire of the same slot has the right layout state on entry.
+    ctx.pointCloudPass->record(ctx.cmd, deep, ctx.imagePool->getImage(target),
+                               ctx.imagePool->getView(target), ctx.bindlessSet,
+                               ctx.requestedExtent.width, ctx.requestedExtent.height, cam,
+                               effectiveZScale, pointSize);
+    ctx.imagePool->setLayout(target, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    ctx.renderCache->store(outputs[0], region, gpu::ResourceRef::fromImage(target));
 }
 
 }  // namespace loom::core

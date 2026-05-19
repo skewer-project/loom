@@ -16,6 +16,7 @@ class TransientImagePool;
 class TransientBufferPool;
 class PipelineCache;
 class StagingArena;
+class PointCloudPass;
 }  // namespace loom::gpu
 
 namespace loom::io {
@@ -47,6 +48,20 @@ struct EvaluationContext {
     // tests). Phase B onwards populates this whenever a `PointCloudPass`
     // or `PointCloudSplatPass` is in the active dispatch chain.
     const Camera* camera = nullptr;
+
+    // Engine-owned graphics pass shared between all `PointCloudRenderNode`
+    // instances in the graph. The node delegates its rendering call here
+    // rather than constructing its own pipeline / depth attachment (which
+    // would be per-node duplication). Nullable in headless tests; nodes
+    // emit invalid output when this is unset rather than crashing.
+    gpu::PointCloudPass* pointCloudPass = nullptr;
+
+    // Bindless descriptor set bound by graphics-pass-as-node call sites
+    // (`PointCloudRenderNode`). `DispatchManager::submit` binds this for
+    // compute tasks; graphics passes invoked from nodes bind it
+    // themselves. `VK_NULL_HANDLE` when not in a frame-recording context
+    // (headless tests).
+    VkDescriptorSet bindlessSet = VK_NULL_HANDLE;
 
     // Logical frame index. Drives time-varying parameters (deep-EXR sequence
     // playback in Phase C, animation curves in Phase E). Distinct from the
