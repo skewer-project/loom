@@ -89,8 +89,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   new `EvaluationContext` fields; routes per-frame pass selection on
   `ViewportMode` (`Flat2D` → `DisplayPass`, `PointCloud3D` →
   `PointCloudPass`).
+- `core::AABB` — minimal axis-aligned bounding-box reducer with a
+  `valid` flag; used as the world-space scene-extent hint on deep
+  payloads.
+- `gpu::ResourceRef::DeepRef::sceneBounds` — `core::AABB` computed
+  during `uploadDeepImage`'s SoA→AoS pass. NVS-aware: reads
+  `world_pos.{x,y,z}` directly when the layout exposes them, falls
+  back to the `PointCloud.vert` height-field synthesis (XY in
+  centered [-1, 1], Z = -frontDepth) otherwise. Filters the
+  `Z = 1e+10` background sentinel and non-finite samples; an
+  all-sentinel payload yields `valid = false`.
+- `gpu::reduceSceneBounds` — exposed pure-CPU reduction so the
+  bounds-compute behaviour is testable without a GPU device.
+- `core::Camera::frameToBounds(center, radius, padding)` — sphere-fit
+  reframer. Recenters target, places the camera on +Z at
+  `padding * radius / sin(fovY/2)`, and widens near / far planes to
+  cover the sphere.
+- `ui::ImGuiRenderer::resyncOrbitFromCamera` — exposes the lazy
+  orbit-from-camera derivation so external repositioning (auto-frame)
+  picks up the new pose cleanly.
+- Engine main loop auto-frames the camera the first time a valid deep
+  payload with non-empty `sceneBounds` reaches the cache, and again
+  whenever the payload identity (samples buffer pool index /
+  generation) changes.
 
 ### Changed
+- Viewport panel opens with `ImGuiWindowFlags_NoScrollbar |
+  ImGuiWindowFlags_NoScrollWithMouse` — scroll wheel now reaches the
+  orbit camera instead of being consumed by the panel scrollbar.
+  Same flags applied to the Node Editor panel so the wheel reaches
+  the canvas zoom.
+- Orbit drag sensitivity scales by `tan(fovY/2)` and viewport height
+  so a one-screen-height drag always produces a fixed yaw / pitch
+  regardless of zoom level or window size. Zoom radius bounds widened
+  to `[0.001, 1e6]` so kilometer-scale scenes remain reachable.
+- `NodeEditorPanel` config now sets a 26-step `CustomZoomLevels`
+  array (~12 % per stop) replacing imgui-node-editor's default ~50 %
+  stops. A single wheel tick no longer skips past target scale.
 - `ConstantNode` and `MergeNode` migrated onto the Param system — fill colours
   are now editable in the UI rather than hardcoded.
 - `gpu::HazardTracker` widened from image-only keys to `ResourceKey

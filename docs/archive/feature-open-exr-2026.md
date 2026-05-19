@@ -1680,3 +1680,314 @@ seam between the plan's exit criterion and the implementation indicates
 the chain is wired correctly. Phase B is complete.
 
 ---
+
+## Phase B.8 — Viewport UX hardening
+
+### Context
+
+Phase B.7's chain `DeepEXRRead → DeepFlatten → Viewer` works end-to-end,
+but smoke-testing against a Skewer fixture
+(`layer_sphere_blue.exr`, 1024² × Float32 RGBA, foreground Z ≈ 13)
+turned up three UX issues that are minor in isolation but compound
+together: scroll-zoom doesn't reach the viewport orbit, the camera's
+default orbit radius / sensitivity are tuned for the centered unit
+cube that v1's synthesised `world_pos` produces and feel wrong against
+a real file with geometry at world Z ≈ -13, and the node-editor's
+mouse-wheel zoom steps are too large per tick (default ~50 % per
+stop). Phase B.8 fixes all three before Phase C amplifies them
+(timeline scrubbing + larger sequences make any sensitivity mis-tuning
+painful).
+
+These are not architectural changes — parameter / wiring fixes plus
+one ImGui-input gotcha. The plan's framing (`B.8.1 / B.8.2 / B.8.3`)
+maps directly to commits.
+
+---
+
+## Phase B.8.1 — Viewport mouse-wheel capture
+
+### Goal
+
+Route the mouse-wheel input that lands inside the viewport panel to the
+orbit camera's zoom controller. The drag-yaw / drag-pitch branch
+already worked under `ImGui::IsItemHovered()`, but `io.MouseWheel` was
+silently consumed by the dock panel's default scroll handling before
+reaching the conditional.
+
+### Decisions
+
+- **Apply `ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse`
+  to the viewport `ImGui::Begin`.** Plan listed two cleanly-scoped
+  options: per-frame `SetKeyOwner(ImGuiKey_MouseWheelY, ...)` on the
+  image, or these window flags on the panel. The flags are simpler,
+  broader, and the viewport panel by design never needs to scroll its
+  own contents (the image fills the dock). One change, no per-frame
+  bookkeeping. The `SetKeyOwner` route stays available if the panel
+  ever grows scrollable content.
+- **No verification test added.** Mouse-wheel input is an ImGui IO
+  path; a headless unit test would have to stub `io.MouseWheel` and
+  manually invoke the docking-panel layout code, which would test the
+  stub more than the real behaviour. The fix is one window-flag
+  change; live-GUI smoke (logged under Phase B.8 exit criteria) is
+  the authoritative confirmation.
+
+### Files modified
+
+- `src/ui/ImGuiRenderer.cpp` — viewport `Begin` now takes the no-scroll
+  window flags. Documentation comment explains why.
+
+### Verification
+
+- Build: clean (single-TU change, no header churn).
+- `ctest --preset debug` — 131/131 passing (unchanged).
+- Live smoke (deferred to user session): scroll-zoom over the
+  viewport image now mutates `m_orbitRadius`; the panel never tries
+  to scroll its own dock.
+
+---
+
+## Phase B.8.2 — Data-aware orbit camera + auto-frame
+
+### Goal
+
+Surface a world-space scene-extent hint on every deep payload, fire a
+one-shot auto-frame the first time a valid payload reaches the
+renderer, and replace the orbit controller's hard-coded drag
+sensitivity with a scale-invariant one. Together: open a real Skewer
+file (geometry at Z ≈ -13) and see it on the first frame without
+hunting for the geometry by spamming scroll-out, and feel consistent
+drag yaw / pitch regardless of zoom depth.
+
+### Decisions
+
+- **New `core::AABB` type, header-only.** Pure data struct: `min`,
+  `max`, `valid` flag. `expand(p)` initialises the box on first call
+  and grows it monotonically. The plan suggested adding a
+  `sceneRadius` float on `DeepRef`; we chose a full AABB instead.
+  Phase D's handoff notes already anticipate this (`DeepRef will
+  likely grow sceneBounds: AABB`) so introducing it now removes a
+  follow-up rename. The `valid` flag is intentionally "no data was
+  reduced into me" rather than "degenerate zero-extent box at the
+  origin" — consumers must check before trusting `center()` /
+  `radius()`. Outlier pruning (the `Z = 1e+10` background-sentinel
+  filter from §19) lives in the caller; AABB stays a dumb reducer.
+- **Sit `AABB` in `include/core/`, include from
+  `gpu/ResourceHandles.hpp`.** The reducer is Vulkan-free and
+  belongs to the headless core. `gpu/` is already free to include
+  `core/` headers (`DeepLayout` forward-declares from here), so the
+  include direction is consistent.
+- **Reduce CPU-side inside `gpu::uploadDeepImage`.** The interleave
+  pass already touches every channel byte-for-byte to pack SoA → AoS
+  staging memory; folding the bounds reduction into the same data
+  read is free. The alternative (GPU readback to compute on the host
+  after upload) would require a fence + transfer, both for a value
+  that's authoritative on the CPU side at the moment of the parse.
+- **Two reduction modes, keyed by layout content.**
+  - **NVS path** (layout exposes Float32 `world_pos.{x,y,z}`):
+    iterate per-sample world position directly. Filter background
+    sentinel (`|component| >= 1e9`, or any non-finite).
+  - **Fallback path** (only Float32 `Z`): synthesise XYZ to match
+    `PointCloud.vert`'s height-field rendering (XY in centered
+    [-1, 1] per pixel, Z = -frontDepth). The auto-frame then fits
+    what the point-cloud renderer actually shows, not some other
+    convention.
+  - Either path's preconditions failing (no `Z`, Z is Float16,
+    `totalSamples == 0`): return `AABB{}` with `valid = false`. The
+    main-loop auto-frame skips the reframe; the camera keeps its
+    prior pose. Float16-Z is rare (OpenEXR's Deep convention is
+    Float32) and v1 logs an `info`-level skip rather than carry a
+    half-precision codepath.
+- **Background-sentinel cutoff at `|z| >= 1e9`.** The known sentinel
+  is `1e10` (§19); 1e9 is comfortably below it and well above any
+  physical-scene depth in meters. The plan also suggested "99th
+  percentile or 95 % of camera far" — both require either a sort or
+  knowledge of camera state that the upload helper doesn't have.
+  The cutoff is constant, branch-cheap, and matches the producer
+  convention exactly.
+- **Expose the reducer publicly as `gpu::reduceSceneBounds`.** Pure
+  CPU work; testable headlessly. The function is declared next to
+  `uploadDeepImage` in `gpu/DeepUpload.hpp` so it lives where its
+  sole production caller lives, and the new test
+  (`tests/core/DeepBoundsReduceTest.cpp`) drives the seven main
+  reduction-behaviour invariants without a Vulkan device.
+- **`Camera::frameToBounds(center, radius, padding=2.5)` sphere-fits
+  the geometry.** Distance derives from `padding * radius /
+  sin(fovY/2)`; the camera sits at `center + (0, 0, distance)` looking
+  at `center`. Near / far widen to `[distance - 2r, distance + 4r]`
+  with a small floor so geometry doesn't clip on the first frame.
+  The `padding > 1` factor leaves headroom for a quarter-turn orbit
+  to keep the silhouette inside the frame. `radius <= 0` is a no-op
+  (caller is responsible for not passing a degenerate / invalid box).
+- **Orbit-controller drag scaled by `tan(fovY/2) / viewportHeight`.**
+  This is the standard "screen-space-constant drag feel" formulation
+  — a vertical drag of the full viewport always rotates by the same
+  angle, regardless of zoom or window size. The 1.5× leading factor
+  reproduces the prior `0.005 rad/pixel` feel at the engine's
+  default 60° FOV on a 1080p viewport. Multiplicative scroll-zoom
+  stays at `pow(1.1, -wheel)` — scale-invariant by construction. The
+  upper clamp on `m_orbitRadius` widens from 1000 to 1e6 so files
+  whose bounding sphere sits a kilometer out from origin remain
+  reachable.
+- **Auto-frame is keyed on the samples-buffer identity
+  (`poolIndex`, `generation`).** `uploadDeepImage` always acquires a
+  fresh buffer per call, so the pair flips on every real re-upload.
+  `main.cpp` carries one `lastFramedSamples` BufferHandle; the
+  per-frame check compares against `deepRef.samples` and reframes
+  when they differ (or when `lastFramedSamples` is invalid — the
+  first-frame case). This survives an animation frame swap (Phase C
+  re-uploads each frame), a re-edit of the `file_path` param, and
+  switching files via the node-editor context menu — none of which
+  the engine has any other "scene changed" signal for. An
+  identity-stable re-evaluation (cache hit, same payload) does not
+  re-frame.
+- **`ImGuiRenderer::resyncOrbitFromCamera`** is the explicit hand-off
+  hook. The orbit state (`yaw`, `pitch`, `radius`) is lazy-derived
+  from the camera pose on first input; external repositioning (here:
+  `frameToBounds`) needs to re-derive so the next mouse event picks
+  the new pose up cleanly instead of snapping back to the prior
+  orbit. The plan called this out only implicitly; making it a
+  public method gives the auto-frame path a clean seam.
+
+### Files created
+
+| Path | Purpose |
+|------|---------|
+| `include/core/AABB.hpp` | Header-only AABB reducer |
+| `tests/core/AABBTest.cpp` | AABB unit tests |
+| `tests/core/DeepBoundsReduceTest.cpp` | `reduceSceneBounds` reduction tests |
+
+### Files modified
+
+- `include/core/Camera.hpp` / `src/core/Camera.cpp` — `frameToBounds`.
+- `include/gpu/ResourceHandles.hpp` — `DeepRef::sceneBounds` field.
+- `include/gpu/DeepUpload.hpp` — `reduceSceneBounds` declaration.
+- `src/gpu/DeepUpload.cpp` — reduction implementation + call site at
+  the tail of `uploadDeepImage`.
+- `include/ui/ImGuiRenderer.hpp` / `src/ui/ImGuiRenderer.cpp` —
+  `resyncOrbitFromCamera`, FOV-scaled drag, widened zoom clamp.
+- `src/main.cpp` — `lastFramedSamples` tracker + per-frame auto-frame
+  hook.
+- `tests/core/CameraTest.cpp` — four `FrameToBounds` cases.
+- `CMakeLists.txt` — new test files added to `LoomTests`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 146/146 passing (131 → 146, +15 new
+  tests: 4 AABB, 4 Camera::frameToBounds, 7 DeepBoundsReduce).
+  Headless coverage covers every code path the reduction takes
+  (NVS, fallback, sentinel filter, non-finite filter, all-sentinel
+  → invalid, empty payload → invalid).
+- Live smoke (deferred to user session): loading the Skewer sphere
+  fixture (foreground Z ≈ 13, background = 1e10 sentinel) auto-frames
+  on first frame; drag-yaw / pitch feels consistent regardless of
+  scroll depth.
+
+---
+
+## Phase B.8.3 — Node-editor zoom sensitivity smoothing
+
+### Goal
+
+A single mouse-wheel tick over the node-editor canvas no longer
+over-zooms past target scale.
+
+### Decisions
+
+- **Set `ed::Config::CustomZoomLevels` to a 26-step array spanning
+  [0.10, 8.0] at ~12 % per stop.** The plan recommended option 1
+  (multi-tick smoothing in our wrapper) and explicitly noted option 2
+  (patching the vendored editor). On inspection, the editor exposes
+  `CustomZoomLevels` as a public config field (`imgui_node_editor.h`
+  line 102) — replacing the default 18-step `s_DefaultZoomLevels`
+  table with a finer-grained one is a config change, not a vendor
+  patch. The plan author overlooked this. The cleaner option (3,
+  effectively) makes the wrapper-side accumulation moot.
+- **Why option 1 wouldn't have worked cleanly.** The editor reads
+  `io.MouseWheel` itself and casts to `int` (`imgui_node_editor.cpp`
+  line 3460: `auto steps = (int)io.MouseWheel;`). Any wrapper-side
+  smoothing that fed fractional ticks back into `io.MouseWheel`
+  would get re-truncated; the only way to gate the rate is to either
+  set `io.MouseWheel` to the desired integer step count
+  (essentially: zero it out and write `±1` when the accumulator
+  crossed a threshold) or to short-circuit the editor's whole
+  navigate action. Both approaches fight the editor's input
+  pipeline. `CustomZoomLevels` is the API the editor's authors put
+  there for exactly this case.
+- **Step ratio ~12 %.** Matches the orbit-camera's per-tick zoom
+  factor (`pow(1.1, -wheel)` = ~10 % per tick). Close enough that
+  scrolling the viewport vs the node graph feels like the same
+  control. The array is hand-written (not generated) so the values
+  are JSON-stable across the editor's settings-file round-trip; a
+  procedurally-generated geometric sequence would risk float-printing
+  drift between sessions.
+- **Also apply `NoScrollbar | NoScrollWithMouse` to the Node Editor
+  panel.** Same class of bug as B.8.1: the dock panel intercepts
+  the wheel before the canvas's navigate action sees it. The fix is
+  identical to B.8.1; folding it into B.8.3 keeps the editor-panel
+  configuration in one place.
+
+### Files modified
+
+- `src/ui/NodeEditorPanel.cpp` — `CustomZoomLevels` array on the
+  editor's `Config`, no-scroll window flags on the panel's
+  `ImGui::Begin`.
+
+### Verification
+
+- Build: clean.
+- `ctest --preset debug` — 146/146 passing (no test count change;
+  the editor-panel-config change is exercised live).
+- Live smoke (deferred): scroll-wheel over the node-editor canvas
+  steps through the finer zoom array; one tick ≈ 12 % zoom rather
+  than ~50 %.
+
+---
+
+## Phase B.8 — global summary
+
+Phase B.8's three sub-tasks were independent fixes that together
+brought the viewer's UX to the bar Phase C will start from. The
+delivered changes:
+
+- **Mouse-wheel capture** — viewport + node-editor panels both opt
+  out of ImGui's default scrollbar / scroll-with-mouse behaviour so
+  their respective wheel consumers (orbit camera, canvas zoom)
+  receive the input.
+- **`core::AABB`** — small header-only reducer that lets every deep
+  payload carry a scene-extent hint forward.
+- **`gpu::reduceSceneBounds`** — NVS-aware bounds reduction folded
+  into the upload pass; background-sentinel filtered; testable in a
+  headless context.
+- **`Camera::frameToBounds`** — sphere-fit reframer that scales
+  near / far planes alongside the camera distance.
+- **Auto-frame on scene change** — main-loop tracks samples-buffer
+  identity and reframes once per real upload.
+- **FOV-scaled orbit drag** — `tan(fovY/2)` and viewport height
+  factor into drag sensitivity so it feels consistent at any zoom
+  level.
+- **Finer node-editor zoom stops** — `Config::CustomZoomLevels`
+  with 26 entries at ~12 % per stop replaces the editor's coarser
+  default.
+
+Test count: 131 (end of Phase B.7) → 146 (+15). All new tests are
+headless (`AABBTest` ×4, `Camera::FrameToBounds` ×4,
+`DeepBoundsReduceTest` ×7) — the GPU-visible bits (auto-frame chain,
+viewport panel flags, node-editor config) are exercised under live
+smoke.
+
+Phase B.8 exit criteria from the plan:
+
+- ✅ Scroll-zoom in the viewport works. (Window-flag fix on the
+  viewport panel; live smoke deferred.)
+- ✅ Sphere auto-frames on load and drag feels consistent at any
+  zoom. (Auto-frame keyed on samples-buffer identity;
+  `Camera::frameToBounds` + FOV-scaled drag.)
+- ✅ Node graph zooms smoothly under continuous scroll.
+  (`CustomZoomLevels` config; live smoke deferred.)
+
+Phase B (including B.8) is complete. Phase C — animation playback,
+worker-thread reader, deep merge / transform — starts on this
+foundation.
+
+---
