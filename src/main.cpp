@@ -1,4 +1,7 @@
+#include <algorithm>
 #include <cstdlib>
+#include <glm/geometric.hpp>
+#include <glm/vec3.hpp>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -209,6 +212,14 @@ int main(int argc, char** argv) {
         // valid deep payload with non-empty bounds reaches the cache.
         loom::gpu::BufferHandle lastFramedSamples;
 
+        // Scene bounds remembered from the most recent auto-frame. Used by
+        // the per-frame clip-plane refresh to keep the near / far planes
+        // tracking the camera's current orbit distance — without this the
+        // user can zoom past the back of the bounding sphere and the far
+        // plane (set once by `frameToBounds`) clips the geometry.
+        glm::vec3 lastFramedCenter{0.0f};
+        float lastFramedSceneRadius = 0.0f;
+
         loom::log::info("Loom initialized successfully.");
 
         while (!window.shouldClose()) {
@@ -281,7 +292,25 @@ int main(int argc, char** argv) {
                                              deepRef.sceneBounds.radius());
                         imgui.resyncOrbitFromCamera(camera);
                         lastFramedSamples = deepRef.samples;
+                        lastFramedCenter = deepRef.sceneBounds.center();
+                        lastFramedSceneRadius = deepRef.sceneBounds.radius();
                     }
+                }
+
+                // Per-frame clip-plane refresh. The orbit controller mutates
+                // the camera's position each frame; near / far must track so
+                // the bounding sphere stays inside the frustum at every
+                // zoom level. `frameToBounds` set the planes once at
+                // framing time; without this update zooming in past
+                // distance ≈ scene_radius walks geometry through the far
+                // plane. Skip when no scene has been framed (demo graph
+                // / Flat 2D mode without a deep payload).
+                if (lastFramedSceneRadius > 0.0f) {
+                    const float distance = glm::length(camera.position() - lastFramedCenter);
+                    const float margin = std::max(0.1f * lastFramedSceneRadius, 0.01f);
+                    const float nearP = std::max(distance - lastFramedSceneRadius - margin, 0.001f);
+                    const float farP = distance + lastFramedSceneRadius + margin;
+                    camera.setClipPlanes(nearP, farP);
                 }
 
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
