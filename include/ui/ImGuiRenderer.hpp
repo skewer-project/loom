@@ -107,6 +107,17 @@ class ImGuiRenderer {
     float m_orbitYaw = 0.0f;     // radians, around world +Y
     float m_orbitPitch = 0.0f;   // radians, around camera-right
     float m_orbitRadius = 3.0f;  // distance from target, meters
+
+    // Flat-2D pan / zoom state, applied via ImGui::Image custom UV
+    // coords. `m_view2DCenter` is the UV coordinate at the viewport
+    // center (default (0.5, 0.5) = image center); `m_view2DZoom` is
+    // multiplicative (1.0 = fit, >1 = zoomed in showing less of the
+    // image, <1 = zoomed out with letterbox-grey borders). State
+    // persists across mode toggles so the user's framing is preserved
+    // when bouncing between Flat 2D and PointCloud 3D.
+    void applyView2DInput();
+    ImVec2 m_view2DCenter = {0.5f, 0.5f};
+    float m_view2DZoom = 1.0f;
 };
 
 }  // namespace loom::ui

@@ -341,14 +341,29 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     }
 
     if (m_viewportTextureId) {
-        // Phase 6 maps UV (0,0) to the top-left, matching ImGui's default exactly.
-        // Do NOT flip the V coordinate here.
-        ImGui::Image((ImTextureID)m_viewportTextureId, currentSize);
-        // Mouse drag / scroll over the image is fed to the orbit camera —
-        // only meaningful in PointCloud3D mode but the controller works
-        // regardless, so the apply path is unconditional once a camera is
-        // available. The flat-2D path simply ignores the camera changes.
-        if (orbitCamera && m_viewportMode == ViewportMode::PointCloud3D) {
+        // UV mapping: at zoom = 1 and center = (0.5, 0.5) we draw the full
+        // image (uv0 = (0,0), uv1 = (1,1)) — preserves the existing Flat 2D
+        // behaviour. Zooming in halves the UV span; panning shifts the
+        // center. Outside Flat 2D mode the UV is forced back to the
+        // identity so the point-cloud framebuffer renders edge-to-edge.
+        ImVec2 uv0(0.0f, 0.0f);
+        ImVec2 uv1(1.0f, 1.0f);
+        if (m_viewportMode == ViewportMode::Flat2D) {
+            const float half = 0.5f / std::max(m_view2DZoom, 1.0e-3f);
+            uv0 = {m_view2DCenter.x - half, m_view2DCenter.y - half};
+            uv1 = {m_view2DCenter.x + half, m_view2DCenter.y + half};
+        }
+        // Phase 6 maps UV (0,0) to the top-left, matching ImGui's default
+        // exactly. Do NOT flip the V coordinate here.
+        ImGui::Image((ImTextureID)m_viewportTextureId, currentSize, uv0, uv1);
+
+        // Route mouse drag / scroll over the image to the active mode's
+        // input handler. Flat 2D consumes drag → pan and wheel → zoom;
+        // PointCloud 3D feeds the orbit camera. Modes are mutually
+        // exclusive — only one handler runs per frame.
+        if (m_viewportMode == ViewportMode::Flat2D) {
+            applyView2DInput();
+        } else if (orbitCamera && m_viewportMode == ViewportMode::PointCloud3D) {
             applyOrbitInput(*orbitCamera);
         }
     } else {
@@ -356,6 +371,48 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
     }
 
     ImGui::End();
+}
+
+void ImGuiRenderer::applyView2DInput() {
+    if (!ImGui::IsItemHovered()) return;
+    ImGuiIO& io = ImGui::GetIO();
+
+    // Drag-to-pan. The drag delta is in viewport pixels; we convert to UV
+    // space by dividing by viewport extent × zoom — at higher zoom one
+    // pixel of cursor motion covers proportionally less of the underlying
+    // image. The sign is negated so dragging right moves the image right
+    // (i.e. the UV window shifts left).
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+        const ImVec2 delta = io.MouseDelta;
+        const float vw = std::max(m_viewportSize.x, 1.0f);
+        const float vh = std::max(m_viewportSize.y, 1.0f);
+        const float invZoom = 1.0f / std::max(m_view2DZoom, 1.0e-3f);
+        m_view2DCenter.x -= delta.x * invZoom / vw;
+        m_view2DCenter.y -= delta.y * invZoom / vh;
+    }
+
+    // Multiplicative wheel zoom, cursor-anchored. Without the anchor, a
+    // zoom always recenters on (0.5, 0.5); with it, the pixel under the
+    // cursor stays put. The math: at zoom z the UV at the cursor is
+    // `center + (cursorOffset / size) * (1/z)`; we want this expression
+    // invariant in z, so when z scales by k, center adjusts so that
+    // `center_new + offset * (1/(z*k)) == center_old + offset * (1/z)`.
+    if (io.MouseWheel != 0.0f) {
+        const float scale = std::pow(1.1f, io.MouseWheel);
+        const float newZoom = std::clamp(m_view2DZoom * scale, 0.05f, 64.0f);
+
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const ImVec2 imageMin = ImGui::GetItemRectMin();
+        const float vw = std::max(m_viewportSize.x, 1.0f);
+        const float vh = std::max(m_viewportSize.y, 1.0f);
+        const float u = (mouse.x - imageMin.x) / vw - 0.5f;  // [-0.5, 0.5]
+        const float v = (mouse.y - imageMin.y) / vh - 0.5f;
+
+        // Anchor: UV at cursor before zoom == UV at cursor after zoom.
+        m_view2DCenter.x += u * (1.0f / m_view2DZoom - 1.0f / newZoom);
+        m_view2DCenter.y += v * (1.0f / m_view2DZoom - 1.0f / newZoom);
+        m_view2DZoom = newZoom;
+    }
 }
 
 }  // namespace loom::ui
