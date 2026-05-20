@@ -271,6 +271,21 @@ class Graph {
         links.forEach(std::forward<F>(cb));
     }
 
+    // Re-target a Viewer's single input pin onto a new upstream output.
+    // Used by the viewport input-mode dropdown to flip between
+    // `DeepFlatten` (Pan 2D) and `PointCloudRender` (Orbit 3D) without
+    // forcing the user to manually drag the wire in the node editor. The
+    // existing link (if any) is removed by `tryAddLink`. Returns true on a
+    // clean swap, false when the handle isn't a Viewer / has no inputs /
+    // the new wire would be rejected by `canAddLink` (type mismatch,
+    // cycle). On false the prior wiring is left intact.
+    [[nodiscard]] bool replaceViewerInput(NodeHandle viewer, PinHandle newSource) {
+        Node* viewerNode = getNode(viewer);
+        if (!viewerNode || viewerNode->type != NodeType::Viewer) return false;
+        if (viewerNode->inputs.empty()) return false;
+        return tryAddLink(newSource, viewerNode->inputs[0]);
+    }
+
     // Convenience: returns every viewer node currently in the graph. The
     // engine consumes viewers[0] in v1; document any future per-viewer policy
     // in docs/CONVENTIONS.md when multi-viewer lands.

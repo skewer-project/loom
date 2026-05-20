@@ -37,6 +37,11 @@ struct StartupGraphHandles {
     loom::core::NodeHandle cameraNode;
     loom::core::NodeHandle pointCloudRender;
     loom::core::NodeHandle viewer;
+    // Output pin handles of the two upstream renderers the viewport
+    // dropdown swaps between. Set by `buildDeepViewChain`; default-
+    // constructed (invalid) in the demo chain.
+    loom::core::PinHandle flatOutput;
+    loom::core::PinHandle pointCloudOutput;
 };
 
 // Build the compositor-style startup graph:
@@ -83,6 +88,8 @@ StartupGraphHandles buildDeepViewChain(loom::core::Graph& graph, const std::stri
         if (!graph.tryAddLink(cameraNode->outputs[0], pcrNode->inputs[1])) {
             loom::log::warn("startup: failed to wire Camera -> PointCloudRender");
         }
+        h.flatOutput = flattenNode->outputs[0];
+        h.pointCloudOutput = pcrNode->outputs[0];
     }
     return h;
 }
@@ -249,6 +256,28 @@ int main(int argc, char** argv) {
         // index 0 is `position` per `CameraNode::buildParams`. The demo
         // chain has no camera node — registration is a no-op then.
         imgui.setActiveCameraNode(&graph, cameraNodeHandle);
+
+        // Register the viewport-mode dropdown wire swap. When the user
+        // toggles between Pan 2D and Orbit 3D, the viewer's input pin is
+        // re-pointed at the corresponding upstream output so the
+        // displayed image matches the chosen gesture mode. The demo
+        // chain's invalid pin handles leave the swap dormant — only the
+        // gesture-mode toggle still applies.
+        imgui.setViewerWireSwap(startupHandles.viewer, startupHandles.flatOutput,
+                                startupHandles.pointCloudOutput);
+
+        // Default the dropdown to Orbit 3D when a deep EXR was opened —
+        // the user just asked to view a 3D scene, so meeting them at
+        // the point-cloud view with no extra clicks matches expectation.
+        // Also rewire the viewer's input to the point-cloud output to
+        // match. Demo chain (no deep path) stays in Pan 2D.
+        if (!deepPath.empty() && startupHandles.pointCloudOutput.isValid() &&
+            startupHandles.viewer.isValid()) {
+            imgui.setViewportInputMode(loom::ui::ViewportInputMode::Orbit3D);
+            if (!graph.replaceViewerInput(startupHandles.viewer, startupHandles.pointCloudOutput)) {
+                loom::log::warn("startup: failed to default-rewire Viewer -> PointCloudRender");
+            }
+        }
 
         // Tracks the most-recently-auto-framed deep samples buffer. An
         // invalid handle means "no frame has been taken yet" — the

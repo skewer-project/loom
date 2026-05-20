@@ -58,6 +58,67 @@ TEST_F(GraphTest, TypeSafety) {
     EXPECT_FALSE(graph.tryAddLink(outA, inB));
 }
 
+// Viewport input-mode dropdown rewires the Viewer's input pin via this
+// helper. The contract:
+//   - Re-pointing onto a different upstream output succeeds and breaks
+//     the previous link.
+//   - Re-pointing onto a non-Viewer handle fails, leaving any existing
+//     wiring intact.
+//   - Re-pointing onto a type-incompatible source (e.g. Deep pin into a
+//     Float pin) fails (canAddLink rejects) — `tryAddLink` returns false
+//     and the prior wire is preserved.
+// See `Graph::replaceViewerInput` in include/core/Graph.hpp.
+TEST_F(GraphTest, ReplaceViewerInputSwapsUpstream) {
+    core::NodeHandle constA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle constB = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle viewer = graph.addNode(core::NodeType::Viewer);
+
+    core::PinHandle outA = graph.getNode(constA)->outputs[0];
+    core::PinHandle outB = graph.getNode(constB)->outputs[0];
+    core::PinHandle inViewer = graph.getNode(viewer)->inputs[0];
+
+    ASSERT_TRUE(graph.tryAddLink(outA, inViewer));
+    core::LinkHandle firstLink = graph.getPin(inViewer)->link;
+    ASSERT_TRUE(firstLink.isValid());
+
+    EXPECT_TRUE(graph.replaceViewerInput(viewer, outB));
+    core::LinkHandle secondLink = graph.getPin(inViewer)->link;
+    EXPECT_TRUE(secondLink.isValid());
+    EXPECT_NE(firstLink, secondLink);
+
+    // The first link's slot should now be invalid (it was removed inside
+    // `tryAddLink` when it saw the input already had a link).
+    EXPECT_EQ(graph.getLink(firstLink), nullptr);
+}
+
+TEST_F(GraphTest, ReplaceViewerInputRejectsNonViewer) {
+    core::NodeHandle constA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle constB = graph.addNode(core::NodeType::Constant);
+
+    core::PinHandle outB = graph.getNode(constB)->outputs[0];
+    EXPECT_FALSE(graph.replaceViewerInput(constA, outB));
+}
+
+TEST_F(GraphTest, ReplaceViewerInputPreservesOnTypeMismatch) {
+    core::NodeHandle constA = graph.addNode(core::NodeType::Constant);
+    core::NodeHandle viewer = graph.addNode(core::NodeType::Viewer);
+    core::NodeHandle reader = graph.addNode(core::NodeType::DeepEXRRead);
+
+    core::PinHandle outA = graph.getNode(constA)->outputs[0];
+    core::PinHandle outDeep = graph.getNode(reader)->outputs[0];
+    core::PinHandle inViewer = graph.getNode(viewer)->inputs[0];
+
+    ASSERT_TRUE(graph.tryAddLink(outA, inViewer));
+    core::LinkHandle preserved = graph.getPin(inViewer)->link;
+    ASSERT_TRUE(preserved.isValid());
+
+    // Deep output → Image input is a type mismatch; canAddLink rejects.
+    // The existing link must remain intact (no half-rewire state).
+    EXPECT_FALSE(graph.replaceViewerInput(viewer, outDeep));
+    EXPECT_EQ(graph.getPin(inViewer)->link, preserved);
+    EXPECT_NE(graph.getLink(preserved), nullptr);
+}
+
 TEST_F(GraphTest, CascadingDeletion) {
     core::NodeHandle nodeA = graph.addNode(core::NodeType::Constant);
     core::NodeHandle nodeB = graph.addNode(core::NodeType::Viewer);

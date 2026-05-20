@@ -342,16 +342,30 @@ void ImGuiRenderer::drawDockspace(core::Camera* orbitCamera) {
 
     // Input-mode selector. Drawn in the viewport panel header above the
     // image so the user can swap drag-pans-2D vs drag-orbits-3D-camera
-    // without leaving the panel. The choice controls *gesture
-    // interpretation*, not which renderer runs (that's a graph-wiring
-    // decision now per CONVENTIONS §21). Only rendered when an orbit
-    // camera is available; absent it, mode is implicitly Pan2D.
+    // without leaving the panel. Per CONVENTIONS §21, the dropdown is
+    // both an input-gesture toggle AND a quick wire-swap: choosing
+    // "Orbit 3D" rewires the Viewer's input pin to the registered
+    // PointCloudRender output; "Pan 2D" rewires back to the flat output.
+    // When no wire-swap is registered (demo graph, missing handles) the
+    // dropdown still toggles gesture interpretation and the user wires
+    // manually in the node editor. Only rendered when an orbit camera is
+    // available; absent it, mode is implicitly Pan2D.
     if (orbitCamera) {
         const char* items[] = {"Pan 2D", "Orbit 3D"};
         int current = static_cast<int>(m_viewportInputMode);
         ImGui::SetNextItemWidth(160.0f);
         if (ImGui::Combo("##viewport-input-mode", &current, items, IM_ARRAYSIZE(items))) {
             m_viewportInputMode = static_cast<ViewportInputMode>(current);
+            if (m_cameraGraph && m_viewportViewer.isValid()) {
+                const core::PinHandle target = m_viewportInputMode == ViewportInputMode::Pan2D
+                                                   ? m_viewportFlatOutput
+                                                   : m_viewportPointCloudOutput;
+                if (target.isValid()) {
+                    if (!m_cameraGraph->replaceViewerInput(m_viewportViewer, target)) {
+                        loom::log::warn("viewport: failed to rewire Viewer input on mode change");
+                    }
+                }
+            }
         }
     }
 

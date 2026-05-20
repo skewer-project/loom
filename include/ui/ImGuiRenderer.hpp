@@ -100,6 +100,25 @@ class ImGuiRenderer {
         m_cameraTargetParamIndex = targetParamIndex;
     }
 
+    // Register the viewer's input pin and the two candidate upstream
+    // output pins (Pan 2D source / Orbit 3D source) that the input-mode
+    // dropdown swaps between. The graph pointer must match the one
+    // already registered via `setActiveCameraNode` — both features
+    // operate on the same graph. With this registration in place,
+    // selecting the dropdown's other entry calls
+    // `Graph::replaceViewerInput` so the Viewer immediately shows the
+    // matching upstream output (no manual node-editor drag required).
+    //
+    // Passing any handle as default-constructed leaves the corresponding
+    // wire swap inactive — the dropdown still toggles input-gesture
+    // interpretation but does not touch the graph. See CONVENTIONS §21.
+    void setViewerWireSwap(core::NodeHandle viewer, core::PinHandle flatOutput,
+                           core::PinHandle pointCloudOutput) {
+        m_viewportViewer = viewer;
+        m_viewportFlatOutput = flatOutput;
+        m_viewportPointCloudOutput = pointCloudOutput;
+    }
+
   private:
     void createSampler();
     void recreateViewportTarget(uint32_t width, uint32_t height);
@@ -138,6 +157,16 @@ class ImGuiRenderer {
     core::NodeHandle m_cameraNode{};
     size_t m_cameraPositionParamIndex = 0;
     size_t m_cameraTargetParamIndex = 1;
+
+    // Viewer-rewire hook. When the input-mode dropdown changes, swap the
+    // viewer's input pin between the two registered upstream outputs so
+    // the displayed image matches the chosen gesture mode (Pan 2D ↔
+    // flat output, Orbit 3D ↔ point-cloud output). All-default handles
+    // means no swap is performed — the dropdown then only routes
+    // gestures and the user wires manually.
+    core::NodeHandle m_viewportViewer{};
+    core::PinHandle m_viewportFlatOutput{};
+    core::PinHandle m_viewportPointCloudOutput{};
 
     // Flat-2D pan / zoom state, applied via ImGui::Image custom UV
     // coords. `m_view2DCenter` is the UV coordinate at the viewport
