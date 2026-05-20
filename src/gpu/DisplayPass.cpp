@@ -211,8 +211,15 @@ void DisplayPass::record(VkCommandBuffer cmd, VkImage hdrImage, VkImage dstImage
     colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     colorAttachment.imageView = dstImageView;
     colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    // CLEAR over DONT_CARE: the fragment shader's letterbox branch writes
+    // opaque black to pixels outside the fitted rect, but degenerate
+    // extents (a single zero-extent frame during viewport resize or
+    // first-layout) can cause the shader's aspect math to go NaN — taking
+    // a non-black branch and sampling an undefined source. CLEAR
+    // guarantees opaque black where the shader doesn't overwrite.
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    colorAttachment.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
 
     VkRenderingInfo renderingInfo{};
     renderingInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;

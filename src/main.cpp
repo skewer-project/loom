@@ -388,10 +388,20 @@ int main(int argc, char** argv) {
                 // from `DeepFlatten` (2D) or `PointCloudRenderNode` (3D
                 // splat) is a graph-wiring decision, not an engine
                 // toggle. See CONVENTIONS §21.
-                if (viewerOutput.isValid()) {
+                //
+                // Extent guard: a single zero-extent frame (viewport panel
+                // first-allocation or mid-resize) would crash the shader's
+                // aspect math. CLEAR + the shader-side guard already
+                // protect against that, but skipping the record entirely
+                // keeps the validation layers quiet on degenerate inputs.
+                const bool haveViewerImage = viewerOutput.isValid();
+                const VkExtent2D srcExtent =
+                    haveViewerImage ? imagePool.getExtent(viewerOutput) : VkExtent2D{0, 0};
+                const bool extentsValid =
+                    vpW > 0 && vpH > 0 && srcExtent.width > 0 && srcExtent.height > 0;
+                if (haveViewerImage && extentsValid) {
                     const auto displayTransform = loom::color::pickTransformForSwapchainFormat(
                         static_cast<uint32_t>(vulkan.getSwapchainImageFormat()));
-                    const VkExtent2D srcExtent = imagePool.getExtent(viewerOutput);
                     displayPass.record(cmd, imagePool.getImage(viewerOutput),
                                        imgui.getViewportImage(), imgui.getViewportImageView(),
                                        bindlessSet, viewerOutput.bindlessSlot, vpW, vpH,
@@ -399,9 +409,9 @@ int main(int argc, char** argv) {
                                        /*toneMapMode=*/0, static_cast<uint32_t>(displayTransform),
                                        /*exposure=*/1.0f);
                 } else if (vpW > 0 && vpH > 0) {
-                    // Viewer's input is disconnected (user is mid-wire or
-                    // the upstream chain failed). Without this fallback
-                    // ImGui samples an UNDEFINED image — see
+                    // Viewer's input is disconnected, or the viewer image
+                    // is itself zero-extent this frame. Without this
+                    // fallback ImGui samples an UNDEFINED image — see
                     // `clearViewportToBlack` above.
                     clearViewportToBlack(cmd, imgui.getViewportImage());
                 }

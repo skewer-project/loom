@@ -489,3 +489,83 @@ TEST_F(DisplayPassTest, LetterboxesTallerSource) {
     vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);
     imagePool->release(hdrHandle);
 }
+
+// Degenerate-extent regression. A viewport panel first-allocation or
+// mid-resize event can produce zero-width / zero-height source extents
+// while the destination is already real pixels. The CLEAR loadOp +
+// shader-side guard must keep the framebuffer opaque black instead of
+// sampling an undefined source — see B.8 follow-up #4 / Bug #1.
+TEST_F(DisplayPassTest, ZeroSourceExtentClearsToBlack) {
+    constexpr uint32_t dstW = 32, dstH = 32;
+
+    // Source image still must be real (`hdrHandle` must point at a
+    // bindless slot) — we just pass srcWidth = 0 in the push constants
+    // to simulate the degenerate-aspect path.
+    gpu::ImageSpec spec{VK_FORMAT_R32G32B32A32_SFLOAT,
+                        {16, 16},
+                        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    gpu::ImageHandle hdrHandle = imagePool->acquire(spec);
+    VkImage hdrImage = imagePool->getImage(hdrHandle);
+    uint32_t hdrSlot = hdrHandle.bindlessSlot;
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        VkClearColorValue clearColor = {{1.0f, 1.0f, 1.0f, 1.0f}};  // white source
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        vkCmdClearColorImage(cmd, hdrImage, VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    VkImage dstImage;
+    VkImageView dstImageView;
+    VmaAllocation dstAlloc;
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    imageInfo.extent = {dstW, dstH, 1};
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VmaAllocationCreateInfo allocInfo{};
+    allocInfo.usage = VMA_MEMORY_USAGE_AUTO;
+    vmaCreateImage(ctx->getVmaAllocator(), &imageInfo, &allocInfo, &dstImage, &dstAlloc, nullptr);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = dstImage;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+    viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCreateImageView(ctx->getDevice(), &viewInfo, nullptr, &dstImageView);
+
+    {
+        VkCommandBuffer cmd = ctx->beginSingleTimeCommands();
+        // srcWidth = 0 forces the aspect-ratio numerator to zero. Before
+        // the guard the shader fell through to imageLoad on an undefined
+        // texel; afterwards it must early-return opaque black.
+        displayPass->record(cmd, hdrImage, dstImage, dstImageView,
+                            ctx->getBindlessHeap().getDescriptorSet(), hdrSlot, dstW, dstH,
+                            /*srcWidth=*/0, /*srcHeight=*/0, /*toneMapMode=*/0,
+                            kDisplayTransformSRGB, kExposure);
+        ctx->endSingleTimeCommands(cmd);
+    }
+
+    std::vector<uint8_t> pixels = readBackImage(dstImage, dstW, dstH);
+    // Every pixel: opaque black. Sample the four corners + the center.
+    auto px = [&](uint32_t x, uint32_t y) -> const uint8_t* { return &pixels[(y * dstW + x) * 4]; };
+    for (auto [x, y] : std::initializer_list<std::pair<uint32_t, uint32_t>>{
+             {0, 0}, {dstW - 1, 0}, {0, dstH - 1}, {dstW - 1, dstH - 1}, {dstW / 2, dstH / 2}}) {
+        EXPECT_LE(px(x, y)[0], 5);
+        EXPECT_LE(px(x, y)[1], 5);
+        EXPECT_LE(px(x, y)[2], 5);
+        EXPECT_GE(px(x, y)[3], 250);
+    }
+
+    vkDestroyImageView(ctx->getDevice(), dstImageView, nullptr);
+    vmaDestroyImage(ctx->getVmaAllocator(), dstImage, dstAlloc);
+    imagePool->release(hdrHandle);
+}

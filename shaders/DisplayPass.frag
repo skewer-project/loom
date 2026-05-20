@@ -53,6 +53,17 @@ vec3 applyDisplayTransform(vec3 c) {
 }
 
 void main() {
+    // Degenerate-extent guard. A zero on either side of the aspect ratio
+    // makes the math NaN, which then falls through every comparison
+    // (NaN < x and NaN >= x are both false in GLSL) and samples an
+    // undefined source texel. The attachment is cleared to opaque black
+    // before the shader runs, but writing it explicitly here is
+    // belt-and-suspenders and documents intent.
+    if (pc.width == 0u || pc.height == 0u || pc.srcWidth == 0u || pc.srcHeight == 0u) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     // Aspect-fit math. Compute the half-padding (in 0..1 viewport coords)
     // along the axis where the source is "smaller". The other axis fits the
     // viewport edge-to-edge.
