@@ -20,6 +20,20 @@ class NodeEditorPanel {
 
     void draw(const char* title);
 
+    // Queue an initial canvas position for the given node. The position is
+    // applied on the node's next render frame (via
+    // `ax::NodeEditor::SetNodePosition`) and the spawn-pos flag is cleared
+    // so subsequent frames pick up whatever the user (or the editor's
+    // persistent settings file) has positioned it to. Used by main.cpp's
+    // startup-graph builder to lay the five spawn nodes out
+    // non-overlappingly in the canvas.
+    void setNodePosition(core::NodeHandle h, float x, float y) {
+        UINodeState& state = m_nodeStates[h];
+        state.hasSpawnPos = true;
+        state.spawnX = x;
+        state.spawnY = y;
+    }
+
   private:
     void renderNodes();
     void renderLinks();

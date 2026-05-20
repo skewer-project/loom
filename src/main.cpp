@@ -34,6 +34,7 @@ namespace {
 // auto-frame bounds + per-frame clip-plane refresh) without graph traversal.
 struct StartupGraphHandles {
     loom::core::NodeHandle deepReader;
+    loom::core::NodeHandle deepFlatten;
     loom::core::NodeHandle cameraNode;
     loom::core::NodeHandle pointCloudRender;
     loom::core::NodeHandle viewer;
@@ -61,7 +62,7 @@ struct StartupGraphHandles {
 StartupGraphHandles buildDeepViewChain(loom::core::Graph& graph, const std::string& path) {
     StartupGraphHandles h;
     h.deepReader = graph.addNode(loom::core::NodeType::DeepEXRRead);
-    auto flatten = graph.addNode(loom::core::NodeType::DeepFlatten);
+    h.deepFlatten = graph.addNode(loom::core::NodeType::DeepFlatten);
     h.cameraNode = graph.addNode(loom::core::NodeType::Camera);
     h.pointCloudRender = graph.addNode(loom::core::NodeType::PointCloudRender);
     h.viewer = graph.addNode(loom::core::NodeType::Viewer);
@@ -71,7 +72,7 @@ StartupGraphHandles buildDeepViewChain(loom::core::Graph& graph, const std::stri
     }
 
     auto* readerNode = graph.getNode(h.deepReader);
-    auto* flattenNode = graph.getNode(flatten);
+    auto* flattenNode = graph.getNode(h.deepFlatten);
     auto* cameraNode = graph.getNode(h.cameraNode);
     auto* pcrNode = graph.getNode(h.pointCloudRender);
     auto* viewerNode = graph.getNode(h.viewer);
@@ -250,6 +251,36 @@ int main(int argc, char** argv) {
             deepPath.empty() ? buildDemoChain(graph) : buildDeepViewChain(graph, deepPath);
         const loom::core::NodeHandle deepReaderHandle = startupHandles.deepReader;
         const loom::core::NodeHandle cameraNodeHandle = startupHandles.cameraNode;
+
+        // Seed non-overlapping canvas positions for the startup-graph
+        // nodes. Without this every node spawns at (0, 0) and the user
+        // has to manually drag them apart before any re-wiring is
+        // tractable. The layout follows the dataflow direction (left to
+        // right) with the Camera branch dropping below the Deep
+        // pipeline:
+        //
+        //   DeepEXRRead (0,    0)   ───→ DeepFlatten (250, -60) ─┐
+        //                                                       ├→ Viewer (500, 0)
+        //   Camera     (0,  120)   ───→ PointCloudRender (250,  80) ┘
+        //
+        // Coordinates are in the node-editor canvas space (post-zoom);
+        // the editor's persistent settings file overrides these on
+        // sessions after the first.
+        if (startupHandles.deepReader.isValid()) {
+            nodeEditor.setNodePosition(startupHandles.deepReader, 0.0f, 0.0f);
+        }
+        if (startupHandles.deepFlatten.isValid()) {
+            nodeEditor.setNodePosition(startupHandles.deepFlatten, 250.0f, -60.0f);
+        }
+        if (startupHandles.cameraNode.isValid()) {
+            nodeEditor.setNodePosition(startupHandles.cameraNode, 0.0f, 120.0f);
+        }
+        if (startupHandles.pointCloudRender.isValid()) {
+            nodeEditor.setNodePosition(startupHandles.pointCloudRender, 250.0f, 80.0f);
+        }
+        if (startupHandles.viewer.isValid()) {
+            nodeEditor.setNodePosition(startupHandles.viewer, 500.0f, 0.0f);
+        }
 
         // Register the active CameraNode with the orbit controller so
         // drag gestures push the new position through `setParam`. Param
