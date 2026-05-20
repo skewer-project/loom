@@ -2374,3 +2374,197 @@ Architectural debt deferred to Phase D: `GraphicsTask` abstraction
 camera-node animation curves.
 
 ---
+
+## Phase B.8 follow-up #4 — Live-smoke regressions
+
+The B.8 follow-up #3 work landed clean against the test suite (161/161)
+but live smoke immediately surfaced three separate regressions:
+
+1. **2D viewport showed artifacts outside the rendered region.** The
+   letterbox shader was supposed to fix this in #3.
+2. **Orbit 3D input mode did nothing visible.** Dragging the viewport
+   in Orbit 3D produced no on-screen change.
+3. **Wiring `PointCloudRender → Viewer` produced no visible output.**
+
+A code audit confirmed all three were separate root causes with
+separate fixes. The plan-of-record lived in
+`~/.claude/plans/shiny-waddling-finch.md` (private).
+
+### Step 1 — DisplayPass CLEAR loadOp + NaN-safe shader
+
+**Decisions.**
+
+- **`loadOp = LOAD_OP_CLEAR` over `DONT_CARE`.** The fragment shader's
+  letterbox branch is correct for valid extents, but a degenerate-extent
+  frame — viewport panel first-allocation, mid-resize tick — makes the
+  aspect-ratio math NaN. NaN comparisons in GLSL evaluate to `false`,
+  so the shader falls through every guard and samples an undefined
+  source texel. CLEAR guarantees opaque black where the shader doesn't
+  overwrite, so the worst case is "screen briefly flashes black" rather
+  than "screen shows garbage from prior framebuffer contents." The
+  per-frame clear cost is one VkClear into the viewport image — well
+  below profiling noise on every tested GPU.
+- **Shader-side zero-extent guard.** Early-return opaque black when
+  `pc.width == 0u || pc.height == 0u || pc.srcWidth == 0u ||
+  pc.srcHeight == 0u`. Belt-and-suspenders alongside the CLEAR — even
+  if a future caller forgets to clear, the shader still produces
+  defined output for degenerate inputs.
+- **main.cpp also guards `displayPass.record`.** If any of the four
+  extents is zero, fall through to `clearViewportToBlack` instead of
+  recording the pass at all. The shader / loadOp combination would
+  produce correct output anyway, but skipping the pass keeps the
+  validation layers quiet on inputs that exercise a code path
+  Vulkan's spec writers didn't intend.
+
+Tests: 161 → 162 (+1: `DisplayPassTest.ZeroSourceExtentClearsToBlack`).
+
+### Step 2 — Orbit input gating + engine-Camera target sync
+
+**Two bugs in one step.**
+
+**Bug 2a — every-frame redirty:** The orbit math (yaw/pitch read from
+spherical coordinates, position computed from target + radius*dir,
+write to CameraNode `position` param) was outside the
+`ImGui::IsItemHovered` branch. Consequence: every frame the orbit
+controller wrote back the current pose, which set
+`CameraNode.isDirty = true`, which propagated through `Graph::markDirty`
+to every downstream node. Two visible consequences:
+- The point-cloud re-evaluated every frame even when the user wasn't
+  interacting. Cheap on today's geometry, expensive on tomorrow's.
+- Any user knob-edit on the `position` param got immediately
+  overwritten by the orbit's idle-state value. The position knob
+  appeared "broken" — the user couldn't actually edit it.
+
+**Decision:** Split `applyOrbitInput` into input-handling and
+pose-application halves. Set a local `inputFired` flag inside the
+input-handling branch (drag delta nonzero / wheel nonzero); skip the
+pose-application half entirely when `!inputFired`. Idle frames now
+preserve user knob-edits; only real input drives the CameraNode dirty
+cascade.
+
+**Bug 2b — engine Camera and CameraNode target desync:** The orbit
+math reads `camera.target()` (engine Camera) to anchor the rotation
+center, but the CameraNode owns the `target` knob. After auto-frame
+they're in sync; but if the user knob-edits the target (or auto-frame
+fires while orbit state is mid-flight) the two diverge. The orbit
+controller anchors to the wrong point, and the next drag rotates around
+a stale origin.
+
+**Decision:** main.cpp materializes CameraNode params (position,
+target, fov, near, far) back into the engine Camera each frame after
+`graph.execute`. The CameraNode is the source of truth; the engine
+Camera is a per-frame mirror. Detect "target changed externally" by
+comparing previous-frame target vec3 to current; call
+`ImGuiRenderer::resyncOrbitFromCamera` on change so the orbit's
+spherical coordinates re-derive from the new (position, target)
+offset.
+
+Tests: 162 → 163 (+1: `CameraNodeTest.ParamSlotsExposeExpectedVariants`,
+pinning the param-shape contract that the materialization code depends
+on).
+
+### Step 3 — Dropdown rewires Viewer input pin
+
+**Decision.** The B.8 follow-up #3 design treated the input-mode
+dropdown as a "gesture-interpretation only" toggle — the user was
+expected to manually re-wire `DeepFlatten → Viewer` vs
+`PointCloudRender → Viewer` in the node editor. In practice, the
+two-step gesture (pick mode in viewport panel, then drag wire in
+node editor) was a constant source of "I picked Orbit 3D but
+nothing happened" friction. The compositor purity wasn't worth the
+UX hit.
+
+The fix elevates the dropdown to **both** a gesture toggle AND a
+quick wire-swap. Selecting "Orbit 3D" calls
+`Graph::replaceViewerInput(viewer, pointCloudOutput)` immediately;
+"Pan 2D" calls `replaceViewerInput(viewer, flatOutput)`. Manual
+re-wiring still works for users who want a custom upstream — the
+dropdown is just the canonical-pairing shortcut.
+
+`Graph::replaceViewerInput` is a tiny helper that composes
+`tryAddLink` over a Viewer's single input pin. On type mismatch
+(canAddLink rejects) it returns false **without** breaking the
+existing wire — half-state would surprise the user.
+
+**Default mode for deep-EXR startup.** `./Loom path/to/deep.exr` now
+defaults to Orbit 3D + `PointCloudRender → Viewer` wired in. Users
+opening a deep file usually want to see the 3D scene; meeting them
+there with no extra clicks matches expectation. The demo chain
+(no CLI path) stays in Pan 2D.
+
+CONVENTIONS §21 documents the dual role of the dropdown.
+
+Tests: 163 → 166 (+3: `GraphTest.ReplaceViewerInputSwapsUpstream`,
+`ReplaceViewerInputRejectsNonViewer`, `ReplaceViewerInputPreservesOnTypeMismatch`).
+
+### Step 4 — Startup graph node positions
+
+**Decision.** The five startup nodes all spawned at canvas (0, 0) on
+top of each other, making it impossible to see the graph before
+dragging them apart. Layout follows dataflow direction:
+
+```
+DeepEXRRead (0,    0)   ───→ DeepFlatten (250, -60) ─┐
+                                                     ├→ Viewer (500, 0)
+Camera     (0,  120)   ───→ PointCloudRender (250,  80) ┘
+```
+
+Implemented via a new `NodeEditorPanel::setNodePosition(handle, x, y)`
+that writes to the existing `m_nodeStates` spawn-position machinery.
+The editor's persistent settings file overrides these on sessions
+after the first, so user-positioned layouts survive across runs.
+
+DeepFlatten was previously not exposed in `StartupGraphHandles`;
+added it so positioning is a single line in main.cpp rather than a
+graph-wide `forEachNode` lookup.
+
+No unit test — the setter is a 3-line map write that requires a live
+ImGui-node-editor context to construct the surrounding panel, which
+would be heavy testing infrastructure for trivial code that's
+exercised end-to-end at every Loom launch.
+
+### Step 5 — Documentation (this commit)
+
+CHANGELOG `[Unreleased]` documents the four fixes; CONVENTIONS §21
+expands on the dropdown's dual role + the materialization /
+input-gating split; this archive entry captures the why.
+
+### Phase B.8 follow-up #4 — exit criteria
+
+- ✅ 2D viewport letterbox survives degenerate-extent frames.
+- ✅ Orbit 3D gestures actually move the camera; user knob-edits on
+  CameraNode.position survive idle frames.
+- ✅ Engine Camera tracks CameraNode.target through external edits.
+- ✅ Dropdown toggle re-wires Viewer input as a one-click UX.
+- ✅ Startup nodes spawn at non-overlapping positions.
+- ✅ Deep-EXR startup defaults to Orbit 3D (matches user expectation).
+
+Test count: 161 → 166 (+5 across DisplayPass extent guard, CameraNode
+param contract, Graph::replaceViewerInput). All headless or
+`GTEST_SKIP` cleanly on this machine; GPU paths exercised under
+Lavapipe in CI.
+
+User-visible workflow after #4:
+
+1. `./Loom path/to/deep.exr` — viewport opens with the point cloud
+   visible (default Orbit 3D for deep files). Node editor shows the
+   five nodes laid out left-to-right along the dataflow direction.
+2. Drag in the viewport → camera orbits live.
+3. Switch dropdown to "Pan 2D" → viewer rewires to DeepFlatten,
+   flat 2D view appears with proper letterbox.
+4. Pan/zoom with the mouse → 2D image pans/zooms.
+5. Switch back to "Orbit 3D" → viewer rewires to PointCloudRender,
+   point cloud reappears at the user's last orbit pose.
+6. Edit `CameraNode.fov_y_deg` → perspective changes immediately, no
+   overwrite on idle frames.
+7. Edit `CameraNode.target` → orbit center updates, controller
+   re-derives radius/yaw/pitch from the new offset.
+
+What stays open: the dropdown-as-wire-swap is a UX compromise that
+short-circuits the compositor model; a future "View as" toggle row
+on the Viewer node itself would express the same intent purely
+graph-side. Multi-camera UI (CONVENTIONS §18) and a proper
+`GraphicsTask` abstraction for `PointCloudPass` (Phase D) remain
+deferred.
+
+---

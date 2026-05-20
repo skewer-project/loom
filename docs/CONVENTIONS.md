@@ -416,8 +416,28 @@ to Phase D).
   - `Pan2D` — drag pans the displayed 2D image; wheel zooms.
   - `Orbit3D` — drag yaw/pitch the active CameraNode's `position`
     param; wheel adjusts orbit radius. Cursor-anchored.
-- The mode does **not** control which renderer runs. That's
-  graph-wiring (which upstream pin is connected to the Viewer).
+- The mode does **not** by itself control which renderer runs — graph
+  wiring is the authoritative source. The dropdown additionally
+  performs a **quick wire swap** as a UX convenience: choosing
+  "Orbit 3D" calls `Graph::replaceViewerInput(viewer,
+  pointCloudOutput)`; "Pan 2D" calls `replaceViewerInput(viewer,
+  flatOutput)`. The handles are registered with the renderer via
+  `ImGuiRenderer::setViewerWireSwap`. Manual node-editor drags still
+  work; the dropdown is just the one-click shortcut for the canonical
+  Pan/Orbit ↔ DeepFlatten/PointCloudRender pairing.
+- The orbit gesture handler is split into input-handling and
+  pose-application halves. The pose write (CameraNode `position`
+  param) is gated on whether any input gesture fired this frame —
+  idle frames don't redirty the CameraNode, so user knob-edits on the
+  position param survive instead of being clobbered every frame by
+  the orbit's current-state value.
+- main.cpp materializes CameraNode params back onto the engine
+  `core::Camera` each frame after `graph.execute`. The CameraNode is
+  the source of truth; the engine Camera is a per-frame mirror that
+  the orbit controller reads `camera.target()` from. When the target
+  param changes externally (knob edit, auto-frame), main.cpp detects
+  the change and calls `ImGuiRenderer::resyncOrbitFromCamera` so the
+  controller's spherical coordinates pick up the new offset.
 
 ### Default startup graph
 

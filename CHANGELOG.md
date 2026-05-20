@@ -187,8 +187,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   alongside the existing image dependency vectors.
 
 ### Changed
+- `ui::ViewportInputMode` dropdown is now both a gesture toggle AND a
+  graph-wire toggle. Selecting "Orbit 3D" rewires the Viewer's input to
+  the registered PointCloudRender output; "Pan 2D" rewires to
+  DeepFlatten. Manual node-editor drags still work; the dropdown is the
+  one-click path. Default mode for a `./Loom path/to/deep.exr` startup
+  is now Orbit 3D — the user opened a deep file, they get the 3D view
+  immediately.
+- `Graph::replaceViewerInput(viewer, newSource)` helper composes
+  `tryAddLink` over a Viewer's single input pin. Returns false (leaves
+  the prior wiring intact) when the new wire would be rejected.
+- Startup-graph nodes spawn at non-overlapping canvas positions via
+  `NodeEditorPanel::setNodePosition`. Layout follows dataflow:
+  DeepEXRRead (0,0) → DeepFlatten (250,-60); Camera (0,120) →
+  PointCloudRender (250,80); both meet at Viewer (500,0). The editor's
+  persistent settings file overrides these on sessions after the first.
+- `applyOrbitInput` gates the CameraNode `position`-param write behind
+  an "input fired this frame" check. Idle frames no longer redirty the
+  CameraNode, so user knob-edits on the position param survive.
+- main.cpp materializes CameraNode params (position, target, fov, near,
+  far) back onto the engine `core::Camera` each frame after
+  `graph.execute`. When the `target` param changes externally (knob
+  edit, auto-frame) the orbit controller resyncs from the new
+  (position, target) offset so the next drag gesture stays consistent.
 
 ### Fixed
+- `DisplayPass` framebuffer attachment now loads with `LOAD_OP_CLEAR`
+  to opaque black instead of `DONT_CARE`. The fragment shader's
+  letterbox branch was supposed to fill the outside-fitted-rect pixels,
+  but a degenerate-extent frame (viewport first-allocation or mid-
+  resize) makes the aspect-ratio math NaN and falls through to an
+  undefined `imageLoad`. CLEAR guarantees the pixels are opaque black
+  even when the shader's branch goes wrong.
+- `shaders/DisplayPass.frag` early-returns opaque black when either
+  the viewport or source extent is zero. Belt-and-suspenders alongside
+  the CLEAR loadOp.
+- main.cpp guards `displayPass.record` behind `vpW > 0 && vpH > 0 &&
+  srcExtent.width > 0 && srcExtent.height > 0`; on degenerate extents
+  the viewport falls through to `clearViewportToBlack` instead.
 
 ### Removed
 
