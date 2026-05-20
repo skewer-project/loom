@@ -114,6 +114,44 @@ TEST(CameraNodeTest, EditingKnobMutatesStoredCamera) {
     EXPECT_NEAR(stored.camera.fovY, glm::radians(90.0f), 1e-5f);
 }
 
+// Engine-Camera materialization path. main.cpp reads the CameraNode's
+// params via `std::get_if` after `Graph::execute` to mirror state onto
+// the engine `core::Camera` so the orbit controller's next-frame target
+// stays in sync with knob edits. This test pins the param-shape contract
+// that materialization depends on: position / target / fov / near / far
+// are at indices 0..4 with the variants the materialization code expects.
+// If this test breaks, main.cpp's `camNode->params[i].value()` accessor
+// chain in B.8 follow-up #4 needs to update in lockstep.
+TEST(CameraNodeTest, ParamSlotsExposeExpectedVariants) {
+    core::Graph graph;
+    auto handle = addCamera(graph);
+    core::Node* node = graph.getNode(handle);
+    ASSERT_NE(node, nullptr);
+    ASSERT_EQ(node->params.size(), 5u);
+
+    node->setParam(0, glm::vec3(1.0f, 2.0f, 3.0f));
+    node->setParam(1, glm::vec3(4.0f, 5.0f, 6.0f));
+    node->setParam(2, 75.0f);
+    node->setParam(3, 0.25f);
+    node->setParam(4, 250.0f);
+
+    auto pos = std::get_if<glm::vec3>(&node->params[0].value());
+    auto tgt = std::get_if<glm::vec3>(&node->params[1].value());
+    auto fov = std::get_if<float>(&node->params[2].value());
+    auto nearP = std::get_if<float>(&node->params[3].value());
+    auto farP = std::get_if<float>(&node->params[4].value());
+    ASSERT_NE(pos, nullptr);
+    ASSERT_NE(tgt, nullptr);
+    ASSERT_NE(fov, nullptr);
+    ASSERT_NE(nearP, nullptr);
+    ASSERT_NE(farP, nullptr);
+    EXPECT_EQ(*pos, glm::vec3(1.0f, 2.0f, 3.0f));
+    EXPECT_EQ(*tgt, glm::vec3(4.0f, 5.0f, 6.0f));
+    EXPECT_FLOAT_EQ(*fov, 75.0f);
+    EXPECT_FLOAT_EQ(*nearP, 0.25f);
+    EXPECT_FLOAT_EQ(*farP, 250.0f);
+}
+
 TEST(CameraNodeTest, ParamsRoundTripThroughJson) {
     core::Graph graph;
     auto handle = addCamera(graph);

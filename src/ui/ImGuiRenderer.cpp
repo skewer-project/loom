@@ -229,34 +229,52 @@ void ImGuiRenderer::applyOrbitInput(core::Camera& camera) {
 
     ImGuiIO& io = ImGui::GetIO();
 
-    // Drag yaw / pitch: scale sensitivity by `tan(fovY/2)` so a one-screen-
-    // -width drag always produces ~a quarter-turn regardless of zoom level.
-    // The 1.5× factor reproduces the prior 0.005 rad/pixel feel at the
-    // engine's default 60° FOV on a 1080p viewport.
+    // Step 1 — Input handling. Read drag / wheel gestures into the
+    // spherical-coordinate state. `inputFired` records whether anything
+    // actually changed this frame; the pose write below is gated on it
+    // so that idle frames don't redirty the CameraNode (which would
+    // overwrite any user knob-edit on the position param). See B.8
+    // follow-up #4 / Bug #2.
+    bool inputFired = false;
     if (ImGui::IsItemHovered()) {
         if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
             const ImVec2 delta = io.MouseDelta;
-            const float kDragBase = 1.5f * std::tan(0.5f * camera.fovY());
-            // Normalise by viewport height: a full-height vertical drag
-            // always rotates by the same angle regardless of window size.
-            const float viewH = std::max(m_viewportSize.y, 1.0f);
-            const float dragScale = kDragBase / viewH;
-            m_orbitYaw -= delta.x * dragScale;
-            m_orbitPitch += delta.y * dragScale;
-            // Clamp pitch to avoid gimbal-lock at the poles (cos(pitch)
-            // → 0 → up-vector degenerate).
-            constexpr float kPitchLimit = 1.5533f;  // ~89° in radians
-            m_orbitPitch = std::clamp(m_orbitPitch, -kPitchLimit, kPitchLimit);
+            if (delta.x != 0.0f || delta.y != 0.0f) {
+                // Scale sensitivity by `tan(fovY/2)` so a one-screen-width
+                // drag always produces ~a quarter-turn regardless of zoom
+                // level. The 1.5× factor reproduces the prior 0.005
+                // rad/pixel feel at the engine's default 60° FOV on a
+                // 1080p viewport.
+                const float kDragBase = 1.5f * std::tan(0.5f * camera.fovY());
+                // Normalise by viewport height: a full-height vertical
+                // drag always rotates by the same angle regardless of
+                // window size.
+                const float viewH = std::max(m_viewportSize.y, 1.0f);
+                const float dragScale = kDragBase / viewH;
+                m_orbitYaw -= delta.x * dragScale;
+                m_orbitPitch += delta.y * dragScale;
+                // Clamp pitch to avoid gimbal-lock at the poles
+                // (cos(pitch) → 0 → up-vector degenerate).
+                constexpr float kPitchLimit = 1.5533f;  // ~89° in radians
+                m_orbitPitch = std::clamp(m_orbitPitch, -kPitchLimit, kPitchLimit);
+                inputFired = true;
+            }
         }
         if (io.MouseWheel != 0.0f) {
-            // Multiplicative zoom: each scroll tick scales radius by ~1.1×.
-            // Scale-invariant by construction — no FOV factor needed.
-            // Upper bound widened to 1e6 so scenes whose bounding sphere
-            // sits a kilometer out from origin remain reachable.
+            // Multiplicative zoom: each scroll tick scales radius by
+            // ~1.1×. Scale-invariant by construction — no FOV factor
+            // needed. Upper bound widened to 1e6 so scenes whose bounding
+            // sphere sits a kilometer out from origin remain reachable.
             const float zoomFactor = std::pow(1.1f, -io.MouseWheel);
             m_orbitRadius = std::clamp(m_orbitRadius * zoomFactor, 0.001f, 1.0e6f);
+            inputFired = true;
         }
     }
+
+    // Step 2 — Pose application. Skipped on idle frames so user knob-edits
+    // on the CameraNode's `position` param survive (without this gate the
+    // orbit's idle-state value overwrote any direct edit every frame).
+    if (!inputFired) return;
 
     const float cy = std::cos(m_orbitYaw);
     const float sy = std::sin(m_orbitYaw);

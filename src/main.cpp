@@ -1,10 +1,12 @@
 #include <algorithm>
 #include <cstdlib>
 #include <glm/geometric.hpp>
+#include <glm/trigonometric.hpp>
 #include <glm/vec3.hpp>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <variant>
 
 #include "core/Camera.hpp"
 #include "core/ColorManagement.hpp"
@@ -262,6 +264,15 @@ int main(int argc, char** argv) {
         glm::vec3 lastFramedCenter{0.0f};
         float lastFramedSceneRadius = 0.0f;
 
+        // Previous-frame CameraNode target, used to detect when the user
+        // edited the `target` knob (or auto-frame moved it) so we can
+        // resync the orbit controller. The orbit's spherical coordinates
+        // are anchored to a target; when the target moves externally,
+        // re-deriving radius / yaw / pitch from the new (position,
+        // target) offset keeps the next drag gesture consistent.
+        glm::vec3 lastCameraNodeTarget{0.0f};
+        bool cameraTargetTracked = false;
+
         loom::log::info("Loom initialized successfully.");
 
         while (!window.shouldClose()) {
@@ -375,6 +386,49 @@ int main(int argc, char** argv) {
                         camNode->setParam(3, nearP);
                         camNode->setParam(4, farP);
                     }
+                }
+
+                // CameraNode → engine Camera materialization. The CameraNode
+                // params are the source of truth (user knob edits, the auto-
+                // frame write, the orbit input handler, the clip-plane
+                // refresh — all funnel through `setParam`). Mirror the
+                // current state onto the engine `core::Camera` so the orbit
+                // controller's next-frame math reads from a consistent
+                // (position, target) pair. Detect target-changed externally
+                // and resync the orbit controller — otherwise the radius /
+                // yaw / pitch derived from the prior offset no longer
+                // matches the new target and the next drag gesture would
+                // snap to an unexpected pose. See B.8 follow-up #4 / Bug
+                // #2 and #3 (Part B).
+                if (auto* camNode = graph.getNode(cameraNodeHandle)) {
+                    glm::vec3 nodePos{0.0f, 0.0f, 3.0f};
+                    glm::vec3 nodeTarget{0.0f};
+                    float nodeFovDeg = 60.0f;
+                    float nodeNear = 0.1f;
+                    float nodeFar = 100.0f;
+                    if (camNode->params.size() >= 5) {
+                        if (auto* p = std::get_if<glm::vec3>(&camNode->params[0].value()))
+                            nodePos = *p;
+                        if (auto* p = std::get_if<glm::vec3>(&camNode->params[1].value()))
+                            nodeTarget = *p;
+                        if (auto* p = std::get_if<float>(&camNode->params[2].value()))
+                            nodeFovDeg = *p;
+                        if (auto* p = std::get_if<float>(&camNode->params[3].value()))
+                            nodeNear = *p;
+                        if (auto* p = std::get_if<float>(&camNode->params[4].value())) nodeFar = *p;
+                    }
+                    camera.setPosition(nodePos);
+                    camera.setTarget(nodeTarget);
+                    camera.setFovY(glm::radians(nodeFovDeg));
+                    camera.setClipPlanes(nodeNear, nodeFar);
+
+                    const bool targetChanged =
+                        cameraTargetTracked && nodeTarget != lastCameraNodeTarget;
+                    if (targetChanged) {
+                        imgui.resyncOrbitFromCamera(camera);
+                    }
+                    lastCameraNodeTarget = nodeTarget;
+                    cameraTargetTracked = true;
                 }
 
                 dispatchManager.submit(cmd, evalCtx.tasks, viewerOutput, bindlessSet,
