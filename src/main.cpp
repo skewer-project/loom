@@ -6,6 +6,7 @@
 #include "gpu/DispatchManager.hpp"
 #include "gpu/DisplayPass.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "gpu/TransientBufferPool.hpp"
 #include "gpu/TransientImagePool.hpp"
 #include "gpu/VulkanContext.hpp"
 #include "platform/Window.hpp"
@@ -47,6 +48,8 @@ int main() {
         loom::gpu::DispatchManager dispatchManager;
         loom::gpu::TransientImagePool imagePool(vulkan.getDevice(), vulkan.getVmaAllocator(),
                                                 vulkan.getBindlessHeap());
+        loom::gpu::TransientBufferPool bufferPool(vulkan.getDevice(), vulkan.getVmaAllocator(),
+                                                  vulkan.getBindlessHeap());
 
         loom::gpu::DisplayPass displayPass(vulkan.getDevice(), VK_FORMAT_R32G32B32A32_SFLOAT,
                                            setLayout);
@@ -101,7 +104,9 @@ int main() {
                 evalCtx.requestedExtent = {static_cast<uint32_t>(imgui.getViewportSize().x),
                                            static_cast<uint32_t>(imgui.getViewportSize().y)};
                 evalCtx.imagePool = &imagePool;
+                evalCtx.bufferPool = &bufferPool;
                 evalCtx.pipelineCache = &pipelineCache;
+                evalCtx.vkContext = &vulkan;
                 evalCtx.renderCache = &renderCache;
                 evalCtx.allocator = vulkan.getVmaAllocator();
 
@@ -143,6 +148,7 @@ int main() {
             }
 
             imagePool.flushPendingReleases();
+            bufferPool.flushPendingReleases();
         }
 
         vulkan.waitIdle();

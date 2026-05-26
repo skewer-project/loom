@@ -13,7 +13,9 @@
 
 namespace loom::gpu {
 class TransientImagePool;
+class TransientBufferPool;
 class PipelineCache;
+class VulkanContext;
 }  // namespace loom::gpu
 
 namespace loom::core {
@@ -23,7 +25,9 @@ class RenderCache;
 struct EvaluationContext {
     VkExtent2D requestedExtent;
     gpu::TransientImagePool* imagePool;
+    gpu::TransientBufferPool* bufferPool;
     gpu::PipelineCache* pipelineCache;
+    gpu::VulkanContext* vkContext;
     RenderCache* renderCache;
     VmaAllocator allocator;
     VkCommandBuffer cmd;  // Shared command buffer for this frame

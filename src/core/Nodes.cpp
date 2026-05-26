@@ -4,258 +4,175 @@
 #include <cstring>
 #include <iostream>
 
+#include "core/DeepExrLoader.hpp"
 #include "core/EvaluationContext.hpp"
 #include "core/Graph.hpp"
 #include "core/RenderCache.hpp"
+#include "gpu/BindlessHeap.hpp"
 #include "gpu/ComputeTask.hpp"
 #include "gpu/PipelineCache.hpp"
+#include "gpu/TransientBufferPool.hpp"
 #include "gpu/TransientImagePool.hpp"
+#include "gpu/VulkanContext.hpp"
 
 namespace loom::core {
 
 gpu::ImageHandle Node::pullInput(EvaluationContext& ctx, uint32_t inputIndex) {
-    if (!graph || inputIndex >= inputs.size()) return {};
+    ...
 
-    PinHandle inPinHandle = inputs[inputIndex];
-    Pin* inPin = graph->getPin(inPinHandle);
-    if (!inPin || !inPin->link.isValid()) return {};
+        // -----------------------------------------------------------------------------
+        // DeepReadNode
+        // -----------------------------------------------------------------------------
 
-    Link* link = graph->getLink(inPin->link);
-    if (!link) return {};
+        DeepReadNode::~DeepReadNode() {
+        // Note: Can't easily release GPU resources here without a context.
+        // In a real engine, we'd have a more robust resource management system.
+    }
 
-    PinHandle srcPinHandle = link->startPin;
-    // Regions are not fully implemented for tiling yet, so we pass an empty region for now.
-    Region r;
-    return ctx.renderCache->retrieve(srcPinHandle, r);
-}
+    void DeepReadNode::setFilepath(EvaluationContext & ctx, const std::string& path) {
+        if (filepath == path) return;
+        filepath = path;
+        needsUpload = true;
+    }
 
-// -----------------------------------------------------------------------------
-// ConstantNode
-// -----------------------------------------------------------------------------
+    void DeepReadNode::markRequiredTiles(const Region& requestedRegion,
+                                         std::unordered_set<NodeHandle>& activeNodes) {
+        activeNodes.insert(id);
+    }
 
-void ConstantNode::markRequiredTiles(const Region& requestedRegion,
-                                     std::unordered_set<NodeHandle>& activeNodes) {
-    activeNodes.insert(id);
-    // No inputs to propagate to.
-}
+    void DeepReadNode::execute(EvaluationContext & ctx, const Region& region) {
+        if (needsUpload && !filepath.empty()) {
+            releaseGpuResources(ctx);
 
-void ConstantNode::execute(EvaluationContext& ctx, const Region& region) {
-    if (outputs.empty()) return;
+            DeepSampleBuffer cpuBuffer = DeepExrLoader::load(filepath);
+            deepBuffer.width = cpuBuffer.width;
+            deepBuffer.height = cpuBuffer.height;
 
-    // For now, we still allocate a full image, but eventually this will be tile-based.
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
+            uint32_t totalSamples = static_cast<uint32_t>(cpuBuffer.sampleData.size() / 5);
+            VkDeviceSize sampleBufferSize = cpuBuffer.sampleData.size() * sizeof(float);
+            VkDeviceSize lookupBufferSize =
+                cpuBuffer.width * cpuBuffer.height * 2 * sizeof(uint32_t);
 
-    gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
+            // 1. Staging buffer
+            VkBuffer stagingBuffer;
+            VmaAllocation stagingAllocation;
+            VkBufferCreateInfo stagingInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            stagingInfo.size = sampleBufferSize + lookupBufferSize;
+            stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
-    struct {
-        float color[4];
-        uint32_t outputSlot;
-        uint32_t width;
-        uint32_t height;
-    } pc;
-    pc.color[0] = 1.0f;
-    pc.color[1] = 0.0f;
-    pc.color[2] = 0.0f;
-    pc.color[3] = 1.0f;
-    pc.outputSlot = handle.bindlessSlot;
-    pc.width = ctx.requestedExtent.width;
-    pc.height = ctx.requestedExtent.height;
+            VmaAllocationCreateInfo stagingAllocInfo{};
+            stagingAllocInfo.usage = VMA_MEMORY_USAGE_CPU_ONLY;
 
-    memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-    task.pushConstantSize = sizeof(pc);
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-    task.writeDependencies.push_back(handle);
+            vmaCreateBuffer(ctx.allocator, &stagingInfo, &stagingAllocInfo, &stagingBuffer,
+                            &stagingAllocation, nullptr);
 
-    ctx.tasks.push_back(task);
-    ctx.renderCache->store(outputs[0], region, handle);
-}
+            void* data;
+            vmaMapMemory(ctx.allocator, stagingAllocation, &data);
+            memcpy(data, cpuBuffer.sampleData.data(), sampleBufferSize);
 
-// -----------------------------------------------------------------------------
-// MergeNode
-// -----------------------------------------------------------------------------
+            uint32_t* lookupPtr = (uint32_t*)((char*)data + sampleBufferSize);
+            for (size_t i = 0; i < cpuBuffer.width * cpuBuffer.height; ++i) {
+                lookupPtr[i * 2 + 0] = cpuBuffer.offsets[i];
+                lookupPtr[i * 2 + 1] = cpuBuffer.counts[i];
+            }
+            vmaUnmapMemory(ctx.allocator, stagingAllocation);
 
-void MergeNode::markRequiredTiles(const Region& requestedRegion,
-                                  std::unordered_set<NodeHandle>& activeNodes) {
-    if (activeNodes.count(id)) return;
-    activeNodes.insert(id);
+            // 2 & 3. Acquire SSBOs
+            deepBuffer.sampleBuffer = ctx.bufferPool->acquire(sampleBufferSize);
+            deepBuffer.lookupBuffer = ctx.bufferPool->acquire(lookupBufferSize);
 
-    for (auto inPinHandle : inputs) {
-        Pin* inPin = graph->getPin(inPinHandle);
-        if (inPin && inPin->link.isValid()) {
-            Link* link = graph->getLink(inPin->link);
-            Pin* srcPin = graph->getPin(link->startPin);
-            Node* srcNode = graph->getNode(srcPin->node);
-            srcNode->markRequiredTiles(requestedRegion, activeNodes);
+            // 4. Copy
+            VkCommandBuffer copyCmd = ctx.vkContext->beginSingleTimeCommands();
+
+            VkBufferCopy copyRegion{};
+            copyRegion.srcOffset = 0;
+            copyRegion.dstOffset = 0;
+            copyRegion.size = sampleBufferSize;
+            vkCmdCopyBuffer(copyCmd, stagingBuffer,
+                            ctx.bufferPool->getBuffer(deepBuffer.sampleBuffer), 1, &copyRegion);
+
+            copyRegion.srcOffset = sampleBufferSize;
+            copyRegion.dstOffset = 0;
+            copyRegion.size = lookupBufferSize;
+            vkCmdCopyBuffer(copyCmd, stagingBuffer,
+                            ctx.bufferPool->getBuffer(deepBuffer.lookupBuffer), 1, &copyRegion);
+
+            // 6. Barrier
+            VkBufferMemoryBarrier2 sampleBarrier{.sType =
+                                                     VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
+            sampleBarrier.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+            sampleBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            sampleBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            sampleBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+            sampleBarrier.buffer = ctx.bufferPool->getBuffer(deepBuffer.sampleBuffer);
+            sampleBarrier.offset = 0;
+            sampleBarrier.size = sampleBufferSize;
+
+            VkBufferMemoryBarrier2 lookupBarrier = sampleBarrier;
+            lookupBarrier.buffer = ctx.bufferPool->getBuffer(deepBuffer.lookupBuffer);
+            lookupBarrier.size = lookupBufferSize;
+
+            VkDependencyInfo depInfo{.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            VkBufferMemoryBarrier2 barriers[] = {sampleBarrier, lookupBarrier};
+            depInfo.bufferMemoryBarrierCount = 2;
+            depInfo.pBufferMemoryBarriers = barriers;
+
+            vkCmdPipelineBarrier2(copyCmd, &depInfo);
+
+            ctx.vkContext->endSingleTimeCommands(copyCmd);
+
+            vmaDestroyBuffer(ctx.allocator, stagingBuffer, stagingAllocation);
+            needsUpload = false;
         }
-    }
-}
 
-void MergeNode::execute(EvaluationContext& ctx, const Region& region) {
-    if (outputs.empty()) return;
+        if (!deepBuffer.sampleBuffer.isValid()) return;
 
-    gpu::ImageHandle in1 = pullInput(ctx, 0);
-    gpu::ImageHandle in2 = pullInput(ctx, 1);
+        // Flattening
+        gpu::ImageSpec spec{};
+        spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        spec.extent = {deepBuffer.width, deepBuffer.height};
+        spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+        gpu::ImageHandle outputHandle = ctx.imagePool->acquire(spec);
 
-    if (in1.isValid() && !in2.isValid()) {
-        ctx.renderCache->store(outputs[0], region, in1);
-        return;
-    }
-    if (!in1.isValid() && in2.isValid()) {
-        ctx.renderCache->store(outputs[0], region, in2);
-        return;
-    }
+        gpu::ComputeTask task{};
+        task.pipeline = ctx.pipelineCache->getOrCreate("DeepFlatten.comp.spv");
 
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle handle = ctx.imagePool->acquire(spec);
-
-    gpu::ComputeTask task{};
-    task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
-
-    struct {
-        float color[4];
-        uint32_t outputSlot;
-        uint32_t width;
-        uint32_t height;
-    } pc;
-
-    if (in1.isValid() && in2.isValid()) {
-        pc.color[0] = 1.0f;
-        pc.color[1] = 0.0f;
-        pc.color[2] = 1.0f;
-        pc.color[3] = 1.0f;
-        task.readDependencies.push_back(in1);
-        task.readDependencies.push_back(in2);
-    } else {
-        pc.color[0] = 0.1f;
-        pc.color[1] = 0.1f;
-        pc.color[2] = 0.1f;
-        pc.color[3] = 1.0f;
-    }
-
-    pc.outputSlot = handle.bindlessSlot;
-    pc.width = ctx.requestedExtent.width;
-    pc.height = ctx.requestedExtent.height;
-
-    memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-    task.pushConstantSize = sizeof(pc);
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-
-    task.writeDependencies.push_back(handle);
-
-    ctx.tasks.push_back(task);
-    ctx.renderCache->store(outputs[0], region, handle);
-}
-
-// -----------------------------------------------------------------------------
-// ViewerNode
-// -----------------------------------------------------------------------------
-
-void ViewerNode::markRequiredTiles(const Region& requestedRegion,
-                                   std::unordered_set<NodeHandle>& activeNodes) {
-    if (activeNodes.count(id)) return;
-    activeNodes.insert(id);
-
-    if (!inputs.empty()) {
-        Pin* inPin = graph->getPin(inputs[0]);
-        if (inPin && inPin->link.isValid()) {
-            Link* link = graph->getLink(inPin->link);
-            Pin* srcPin = graph->getPin(link->startPin);
-            Node* srcNode = graph->getNode(srcPin->node);
-            srcNode->markRequiredTiles(requestedRegion, activeNodes);
-        }
-    }
-}
-
-void ViewerNode::execute(EvaluationContext& ctx, const Region& region) {
-    lastOutput = pullInput(ctx, 0);
-}
-
-// -----------------------------------------------------------------------------
-// PassthroughNode
-// -----------------------------------------------------------------------------
-
-void PassthroughNode::markRequiredTiles(const Region& requestedRegion,
-                                        std::unordered_set<NodeHandle>& activeNodes) {
-    if (activeNodes.count(id)) return;
-    activeNodes.insert(id);
-
-    if (!inputs.empty()) {
-        Pin* inPin = graph->getPin(inputs[0]);
-        if (inPin && inPin->link.isValid()) {
-            Link* link = graph->getLink(inPin->link);
-            Pin* srcPin = graph->getPin(link->startPin);
-            Node* srcNode = graph->getNode(srcPin->node);
-            srcNode->markRequiredTiles(requestedRegion, activeNodes);
-        }
-    }
-}
-
-void PassthroughNode::execute(EvaluationContext& ctx, const Region& region) {
-    if (outputs.empty()) return;
-
-    gpu::ImageHandle in = pullInput(ctx, 0);
-
-    gpu::ImageSpec spec{};
-    spec.format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    spec.extent = ctx.requestedExtent;
-    spec.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    gpu::ImageHandle out = ctx.imagePool->acquire(spec);
-
-    gpu::ComputeTask task{};
-
-    if (in.isValid()) {
-        task.pipeline = ctx.pipelineCache->getOrCreate("Passthrough.comp.spv");
         struct {
-            uint32_t inputSlot;
-            uint32_t outputSlot;
+            uint32_t lookupSSBOSlot;
+            uint32_t sampleSSBOSlot;
+            uint32_t outputImageSlot;
             uint32_t width;
             uint32_t height;
         } pc;
-        pc.inputSlot = in.bindlessSlot;
-        pc.outputSlot = out.bindlessSlot;
-        pc.width = ctx.requestedExtent.width;
-        pc.height = ctx.requestedExtent.height;
+        pc.lookupSSBOSlot = deepBuffer.lookupBuffer.bindlessSlot;
+        pc.sampleSSBOSlot = deepBuffer.sampleBuffer.bindlessSlot;
+        pc.outputImageSlot = outputHandle.bindlessSlot;
+        pc.width = deepBuffer.width;
+        pc.height = deepBuffer.height;
+
         memcpy(task.pushConstants.data(), &pc, sizeof(pc));
         task.pushConstantSize = sizeof(pc);
-        task.readDependencies.push_back(in);
-    } else {
-        task.pipeline = ctx.pipelineCache->getOrCreate("Fill.comp.spv");
-        struct {
-            float color[4];
-            uint32_t outputSlot;
-            uint32_t width;
-            uint32_t height;
-        } pc;
-        pc.color[0] = 0.1f;
-        pc.color[1] = 0.1f;
-        pc.color[2] = 0.1f;
-        pc.color[3] = 1.0f;
-        pc.outputSlot = out.bindlessSlot;
-        pc.width = ctx.requestedExtent.width;
-        pc.height = ctx.requestedExtent.height;
-        memcpy(task.pushConstants.data(), &pc, sizeof(pc));
-        task.pushConstantSize = sizeof(pc);
+        task.groupCountX = (deepBuffer.width + 15) / 16;
+        task.groupCountY = (deepBuffer.height + 15) / 16;
+        task.groupCountZ = 1;
+
+        task.writeDependencies.push_back(outputHandle);
+        // Note: sampleBuffer and lookupBuffer should be read dependencies if we had that tracking
+        // for buffers
+
+        ctx.tasks.push_back(task);
+        ctx.renderCache->store(outputs[0], region, outputHandle);
     }
 
-    task.groupCountX = (ctx.requestedExtent.width + 15) / 16;
-    task.groupCountY = (ctx.requestedExtent.height + 15) / 16;
-    task.groupCountZ = 1;
-    task.writeDependencies.push_back(out);
-
-    ctx.tasks.push_back(task);
-    ctx.renderCache->store(outputs[0], region, out);
-}
+    void DeepReadNode::releaseGpuResources(EvaluationContext & ctx) {
+        if (deepBuffer.sampleBuffer.isValid()) {
+            ctx.bufferPool->release(deepBuffer.sampleBuffer);
+            deepBuffer.sampleBuffer = {};
+        }
+        if (deepBuffer.lookupBuffer.isValid()) {
+            ctx.bufferPool->release(deepBuffer.lookupBuffer);
+            deepBuffer.lookupBuffer = {};
+        }
+    }
 
 }  // namespace loom::core

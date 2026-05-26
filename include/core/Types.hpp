@@ -27,7 +27,7 @@ inline uint32_t decodeIndex(uint64_t id) {
 
 enum class PinDirection { Input, Output };
 enum class PinType { Float, DeepBuffer };
-enum class NodeType { Constant, Merge, Viewer, Passthrough };
+enum class NodeType { Constant, Merge, Viewer, Passthrough, DeepRead };
 
 struct Tile {
     uint32_t x, y;
